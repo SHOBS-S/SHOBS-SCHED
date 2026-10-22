@@ -269,6 +269,7 @@ class NightPlan:
     darks: list = field(default_factory=list)        # sentences ("Darks to shoot: 45 s × 20")
     weather: dict | None = None                      # weather.py's night dict (hours, dew_onset, summary, ...)
     built: str = ""                                  # ISO timestamp of the build
+    notes: list = field(default_factory=list)        # night-wide messages ("✖ No dark time tonight: ...")
 
     def blocks_obj(self) -> list[Block]:
         return [Block.from_dict(b) for b in self.blocks]
