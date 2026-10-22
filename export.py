@@ -344,12 +344,13 @@ def _didnt_fit_lines(n: NightPlan, site: Site) -> list[str]:
 
 
 def _items(head: str, items) -> list[str]:
-    """Sentences under a heading, without a repeated 'Flats:' / 'Darks to shoot:' prefix."""
+    """Sentences under a heading, without repeating it: under "Darks", "Darks to shoot: 40 s" reads
+    "To shoot: 40 s" and "Darks: all on hand (…)" reads "All on hand (…)"."""
     out = []
     for x in items or []:
         s = str(x).strip()
-        if s.lower().startswith(head.lower() + ":"):
-            s = s[len(head) + 1:].strip()
+        if s.lower().startswith(head.lower()) and s[len(head):len(head) + 1] in (":", " "):
+            s = s[len(head):].lstrip(": ").strip()
             s = s[:1].upper() + s[1:]
         if s:
             out.append(s)
@@ -465,7 +466,7 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
             out.append("</tbody></table>")
         else:
             out.append('<p class="empty">No blocks planned.</p>')
-        for head, items in (("Flats", n.flats), ("Darks to shoot", n.darks),
+        for head, items in (("Flats", n.flats), ("Darks", n.darks),
                             ("Didn't fit, and why", _didnt_fit_lines(n, site)), ("Free time", _free_lines(n, site))):
             items = _items(head, items)
             if items:
@@ -511,7 +512,7 @@ def plan_card_text(nights, site: Site, settings_dict: dict | None = None, weathe
             if r["notes"]:
                 for part in _wrap(r["notes"], width - 14):
                     lines.append(f"{'':13} {part}")
-        for head, items in (("Flats", n.flats), ("Darks to shoot", n.darks),
+        for head, items in (("Flats", n.flats), ("Darks", n.darks),
                             ("Didn't fit, and why", _didnt_fit_lines(n, site)), ("Free time", _free_lines(n, site))):
             items = _items(head, items)
             if items:

@@ -73,6 +73,7 @@ class Optics:
     focal_mm: float | None = None
     pixel_um: float | None = None
     binning: int = 1
+    telescope: str = ""                       # its name ("14in RC"); SHOBS-P's telescope_name lands here
     camera: str = ""
     color_camera: bool = True                 # one-shot-color (Bayer) or mono
     gain: float | None = None                 # camera gain setting (as in the FITS GAIN keyword)

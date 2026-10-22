@@ -524,9 +524,10 @@ class _Night:
                     p.cautions.append(f"⚠ Inside a blackout: {bo['reason']} {self.hh(bo['start'])}–"
                                       f"{self.hh(bo['end'])}")
             self.placed.append(p)
-            # a Clouded-out / Partial block stays as a record, but its target is planned again tonight
-            if b.locked or b.set_by_user or (b.status or "planned") not in ("clouded", "partial"):
-                self.done_ids.add(b.target_id)
+            # every kept block (locked, set by you, or marked Done / Partial / Clouded out) settles its target for
+            # tonight: a Clouded-out / Partial target goes back to the pool for LATER nights, not again tonight
+            # (re-planning it here duplicated it on every rebuild of a marked night)
+            self.done_ids.add(b.target_id)
 
     # 2. fixed-time targets ----------------------------------------------------------------------------------------
     def _fixed_candidates(self, t: Target) -> tuple[list[_P], str]:
@@ -1284,17 +1285,33 @@ def build_schedule(start: date, n_nights: int, site, optics, targets, options, p
     return Schedule(nights=nights, history=history, built=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
-def rereview(schedule: Schedule, today: date, site, optics, targets, options,
-             weather_by_date: dict | None = None) -> Schedule:
-    """Roll the schedule forward to `today`: nights before today go into the history (one record per block with
-    its status and minutes), the schedule keeps its length (7 nights normally) from today on, and everything not
-    locked/marked is rebuilt — so targets whose blocks were Clouded out or Partial are back in the pool, and a
-    Clouded/Partial campaign night counts as missed for its weekly goal (only Done counts)."""
-    nights = schedule.nights_obj()
-    length = len(nights) or 7
+def running_records(nights, before_iso: str) -> list[dict]:
+    """The records build_schedule passes on for the nights planned before `before_iso` in the same schedule (each
+    block with its status and minutes, scheduled=True), so rebuilding ONE night paces weekly goals exactly as the
+    full build did."""
+    out = []
+    for n in nights or []:
+        n = n if isinstance(n, NightPlan) else NightPlan.from_dict(n)
+        if not n.date or n.date >= before_iso:
+            continue
+        for b in n.blocks_obj():
+            out.append({"date": n.date, "target_id": b.target_id, "name": b.name, "status": b.status or "planned",
+                        "minutes": round(b.minutes(), 1), "scheduled": True})
+    return out
+
+
+def history_for_night(schedule: Schedule, iso: str) -> list:
+    """history + running records: what build_night needs to rebuild night `iso` of `schedule` alone."""
+    return list(schedule.history) + running_records(schedule.nights, iso)
+
+
+def roll_forward(schedule: Schedule, today: date) -> Schedule:
+    """Nights before `today` go into the history (one record per block with its status and minutes); the others
+    are kept as they are. Used by rereview and by a Build that starts later than the saved schedule (so marks on
+    past nights are kept, not discarded)."""
     history = list(schedule.history)
     keep = []
-    for n in nights:
+    for n in schedule.nights_obj():
         try:
             nd = date.fromisoformat(n.date)
         except ValueError:
@@ -1305,6 +1322,16 @@ def rereview(schedule: Schedule, today: date, site, optics, targets, options,
                                 "status": b.status or "planned", "minutes": round(b.minutes(), 1)})
         else:
             keep.append(n.to_dict())
-    prior = Schedule(nights=keep, history=history, built=schedule.built)
+    return Schedule(nights=keep, history=history, built=schedule.built)
+
+
+def rereview(schedule: Schedule, today: date, site, optics, targets, options,
+             weather_by_date: dict | None = None) -> Schedule:
+    """Roll the schedule forward to `today`: nights before today go into the history (one record per block with
+    its status and minutes), the schedule keeps its length (7 nights normally) from today on, and everything not
+    locked/marked is rebuilt — so targets whose blocks were Clouded out or Partial are back in the pool, and a
+    Clouded/Partial campaign night counts as missed for its weekly goal (only Done counts)."""
+    length = len(schedule.nights) or 7
+    prior = roll_forward(schedule, today)
     return build_schedule(today, length, site, optics, targets, options, prior=prior,
                           weather_by_date=weather_by_date)

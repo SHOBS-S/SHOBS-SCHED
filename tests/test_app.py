@@ -71,13 +71,18 @@ def make_fakes():
             raise NeedsMode(name, 10.0, 20.0, 8.1, "HD 1")
         if name == "Kepler-9":
             raise PlanetChoice("Kepler-9", ["Kepler-9 b", "Kepler-9 c"])
+        if name == "WASP-9 b":
+            t = Target(name=name, kind="transit", mode="T", ra=1.0, dec=2.0, source="NEA",
+                       planet={"name": name, "period": 2.0, "t0": 2455000.0, "t14": 0.1})
+            t.lookup_note = "the Archive did not answer (HTTP 503); using the copy from 3 days ago"
+            return t
         if name.startswith("Kepler-9 "):
             return Target(name=name, kind="transit", mode="T", ra=285.6, dec=38.4, vmag=13.9, source="NEA",
                           planet={"name": name, "period": 19.2, "t0": 2455073.4, "t14": 0.17, "depth": 0.006})
         return Target(name=name, kind="variable", mode="V", ra=100.0, dec=10.0, vmag=11.0, source="VSX",
                       elements={"vtype": "RRAB", "period": 0.5, "epoch": 2450000.0, "any_time": True})
 
-    def suggest_transits(site, optics, options, nights, exclude_names=frozenset(), progress=None):
+    def suggest_transits(site, optics, options, nights, exclude_names=frozenset(), catalog=None, progress=None):
         calls["suggest"] += 1
         if progress:
             progress(1, 1)
@@ -87,6 +92,9 @@ def make_fakes():
 
     tg.LookupError_, tg.NeedsMode, tg.PlanetChoice = LookupError_, NeedsMode, PlanetChoice
     tg.add_target = add_target
+    tg.resolve_simbad = lambda name, refresh=False: {"main_id": name, "ra": 348.32, "dec": 57.17, "vmag": 5.57,
+                                                     "otype": "*"}
+    tg.load_transit_catalog = lambda refresh=False: ([], calls.get("catalog_note", ""))
     tg.suggest_transits = suggest_transits
     tg.next_event_text = lambda t, site, from_jd, days=30: "any time" if t.kind != "transit" else "Fri 23 Oct (full)"
     tg.tc_sigma_minutes = lambda planet, when: 12.5
@@ -548,6 +556,8 @@ class TestAppWithFakes(Base):
         tab = page.tabs[0]
         tz = app.site.tz
         i0, b1 = tab.blocks()[0][0], tab.blocks()[1][1]
+        tab.select_block(tab.blocks()[1][0])
+        tab.lock_selected()                                  # only kept blocks (locked, fixed, marked) block it
         n_calls = len(self.calls["build_night"])
         self.assertFalse(tab.set_times(i0, sky.hhmm(b1.start, tz), sky.hhmm(b1.end, tz)))
         self.assertTrue(tab.act_var.get().startswith("✖"))
@@ -722,8 +732,8 @@ class TestAppWithFakes(Base):
 
         def partial(self_, site, start, n, options=None):
             out = real(self_, site, start, n, options)
-            out[start.isoformat()]["note"] = "using the forecast from 5 h ago"
-            out[start.isoformat()]["ok"] = False
+            out[start.isoformat()]["note"] = "using the forecast from 5 h ago"   # a stale copy is still ok=True
+            out[start.isoformat()]["ok"] = True
             return out
         src.fetch = partial
         self.build(n=1)
@@ -784,6 +794,154 @@ class TestAppWithFakes(Base):
         self.assertEqual(tab.notes_box.winfo_children()[0].cget("style"), "Bad.TLabel")
         tab.draw_bar()
         tab.draw_weather()
+
+    # ---- final review (marks, tonight, the star itself, history, icon, notes, stale setup) ----
+    def test_marks_survive_rebuild_without_restamping(self):
+        self.golden_home()
+        app = self.open()
+        page = self.build()
+        tab = page.tabs[0]
+        i, b = tab.blocks()[1]
+        tab.select_block(i)
+        tab.set_status("clouded")
+        self.build()
+        n0 = page.night(0).blocks_obj()
+        self.assertEqual([x.status for x in n0].count("clouded"), 1, [(x.name, x.status) for x in n0])
+        self.assertEqual([x.target_id for x in n0].count(b.target_id), 1)
+        page.tabs[0].plan_instead(app.targets[0].id, app.targets[0].name)
+        self.pump()
+        n0 = page.night(0).blocks_obj()
+        self.assertEqual([x.status for x in n0].count("clouded"), 1)
+        self.assertEqual([x.target_id for x in n0].count(b.target_id), 1)
+
+    def test_tonight_follows_sunrise(self):
+        self.golden_home()
+        app = self.open()
+        tz = app.site.tz
+        real = sky.now_jd
+        try:
+            for (d, hh), want in (((22, 3), 21), ((22, 9), 22), ((22, 20), 22), ((23, 1), 22)):
+                j = sky.local_jd(date(2026, 10, d), hh, 0, tz)
+                sky.now_jd = lambda j=j: j
+                app._info_cache.clear()
+                self.assertEqual(app.tonight(), date(2026, 10, want), f"{d} Oct {hh:02d}:00")
+            sky.now_jd = lambda: sky.local_jd(date(2026, 10, 22), 9, 0, tz)
+            app._info_cache.clear()
+            self.build(start=date(2026, 10, 21), n=2)
+            app.show_page(3)
+            self.assertEqual({k: v.get() for k, v in app.pages[3].night_vars.items()},
+                             {"2026-10-21": False, "2026-10-22": True}, "Export ticks follow tonight")
+            self.assertEqual(app.pages[2].review_start(), date(2026, 10, 22))
+        finally:
+            sky.now_jd = real
+
+    def test_add_the_star_itself_and_change_group(self):
+        self.golden_home()
+        app = self.open()
+        page = app.pages[1]
+        app.show_page(1)
+        app.auto_answers = [self.sa.STAR_ITSELF, "Campaign, reduced in Variables (V)"]
+        page.add("Kepler-9")
+        self.pump()
+        t = next(t for t in app.targets if t.name == "Kepler-9")
+        self.assertEqual((t.kind, t.mode, t.source), ("campaign", "V", "SIMBAD"))
+        self.assertAlmostEqual(t.ra, 348.32)
+        self.assertEqual(page.tree.parent(t.id), "grp:campaign")
+        app.auto_answers = ["Variable star (V)"]
+        page.add("HD 1")                                  # NeedsMode offers the same kinds
+        self.pump()
+        self.assertEqual(next(x for x in app.targets if x.name == "HD 1").kind, "variable")
+        saved = []
+        dlg = self.sa.EditTargetDialog(app, t, on_save=saved.append, modal=False)
+        dlg.vars["kind"].set("Variable")
+        dlg.vars["mode"].set("Discovery (D)")
+        self.assertTrue(dlg.save(), dlg.msg_var.get())
+        self.assertEqual((saved[0].kind, saved[0].mode), ("variable", "D"))
+        page._edited(saved[0])
+        self.assertEqual(page.tree.parent(t.id), "grp:variable")
+
+    def test_build_later_start_rolls_marks_into_history(self):
+        import planner as real_planner
+        self.fakes["planner"].roll_forward = real_planner.roll_forward
+        self.golden_home()
+        app = self.open()
+        page = self.build(start=date(2026, 10, 20), n=2)
+        tab = page.tabs[0]
+        i, b = tab.blocks()[0]
+        tab.select_block(i)
+        tab.set_status("done")
+        self.build(start=date(2026, 10, 21), n=2)
+        self.assertEqual([n["date"] for n in app.schedule.nights], ["2026-10-21", "2026-10-22"])
+        self.assertIn({"date": "2026-10-20", "target_id": b.target_id, "status": "done"},
+                      [{k: h[k] for k in ("date", "target_id", "status")} for h in app.schedule.history])
+
+    def test_icon_errors_and_notes(self):
+        self.golden_home()
+        app = self.open()
+        self.assertTrue(hasattr(app, "_icon_image"), "the window has SHOBS-SCHED's icon")
+        self.assertEqual(self.sa.APP_USER_MODEL_ID, "ShilohHill.SHOBS-SCHED")
+        try:
+            raise ValueError("bad value in a callback")
+        except ValueError as exc:
+            app.report_callback_exception(ValueError, exc, exc.__traceback__)
+        self.assertTrue(app.status_var.get().startswith("✖ Something went wrong: bad value in a callback"))
+        with open(settings.log_path(), encoding="utf-8") as fh:
+            self.assertIn("Traceback", fh.read())
+        page = app.pages[1]
+        page.add("WASP-9 b")
+        self.pump()
+        self.assertTrue(page.add_ind.var.get().startswith("⚠ Added WASP-9 b (NEA). The Archive did not answer"),
+                        page.add_ind.var.get())
+        self.calls["catalog_note"] = "the catalog did not answer; using the saved copy from 9 days ago"
+        page.find_suggested()
+        self.pump()
+        self.assertIn("Catalog: The catalog did not answer; using the saved copy from 9 days ago.",
+                      page.find_ind.var.get())
+        self.assertTrue(page.find_ind.var.get().startswith("⚠"))
+
+    def test_setup_change_marks_schedule_stale_and_rows_stay_put(self):
+        self.golden_home()
+        app = self.open()
+        page = self.build(n=1)
+        app.show_page(0)
+        app.pages[0].vars["site.min_alt"].set("33")
+        self.assertTrue(app.pages[0].save())
+        app.show_page(2)
+        self.assertEqual(page.msg_var.get(), page.STALE)
+        self.build(n=1)
+        self.assertNotEqual(page.msg_var.get(), page.STALE)
+        app.show_page(2)
+        self.assertNotEqual(page.msg_var.get(), page.STALE)
+        tp = app.pages[1]
+        app.show_page(1)
+        dy = next(t for t in app.targets if t.name == "DY Peg")
+        before = tp.tree.index(dy.id)
+        tp.toggle(dy.id)
+        self.assertEqual(tp.tree.index(dy.id), before, "a ticked/unticked row keeps its place")
+
+    def test_edit_times_over_a_flexible_block_replans_it(self):
+        self.golden_home()
+        app = self.open()
+        page = self.build(n=1)
+        tab = page.tabs[0]
+        tz = app.site.tz
+        (i0, b0), b1 = tab.blocks()[0], tab.blocks()[1][1]
+        self.assertTrue(tab.set_times(i0, sky.hhmm(b1.start, tz), sky.hhmm(b1.end, tz)))
+        self.pump()
+        n0 = page.night(0).blocks_obj()
+        mine = next(x for x in n0 if x.target_id == b0.target_id)
+        self.assertTrue(mine.set_by_user)
+        self.assertFalse(any(x is not mine and x.start < mine.end and mine.start < x.end for x in n0))
+
+    def test_shobs_p_telescope_name_is_not_the_site_name(self):
+        p = os.path.join(self.tmp, "shobs_p.json")
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump({"site_lat": 35.303, "site_lon": -81.9407, "telescope_name": "14in RC"}, fh)
+        os.environ["SHOBS_P_SETTINGS"] = p
+        app = self.open()
+        self.assertEqual(app.site.name, "")
+        self.assertEqual(app.optics.telescope, "14in RC")
+        self.assertEqual(app.pages[0].vars["optics.telescope"].get(), "14in RC")
 
 
 class TestAppWithRealModules(Base):
@@ -858,6 +1016,22 @@ class TestAppWithRealModules(Base):
         # every row's columns filled from export.table_rows
         row = page.tabs[0].table.item(page.tabs[0].table.get_children()[0], "values")
         self.assertIn("(X ", row[4])
+        # a Clouded-out mark: a rebuild keeps it once, and does not plan the target again that night
+        tab = page.tabs[0]
+        i, b = next((i, b) for i, b in tab.blocks() if not b.fixed and not b.locked)
+        tab.select_block(i)
+        tab.set_status("clouded")
+        page.build(date(2026, 10, 22), 3)
+        self.pump()
+        n0 = page.night(0).blocks_obj()
+        self.assertEqual([x.target_id for x in n0].count(b.target_id), 1, [(x.name, x.status) for x in n0])
+        self.assertEqual([x.status for x in n0].count("clouded"), 1)
+        # rebuilding one night alone gives what the full build gave (same history + earlier nights)
+        before = [(x.target_id, round(x.start, 6), round(x.end, 6)) for x in page.night(2).blocks_obj()]
+        self.assertTrue(page.rebuild_night(2))
+        self.pump()
+        self.assertEqual([(x.target_id, round(x.start, 6), round(x.end, 6)) for x in page.night(2).blocks_obj()],
+                         before)
         app.show_page(3)
         app.update()
         app.pages[3].copy_csv()

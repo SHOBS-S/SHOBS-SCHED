@@ -148,7 +148,7 @@ SHOBS_P_FIELDS = {
     # SHOBS-P key -> (section, SCHED key)
     "site_lat": ("site", "lat"), "site_lon": ("site", "lon"), "site_elevation": ("site", "elevation_m"),
     "aperture_mm": ("optics", "aperture_mm"), "focal_mm": ("optics", "focal_mm"), "pixel_um": ("optics", "pixel_um"),
-    "telescope_name": ("site", "name"), "linear_limit": ("optics", "linear_limit_adu"),
+    "telescope_name": ("optics", "telescope"), "linear_limit": ("optics", "linear_limit_adu"),
     "linear_limit_adu": ("optics", "linear_limit_adu"), "site_tz": ("site", "tz"),
 }
 
@@ -180,7 +180,7 @@ def merge_shobs_p(s: dict) -> tuple[dict, list[str]]:
         if key not in p or f"{section}.{field}" in set_here:
             continue
         val = p[key]
-        if field in ("name", "tz"):
+        if field in ("name", "tz", "telescope"):
             val = str(val or "").strip()
             if not val:
                 continue

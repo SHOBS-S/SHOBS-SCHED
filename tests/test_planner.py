@@ -542,14 +542,37 @@ class ReviewFixes(unittest.TestCase):
         p = planner.build_night(self.d, site, self.optics, [gtarget(self.g, "NGC 7789")], {})
         self.assertIn("✖ Time zone 'Mars/Olympus_Mons' not available; times shown in UTC", p.notes)
 
-    def test_clouded_block_replanned(self):
+    def test_running_records_and_roll_forward(self):
+        """rebuild of one night gets the same pacing records build_schedule passed; Build/Re-review roll past
+        nights (with their marks) into the history."""
+        from models import Schedule
+        mk = lambda d, st: NightPlan(date=d, blocks=[Block(target_id="X", name="X", start=1.0, end=1.0 + 1 / 24,
+                                                           status=st).to_dict()]).to_dict()
+        sch = Schedule(nights=[mk("2026-10-19", "done"), mk("2026-10-20", "planned"), mk("2026-10-21", "planned")],
+                       history=[{"date": "2026-10-12", "target_id": "X", "status": "done"}])
+        recs = planner.history_for_night(sch, "2026-10-21")
+        self.assertEqual([r["date"] for r in recs], ["2026-10-12", "2026-10-19", "2026-10-20"])
+        self.assertTrue(all(r.get("scheduled") for r in recs[1:]))
+        self.assertEqual(recs[1]["status"], "done")
+        rolled = planner.roll_forward(sch, date(2026, 10, 20))
+        self.assertEqual([n["date"] for n in rolled.nights], ["2026-10-20", "2026-10-21"])
+        self.assertEqual(rolled.history[-1]["status"], "done")
+        self.assertEqual(rolled.history[-1]["date"], "2026-10-19")
+
+    def test_clouded_block_not_replanned_same_night(self):
+        """A Clouded-out / Partial mark stays as the night's record; the target is not planned AGAIN that night
+        (it returns to the pool for later nights). Re-planning it duplicated the target on every rebuild."""
         s = self.jd(20, 30)
-        cl = Block(target_id="NGC 7789", name="NGC 7789", mode="D", kind="campaign", start=s, end=s + 1 / 24,
-                   status="clouded")
-        p = planner.build_night(self.d, self.site, self.optics, [gtarget(self.g, "NGC 7789")], {}, locked=[cl])
-        bl = [b for b in p.blocks_obj() if b.name == "NGC 7789"]
-        self.assertEqual(len(bl), 2)
-        self.assertEqual(sorted(b.status for b in bl), ["clouded", "planned"])
+        for st in ("clouded", "partial"):
+            cl = Block(target_id="NGC 7789", name="NGC 7789", mode="D", kind="campaign", start=s, end=s + 1 / 24,
+                       status=st)
+            p = planner.build_night(self.d, self.site, self.optics, [gtarget(self.g, "NGC 7789")], {}, locked=[cl])
+            bl = [b for b in p.blocks_obj() if b.name == "NGC 7789"]
+            self.assertEqual([b.status for b in bl], [st])
+            # rebuilding the rebuilt night again changes nothing (no duplicates)
+            again = planner.build_night(self.d, self.site, self.optics, [gtarget(self.g, "NGC 7789")], {},
+                                        locked=[b for b in p.blocks_obj() if b.status != "planned"])
+            self.assertEqual(len([b for b in again.blocks_obj() if b.name == "NGC 7789"]), 1)
         done = Block.from_dict(dict(cl.to_dict(), status="done"))
         p = planner.build_night(self.d, self.site, self.optics, [gtarget(self.g, "NGC 7789")], {}, locked=[done])
         self.assertEqual(len(p.blocks), 1)

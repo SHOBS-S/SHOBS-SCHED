@@ -178,6 +178,11 @@ class TestPlanCard(unittest.TestCase):
                                        "hours": [{"jd": at(date(2026, 10, 20), 20, 0), "temp_c": 12.0,
                                                   "dew_c": 5.0, "wind_kmh": 10.0, "cloud": 0}]}}
 
+    def test_darks_heading_reads_well(self):
+        self.assertEqual(export._items("Darks", ["Darks to shoot: 40 s", "Darks: all on hand (60 s, 120 s)"]),
+                         ["To shoot: 40 s", "All on hand (60 s, 120 s)"])
+        self.assertEqual(export._items("Flats", ["Flats: one set"]), ["One set"])
+
     def test_html(self):
         page = export.plan_card_html([self.n20, self.n22], SITE, {"observer_code": "JABA"}, self.weather,
                                      self.by_id)
@@ -197,7 +202,7 @@ class TestPlanCard(unittest.TestCase):
         self.assertIn("High 12 °C, low 12 °C, wind up to 10 km/h", page)
         self.assertIn("WASP-12 b: collides with TOI-2046 b (next chance Tue 27 Oct)", page)
         self.assertIn("Free 02:10–03:00", page)
-        self.assertIn("<h3>Darks to shoot</h3><ul><li>0.75 s × 20</li>", page)
+        self.assertIn("<h3>Darks</h3><ul><li>To shoot: 0.75 s × 20</li>", page)
         self.assertIn("<li>One set at the night", page)              # "Flats:" prefix not repeated
         self.assertIn("a meridian flip&#x27;s 180° turn", page)
         self.assertIn("SHOBS-SCHED · site clock (America/New_York)", page)
