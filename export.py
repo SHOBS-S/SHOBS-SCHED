@@ -405,35 +405,43 @@ def _footer(site: Site) -> str:
 
 
 _CSS = """
-@page { size: auto; margin: 12mm; }
+@page { size: landscape; margin: 10mm; }
 * { box-sizing: border-box; }
 html, body { background: #fff; color: #000; }
 body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; font-size: 11pt; margin: 0 auto; max-width: 270mm;
        padding: 8mm; line-height: 1.3; }
 h1 { font-size: 18pt; margin: 0 0 2pt; }
 .site { font-size: 10pt; margin-bottom: 8pt; }
-.night { break-inside: avoid; page-break-inside: avoid; border-top: 2pt solid #000; padding-top: 6pt;
-         margin-top: 12pt; }
+.night { border-top: 2pt solid #000; padding-top: 6pt; margin-top: 12pt; }
+h2, .facts, thead { break-after: avoid; page-break-after: avoid; }
+tr, .list { break-inside: avoid; page-break-inside: avoid; }
+thead { display: table-header-group; }
 .night + .night { break-before: auto; }
 h2 { font-size: 16pt; margin: 0 0 3pt; }
 .facts { font-size: 12pt; margin: 0 0 2pt; }
 .facts b { font-size: 14pt; }
-table { width: 100%; border-collapse: collapse; margin: 6pt 0; }
+table { width: 100%; border-collapse: collapse; margin: 6pt 0; table-layout: fixed; }
+col.c-time { width: 15%; } col.c-target { width: 10%; } col.c-radec { width: 9%; } col.c-mode { width: 8%; }
+col.c-alt { width: 8%; } col.c-mer { width: 8%; } col.c-exp { width: 8%; } col.c-frames { width: 9%; }
+col.c-notes { width: 25%; }
+td { overflow-wrap: anywhere; }
 th, td { border: 0.75pt solid #000; padding: 3pt 4pt; vertical-align: top; text-align: left; }
-th { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.02em; }
-td.time { font-size: 16pt; font-weight: 700; white-space: nowrap; }
+th { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.01em; overflow-wrap: anywhere; }
+td.time { font-size: 14pt; font-weight: 700; white-space: nowrap; }
 td.target { font-size: 13pt; font-weight: 700; }
-td.num, td.mer { white-space: nowrap; }
+td.mer, td.exp { white-space: nowrap; }
 td.mer { font-size: 13pt; font-weight: 700; }
 td.notes { font-size: 10pt; }
 .mode { display: inline-block; border: 1pt solid #000; padding: 0 3pt; font-size: 9pt; font-weight: 700; }
 .status { font-size: 9pt; font-weight: 700; }
-.list { margin: 3pt 0; font-size: 11pt; }
+.lists { display: flex; gap: 14pt; flex-wrap: wrap; }
+.list { margin: 2pt 0; font-size: 10pt; flex: 1 1 30%; min-width: 50mm; }
 .list h3 { font-size: 11pt; margin: 4pt 0 1pt; }
 .list ul { margin: 0; padding-left: 16pt; }
 .empty { font-style: italic; }
-footer { margin-top: 14pt; border-top: 0.75pt solid #000; padding-top: 3pt; font-size: 9pt; }
-@media print { body { padding: 0; max-width: none; } }
+footer { break-before: avoid; page-break-before: avoid; margin-top: 8pt; border-top: 0.75pt solid #000; padding-top: 3pt; font-size: 9pt; }
+@media print { body { padding: 0; max-width: none; font-size: 10pt; } h1 { font-size: 16pt; } h2 { font-size: 14pt; }
+               .night { margin-top: 6pt; } }
 """
 
 
@@ -460,7 +468,9 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
             out.append(f'<p class="facts">{e(f["weather"])}</p>')
         rows = table_rows(n, site, targets_by_id)
         if rows:
-            out.append("<table><thead><tr>" + "".join(f"<th>{e(c)}</th>" for c in TABLE_COLUMNS)
+            cols = ("c-time", "c-target", "c-radec", "c-mode", "c-alt", "c-mer", "c-exp", "c-frames", "c-notes")
+            out.append("<table><colgroup>" + "".join(f'<col class="{k}">' for k in cols) + "</colgroup>"
+                       "<thead><tr>" + "".join(f"<th>{e(c)}</th>" for c in TABLE_COLUMNS)
                        + "</tr></thead><tbody>")
             for r in rows:
                 status = "" if r["status"] == "planned" else f' <span class="status">[{e(r["status_label"])}]</span>'
@@ -470,24 +480,25 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
                     "<tr>"
                     f'<td class="time">{e(r["time"])}</td>'
                     f'<td class="target">{e(r["target"])}{e(lock)}{status}</td>'
-                    f'<td class="num">{e(r["radec"])}</td>'
+                    f'<td class="num">{"<br>".join(e(x) for x in str(r["radec"]).split(" ", 1))}</td>'
                     f'<td><span class="mode">{e(r["mode_code"])}</span> {e(r["mode"])}</td>'
                     f'<td class="num">{e(r["alt"])}<br>{e(r["alt_x"])}</td>'
                     f'<td class="mer">{e(r["meridian"])}</td>'
-                    f'<td class="num">{exp}</td>'
+                    f'<td class="exp">{exp}</td>'
                     f'<td class="num">{e(r["frames"])}</td>'
                     f'<td class="notes">{e(r["notes"])}</td>'
                     "</tr>")
             out.append("</tbody></table>")
         else:
             out.append('<p class="empty">No blocks planned.</p>')
+        out.append('<div class="lists">')
         for head, items in (("Flats", n.flats), ("Darks", n.darks),
                             ("Didn't fit, and why", _didnt_fit_lines(n, site)), ("Free time", _free_lines(n, site))):
             items = _items(head, items)
             if items:
                 out.append(f'<div class="list"><h3>{e(head)}</h3><ul>'
                            + "".join(f"<li>{e(x)}</li>" for x in items) + "</ul></div>")
-        out.append("</section>")
+        out.append("</div></section>")
     out.append(f"<footer>{e(_footer(site))}</footer></body></html>")
     return "\n".join(out)
 
