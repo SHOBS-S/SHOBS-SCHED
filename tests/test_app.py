@@ -830,6 +830,114 @@ class TestAppWithFakes(Base):
         self.assertNotIn("without weather", page.msg_var.get())
         src.fetch = real
 
+    def test_night_graph_grows_with_window(self):
+        """The weather strip and block bar get taller with the window (between their min and max) and their rows
+        never overlap; at a small window they keep their minimum."""
+        self.golden_home()
+        app = self.open()
+        page = self.build(n=1)
+        tab = page.tabs[0]
+        lh = tab.lh
+        app.geometry("1100x620+0+0")
+        self.settle(0.6)
+        small = (int(tab.wx.cget("height")), int(tab.bar.cget("height")))
+        self.assertGreaterEqual(small[0], int(lh * tab.GRAPH_LINES["wx"][0]))
+        self.assertGreaterEqual(small[1], int(lh * tab.GRAPH_LINES["bar"][0]))
+        app.geometry("1400x1400+0+0")
+        self.settle(0.6)
+        big = (int(tab.wx.cget("height")), int(tab.bar.cget("height")))
+        self.assertGreater(big[0], small[0], "the weather strip grows with the window")
+        self.assertGreater(big[1], small[1], "the block bar grows with the window")
+        self.assertLessEqual(big[0], lh * tab.GRAPH_LINES["wx"][1] + 1)
+        self.assertLessEqual(big[1], lh * tab.GRAPH_LINES["bar"][1] + 1)
+        self.assertEqual(tab._drawn_w["bar"], (int(tab.bar.winfo_width()), int(tab.bar.winfo_height())),
+                         "redrawn at the new height")
+        # row layout: in order, apart, inside the canvas, at the min and the max heights
+        for H in (int(lh * 10), int(lh * 17)):
+            r = tab.wx_rows(H)
+            self.assertLess(r["legend"] + lh / 2, r["ya"])
+            self.assertLess(r["ya"], r["yb"])
+            self.assertGreaterEqual(r["yc"] - r["yb"], lh * 0.8, "cloud bars apart from the temperature numbers")
+            self.assertGreaterEqual(r["ye"] - lh / 2 - r["yd"], lh * 0.8, "spread row apart from the dew numbers")
+            self.assertLessEqual(r["ye"] + lh / 2, H)
+        for H in (int(lh * 9.5), int(lh * 13.5)):
+            r = tab.bar_rows(H)
+            self.assertLess(r["ym"], r["yb0"])
+            self.assertGreaterEqual(r["yb1"] - r["yb0"], lh * 2.4, "a tall enough block bar")
+            self.assertLess(r["yb1"], r["ya0"])
+            self.assertGreaterEqual(r["ya1"] - r["ya0"], lh)
+            self.assertGreaterEqual(r["yt"] - lh / 2, r["ya1"], "airmass values under the band")
+            self.assertGreaterEqual(r["yh"] - r["yt"], lh, "hour labels apart from the airmass values")
+            self.assertGreaterEqual(r["yd"] - r["yh"], lh)
+            self.assertLessEqual(r["yd"] + lh / 2, H + 1)
+        # airmass numbers stay inside their block (neighbors never overlap)
+        tab.draw_bar()
+        for item in tab.bar.find_withtag("am"):
+            self.assertTrue(tab.bar.bbox(item))
+        blocks = [(tab.axis(tab.bar).x(b.start), tab.axis(tab.bar).x(b.end)) for _i, b in tab.blocks()]
+        for item in tab.bar.find_withtag("am"):
+            x0, _y0, x1, _y1 = tab.bar.bbox(item)
+            self.assertTrue(any(xa - 2 <= x0 and x1 <= xb + 2 for xa, xb in blocks), (x0, x1, blocks))
+
+    def test_save_csv_downloads_remembered_folder_and_path(self):
+        self.golden_home()
+        app = self.open()
+        self.build(n=1)
+        app.show_page(3)
+        page = app.pages[3]
+        downloads = os.path.join(self.tmp, "Downloads")
+        os.makedirs(downloads)
+        real_dl, real_ask = settings.downloads_dir, self.sa.filedialog.asksaveasfilename
+        asked = []
+        reply = {"path": ""}
+
+        def ask(**kw):
+            asked.append(kw)
+            return reply["path"]
+        settings.downloads_dir = lambda: downloads
+        self.sa.filedialog.asksaveasfilename = ask
+        try:
+            self.assertEqual(settings.export_dir(app.settings), downloads, "first time: the Downloads folder")
+            page.save_csv()                                   # cancelled: nothing written, nothing remembered
+            self.assertEqual(asked[-1]["initialdir"], downloads)
+            self.assertEqual(asked[-1]["initialfile"], "SHOBS-SCHED_ASIAIR_2026-10-20.csv")
+            self.assertFalse(app.settings.get("export_dir"))
+            self.assertFalse(page.open_btn.winfo_manager())
+            other = os.path.join(self.tmp, "plans")
+            os.makedirs(other)
+            reply["path"] = os.path.join(other, "SHOBS-SCHED_ASIAIR_2026-10-20.csv")
+            page.save_csv()
+            self.assertTrue(os.path.exists(reply["path"]))
+            msg = page.msg_var.get()
+            self.assertTrue(msg.startswith("✔ Saved"), msg)
+            self.assertIn(reply["path"], msg, "the full path is shown")
+            self.assertTrue(page.open_btn.winfo_manager(), "Open folder appears after a save")
+            self.assertEqual(page.open_folder(), other)
+            self.assertEqual(settings.load_settings()["export_dir"], other, "the folder is remembered")
+            page.save_csv()
+            self.assertEqual(asked[-1]["initialdir"], other, "next time the dialog opens there")
+            shutil.rmtree(other)
+            self.assertEqual(settings.export_dir(app.settings), downloads, "a vanished folder falls back")
+        finally:
+            settings.downloads_dir = real_dl
+            self.sa.filedialog.asksaveasfilename = real_ask
+
+    def test_downloads_dir_fallbacks(self):
+        real = os.path.expanduser
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(home)
+        os.path.expanduser = lambda p: p.replace("~", home, 1)
+        real_win = settings._windows_downloads
+        settings._windows_downloads = lambda: None          # on Windows too: test the fallbacks
+        try:
+            self.assertEqual(settings.downloads_dir(), home, "no Downloads folder: the home folder")
+            os.makedirs(os.path.join(home, "Downloads"))
+            self.assertEqual(settings.downloads_dir(), os.path.join(home, "Downloads"))
+        finally:
+            os.path.expanduser = real
+            settings._windows_downloads = real_win
+        self.assertEqual(settings.default_settings()["export_dir"], "")
+
     def test_export_clipboard_and_card(self):
         self.golden_home()
         app = self.open()
