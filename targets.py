@@ -38,6 +38,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import html
+import http.client
 import io
 import json
 import math
@@ -77,7 +78,8 @@ SOURCE_WORDS = {"NEA": "the NASA Exoplanet Archive", "VSX": "AAVSO VSX", "VizieR
 # pscomppars columns for one planet (the composite table also carries the first-error columns)
 NEA_COLUMNS = ("pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,"
                "pl_ratror,ra,dec,sy_vmag,tran_flag,pl_tranmid_reflink,pl_orbper_reflink")
-PS_COLUMNS = "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,pl_refname"
+PS_COLUMNS = ("pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,pl_tsystemref,"
+              "pl_refname")
 CATALOG_COLUMNS = ("pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,"
                    "pl_ratror,ra,dec,sy_vmag")
 
@@ -99,10 +101,12 @@ class NotFound(LookupError_):
 class NeedsMode(Exception):
     """The name resolved (SIMBAD) but is not a known planet or VSX variable: the UI asks which mode."""
 
-    def __init__(self, name: str, ra: float, dec: float, vmag: float | None, main_id: str, otype: str = ""):
+    def __init__(self, name: str, ra: float, dec: float, vmag: float | None, main_id: str, otype: str = "",
+                 source: str = "SIMBAD"):
         self.name, self.ra, self.dec, self.vmag, self.main_id, self.otype = name, ra, dec, vmag, main_id, otype
-        self.message = (f"{name} was found in SIMBAD ({main_id}{', ' + otype if otype else ''}) but is not a known "
-                        "transiting planet or VSX variable. Choose the mode to observe it in.")
+        self.source = source
+        self.message = (f"{name} was found in {source} ({main_id}{', ' + otype if otype else ''}) but is not a "
+                        "known transiting planet or VSX variable. Choose the mode to observe it in.")
         super().__init__(self.message)
 
 
@@ -152,6 +156,10 @@ def http_get(url: str, timeout: float = TIMEOUT_S) -> bytes:
         raise FetchError(f"no answer within {timeout:.0f} s") from None
     except OSError as exc:
         raise FetchError(f"network error: {exc}") from None
+    except http.client.HTTPException as exc:      # IncompleteRead, BadStatusLine, RemoteDisconnected...
+        raise FetchError(f"network error: the reply was cut off or garbled ({type(exc).__name__})") from None
+    except ValueError as exc:                     # a malformed URL or reply header
+        raise FetchError(f"network error: {exc}") from None
 
 
 def _get_text(url: str, timeout: float = TIMEOUT_S) -> str:
@@ -163,7 +171,14 @@ def _get_text(url: str, timeout: float = TIMEOUT_S) -> str:
     return text
 
 
-def _tap_csv(base: str, adql: str, nea: bool = True) -> list[dict]:
+def _expected_first_column(adql: str) -> str | None:
+    m = re.match(r"\s*select\s+(?:top\s+\d+\s+)?([A-Za-z_][\w.]*)", adql, flags=re.IGNORECASE)
+    return m.group(1).split(".")[-1].lower() if m else None
+
+
+def _tap_csv(base: str, adql: str, nea: bool = True, expect: str | None = None) -> list[dict]:
+    """Run a TAP query → rows. A reply whose header does not start with the expected column (the first one
+    selected, or `expect` for SELECT *) is an error page, not data: FetchError."""
     if nea:
         url = base + urllib.parse.urlencode({"query": adql, "format": "csv"})
     else:
@@ -174,7 +189,12 @@ def _tap_csv(base: str, adql: str, nea: bool = True) -> list[dict]:
         if "error" in head.lower() or "<votable" in head.lower():
             raise FetchError("the service rejected the query")
         raise FetchError("an unexpected web page came back instead of data")
-    return list(csv.DictReader(io.StringIO(text)))
+    reader = csv.DictReader(io.StringIO(text))
+    fields = [str(f or "").strip().lower() for f in (reader.fieldnames or [])]
+    want = (expect or _expected_first_column(adql) or "").lower()
+    if not fields or (want and want != "*" and want not in fields):
+        raise FetchError("an unexpected reply came back instead of data")
+    return list(reader)
 
 
 def nea_query(adql: str) -> list[dict]:
@@ -182,7 +202,7 @@ def nea_query(adql: str) -> list[dict]:
 
 
 def vizier_query(adql: str) -> list[dict]:
-    return _tap_csv(VIZIER_TAP, adql, nea=False)
+    return _tap_csv(VIZIER_TAP, adql, nea=False, expect="Name")
 
 
 # ---- small helpers -------------------------------------------------------------------------------------------------
@@ -196,7 +216,11 @@ def _f(value):
 
 
 def _clean(name: str) -> str:
-    return " ".join(str(name or "").replace("'", "").replace("’", "").split())
+    """Single spaces; typographic apostrophes → "'" (kept: "Barnard's Star"; ADQL escapes it)."""
+    s = str(name or "")
+    for ch in ("\u2019", "\u2018", "\u02bc", "`"):
+        s = s.replace(ch, "'")
+    return " ".join(s.split())
 
 
 def _key_name(name: str) -> str:
@@ -212,7 +236,16 @@ def _adql_str(s: str) -> str:
     return s.replace("'", "''")
 
 
-def _today_iso() -> str:
+def today_iso(site=None) -> str:
+    """The date for Target.added: tonight's date on the SITE's clock (night_date_of: before local noon it is still
+    last night) when a site is known — the one given, else the saved settings' — or the computer's date."""
+    try:
+        if site is None:
+            site = settings.site_of(settings.load_settings())
+        if site is not None and site.complete() and sky.zone_ok(site.tz):
+            return sky.night_date_of(sky.now_jd(), site.tz).isoformat()
+    except Exception:
+        pass
     return date.today().isoformat()
 
 
@@ -233,17 +266,20 @@ def _cache_path(source: str, key: str) -> str:
 
 
 def cache_read(source: str, key: str) -> tuple[dict | list | None, float | None]:
-    """(data, age in days) of a cached lookup, or (None, None)."""
+    """(data, age in days) of a cached lookup, or (None, None). A missing, unreadable or damaged cache (or a cache
+    folder that cannot be created) is simply no cache."""
     try:
         with open(_cache_path(source, key), encoding="utf-8") as fh:
             rec = json.load(fh)
-    except (OSError, ValueError):
+    except Exception:
         return None, None
     if not isinstance(rec, dict) or rec.get("format") != CACHE_FORMAT or rec.get("key") != key:
         return None, None
     t = _f(rec.get("fetched_unix"))
-    age = (time.time() - t) / 86400.0 if t is not None else None
-    return rec.get("data"), age
+    if t is None:
+        return None, None
+    data = rec.get("data")
+    return (data, (time.time() - t) / 86400.0) if isinstance(data, dict) else (None, None)
 
 
 def cache_write(source: str, key: str, query: str, data) -> None:
@@ -251,21 +287,21 @@ def cache_write(source: str, key: str, query: str, data) -> None:
     rec = {"format": CACHE_FORMAT, "app": settings.APP_NAME, "source": source, "key": key, "query": query,
            "fetched": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(timespec="seconds"),
            "fetched_unix": now, "data": data}
-    path = _cache_path(source, key)
-    tmp = path + ".tmp"
-    try:
+    try:                                   # an unwritable cache folder means no cache, never an error
+        path = _cache_path(source, key)
+        tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(rec, fh, ensure_ascii=False)
         os.replace(tmp, path)
-    except OSError as exc:
-        settings.log(f"cache: could not write {path}: {exc}")
+    except Exception as exc:
+        settings.log(f"cache: could not write the {source} lookup {key}: {exc}")
 
 
 def cached_lookup(source: str, key: str, query: str, max_age_days: float, fetch, refresh: bool = False):
     """Return (data, note). A fresh cached copy is used as is (note ""). Otherwise fetch() runs: its answer is
     cached (None = not found, not cached → NotFound from the caller). When fetch() raises FetchError, the cached
     copy (any age) comes back with a note of its age, or LookupError_ with the reason."""
-    data, age = cache_read(source, key)
+    data, age = cache_read(source, key)       # always a dict or None
     if data is not None and age is not None and age < max_age_days and not refresh:
         return data, ""
     try:
@@ -279,7 +315,7 @@ def cached_lookup(source: str, key: str, query: str, max_age_days: float, fetch,
         settings.log(f"lookup {key}: {who} did not answer ({exc.reason}); nothing cached")
         raise LookupError_(f"{who[0].upper() + who[1:]} did not answer ({exc.reason}) and there is no saved "
                            f"copy for {query}. Try again later.") from None
-    if fresh is not None:
+    if isinstance(fresh, dict):
         cache_write(source, key, query, fresh)
     return fresh, ""
 
@@ -292,7 +328,7 @@ _PREFIXES = {"wasp": "WASP", "tres": "TrES", "hat-p": "HAT-P", "hats": "HATS", "
              "hd": "HD", "hip": "HIP", "tic": "TIC", "ngts": "NGTS", "wts": "WTS", "kps": "KPS", "mascara": "MASCARA",
              "lhs": "LHS", "gl": "GL", "koi": "KOI", "lp": "LP", "kmt": "KMT", "ogle": "OGLE",
              "trappist": "TRAPPIST", "wendelstein": "Wendelstein", "dmpp": "DMPP", "epic": "EPIC",
-             "hat": "HAT", "kelt-": "KELT", "toi-": "TOI"}
+             "hat": "HAT"}
 # Surveys whose Archive names join the number with a hyphen ("TOI-2046 b", "HAT-P-23 b") rather than a space.
 _HYPHEN_SURVEYS = {"WASP", "TrES", "HAT-P", "HATS", "KELT", "XO", "Qatar", "Kepler", "K2", "TOI", "CoRoT", "NGTS",
                    "WTS", "KPS", "MASCARA", "KOI", "TRAPPIST", "DMPP", "Wendelstein"}
@@ -381,7 +417,11 @@ def _transiting(system: str) -> list[str]:
         rows = nea_query(f"select pl_name, tran_flag from pscomppars where hostname = '{_adql_str(system)}'")
     except FetchError:
         return []
-    return [r.get("pl_name", "") for r in rows if str(r.get("tran_flag", "")).strip() in ("1", "1.0")]
+    return [r.get("pl_name", "") for r in rows if _transits(r)]
+
+
+def _transits(row: dict) -> bool:
+    return _f(row.get("tran_flag")) == 1
 
 
 def _fetch_planet(name: str):
@@ -420,7 +460,7 @@ def _fetch_planet(name: str):
                 rows = nea_query(f"select pl_name, tran_flag from pscomppars where hostname = '{_adql_str(clean)}'")
             except FetchError as exc:
                 rows, last_err = [], exc
-            tr = [r["pl_name"] for r in rows if str(r.get("tran_flag", "")).strip() in ("1", "1.0")]
+            tr = [r["pl_name"] for r in rows if _transits(r)]
             names = sorted({r["pl_name"] for r in rows}, key=lambda n: (n not in tr, n))
             if len(names) > 1:
                 return {"choice": {"system": clean, "planets": names, "transiting": tr}}
@@ -441,6 +481,13 @@ def _fetch_planet(name: str):
     return {"composite": row, "ps": ps}
 
 
+# Time systems the Archive marks as not barycentric-dynamical (UTC-based, heliocentric, plain JD): a few seconds to
+# a minute off BJD_TDB, so such rows rank as if their predicted sigma were 1 minute larger.
+def _time_system_doubtful(sysref) -> bool:
+    s = str(sysref or "").strip().upper()
+    return bool(s) and ("UTC" in s or s.startswith("HJD") or s == "JD")
+
+
 def _predicted_sigma_days(period, period_err, t0, t0_err, when_jd) -> float:
     if not period or not t0 or period_err is None or t0_err is None:
         return float("inf")
@@ -451,7 +498,8 @@ def _predicted_sigma_days(period, period_err, t0, t0_err, when_jd) -> float:
 def most_precise_ephemeris(ps_rows: list[dict], when_jd: float, composite=None) -> dict | None:
     """Of the published ephemerides (Archive table `ps` rows for one planet with period, t0 and both errors), the
     one whose predicted mid-transit time at when_jd has the smallest uncertainty. composite = (period, period_err,
-    t0, t0_err) from the composite table, kept (→ None) unless a row beats it by more than 5 %. Returns
+    t0, t0_err) from the composite table, kept (→ None) unless a row beats it by more than 5 %. Rows whose
+    pl_tsystemref is UTC-based, HJD or plain JD rank with 1 minute added to their sigma. Returns
     {"period","period_err","t0","t0_err","reference","sigma_min","n"} or None. Ported from SHOBS-P."""
     cands = []
     for row in ps_rows or []:
@@ -466,6 +514,8 @@ def most_precise_ephemeris(ps_rows: list[dict], when_jd: float, composite=None) 
         if perr <= 0 or terr <= 0:
             continue
         sigma = _predicted_sigma_days(period, perr, t0, terr, when_jd)
+        if _time_system_doubtful(row.get("pl_tsystemref")):
+            sigma += 1.0 / 1440.0
         cands.append((sigma, {"period": period, "period_err": perr, "t0": t0, "t0_err": terr,
                               "reference": strip_tags(row.get("pl_refname", ""))}))
     if not cands:
@@ -502,13 +552,14 @@ def planet_target(data: dict, when_jd: float | None = None) -> Target:
     pl = Planet(name=name, period=period, period_err=period_err, t0=t0, t0_err=t0_err,
                 t14=dur / 24.0 if dur else None, depth=depth, reference=ref, source=source)
     return Target(name=name, kind="transit", mode="T", ra=_f(row.get("ra")), dec=_f(row.get("dec")),
-                  vmag=_f(row.get("sy_vmag")), source=source, planet=pl.__dict__.copy(), added=_today_iso())
+                  vmag=_f(row.get("sy_vmag")), source=source, planet=pl.__dict__.copy(), added=today_iso())
 
 
 def lookup_planet(name: str, when_jd: float | None = None, refresh: bool = False) -> Target:
     """A transiting planet from the NASA Exoplanet Archive (see the module docstring). Raises PlanetChoice for a
     star with several planets, NotFound when the Archive does not know the name, LookupError_ when it cannot be
-    reached and nothing is cached. The returned Target carries .lookup_note (cache age note or "")."""
+    reached and nothing is cached, and NeedsMode (with the Archive's position and V) for a planet that does not
+    transit or has no transit ephemeris. The returned Target carries .lookup_note (cache age note or "")."""
     clean = _clean(name)
     if not clean:
         raise NotFound("Type a planet name first.")
@@ -522,8 +573,14 @@ def lookup_planet(name: str, when_jd: float | None = None, refresh: bool = False
         raise PlanetChoice(c["system"], c["planets"], c.get("transiting"))
     t = planet_target(data, when_jd)
     t.lookup_note = note
-    if not t.planet or not t.planet.get("t14") or not t.planet.get("t0"):
-        t.lookup_note = ((note + "; ") if note else "") + "the Archive has no full transit ephemeris for it"
+    row = data["composite"]
+    flag = row.get("tran_flag")
+    no_transit = flag not in (None, "") and not _transits(row)
+    if no_transit or not t.planet or not t.planet.get("t14") or not t.planet.get("t0") or not t.planet.get("period"):
+        why = "a planet that does not transit" if no_transit else "a planet with no transit ephemeris"
+        if t.ra is None or t.dec is None:
+            raise NotFound(f"The NASA Exoplanet Archive lists {t.name} as {why}, with no position.")
+        raise NeedsMode(clean, t.ra, t.dec, t.vmag, t.name, why, source="the NASA Exoplanet Archive")
     return t
 
 
@@ -638,42 +695,52 @@ def _vizier_cone(ra: float, dec: float, radius_deg: float = 1.0 / 60.0) -> dict 
     return best
 
 
+VSX_TIMEOUT_S = 10.0           # VSX often answers 504 after ~13 s; VizieR's copy is the quicker way on
+
+
+# SIMBAD short object types that are groups of stars, not one star (a variable within 1' of a cluster centre is not
+# the cluster): clusters, associations, asterisms, groups, double/multiple stars, moving groups, streams.
+_GROUP_OTYPE_PREFIXES = ("Cl", "OpC", "GlC", "As", "Gr", "**", "C?", "MGr", "St*", "SCG", "PoC", "SC", "Gl?")
+
+
+def is_single_star_otype(short: str) -> bool:
+    """True for a SIMBAD short type that is one star ("*", "SB*", "EB*", "V*", "Mi*", "RR*"...)."""
+    s = str(short or "").strip()
+    return bool(s) and "*" in s and not s.startswith(_GROUP_OTYPE_PREFIXES)
+
+
 def _fetch_variable(name: str):
     clean = _clean(name)
-    vsx_reason = None
-    for v in vsx_name_variants(clean):
-        try:
-            text = _get_text(VSX_API + urllib.parse.urlencode({"view": "api.object", "ident": v, "format": "json"}))
-            got = parse_vsx_json(text)
-        except FetchError as exc:
-            vsx_reason = exc
-            break
-        if got:
-            return got
-    if vsx_reason is None:
-        return None                          # VSX answered: not a known variable
+    try:                                     # one VSX call: VSX resolves other names itself ("Algol" → bet Per)
+        text = _get_text(VSX_API + urllib.parse.urlencode({"view": "api.object", "ident": clean, "format": "json"}),
+                         VSX_TIMEOUT_S)
+        return parse_vsx_json(text)          # None: VSX answered that it does not know the name
+    except FetchError as exc:
+        vsx_reason = exc
     settings.log(f"VSX did not answer for {clean} ({vsx_reason.reason}); trying VizieR's copy")
     got = _vizier_by_name(clean)             # FetchError here → both down → cache / LookupError_
     if got:
         return got
+    not_found = NotFound(f"VSX did not answer ({vsx_reason.reason}) and VizieR's copy of VSX has no star called "
+                         f"{clean}. Check the spelling, or try again later.")
     try:
         s = resolve_simbad(clean)
     except LookupError_:
-        return None
-    short = s.get("otype_short") or ""
-    if s.get("ra") is None or (short and "*" not in short):
-        return None                          # not a star (a cluster, a galaxy): a variable nearby is not it
+        raise not_found from None
+    if s.get("ra") is None or not is_single_star_otype(s.get("otype_short")):
+        raise not_found                      # a cluster, a galaxy, a double star: a variable nearby is not it
     got = _vizier_cone(s["ra"], s["dec"])
-    if got:
-        got["matched_by_position"] = True
-        got["simbad_id"] = s.get("main_id", "")
-        got["sep_arcsec"] = round(float(sky.sep_deg(s["ra"], s["dec"], got["ra"], got["dec"])) * 3600.0, 1)
+    if not got or got.get("vtype", "").upper().startswith("CST") or not got.get("period"):
+        raise not_found                      # a constant or period-less entry found only by position: not it
+    got["matched_by_position"] = True
+    got["simbad_id"] = s.get("main_id", "")
+    got["sep_arcsec"] = round(float(sky.sep_deg(s["ra"], s["dec"], got["ra"], got["dec"])) * 3600.0, 1)
     return got
 
 
 def elements_from_vsx(v: dict) -> VarElements:
     """The common variable dict → VarElements (rules in the spec: pulsators and long-period any time from maxima;
-    eclipsing timed minima with ±60 min, or ±0.6 × the eclipse duration when VSX gives it)."""
+    eclipsing timed minima with ±60 min, or ±0.6 × the eclipse duration when VSX gives it, at most ±240 min)."""
     kind = classify_vtype(v.get("vtype", ""))
     el = VarElements(vtype=v.get("vtype", ""), period=v.get("period"), epoch=v.get("epoch"),
                      mag_max=v.get("max"), mag_min=v.get("min"))
@@ -681,7 +748,7 @@ def elements_from_vsx(v: dict) -> VarElements:
         el.epoch_kind, el.any_time = "min", False
         pct, p = v.get("eclipse_pct"), v.get("period")
         if pct and p and 0 < pct <= 100:
-            el.event_halfwidth_min = round(max(20.0, 0.6 * pct / 100.0 * p * 1440.0), 1)
+            el.event_halfwidth_min = round(min(240.0, max(20.0, 0.6 * pct / 100.0 * p * 1440.0)), 1)
         if not (el.period and el.epoch):
             el.any_time = True               # no elements: nothing to time
     else:
@@ -703,7 +770,7 @@ def lookup_variable(name: str, refresh: bool = False) -> Target:
     el = elements_from_vsx(data)
     t = Target(name=data.get("name") or clean, kind="variable", mode="V", ra=data.get("ra"), dec=data.get("dec"),
                vmag=data.get("max"), source=data.get("via") or "VSX", elements=el.__dict__.copy(),
-               added=_today_iso())
+               added=today_iso())
     if data.get("matched_by_position"):
         pos = (f"found by position: VSX's {t.name} is {data.get('sep_arcsec', 0):.0f}″ from SIMBAD's "
                f"{data.get('simbad_id') or clean}")
@@ -718,7 +785,9 @@ _SIMBAD_FMT = 'format object "%IDLIST(1)|%COO(d;A D)|%FLUXLIST(V;F)|%OTYPE(S)|%O
 
 
 def parse_simbad_script(text: str) -> dict | None:
-    """sim-script output "V* DY Peg|347.21327 +17.21555|10.26|SXPheV*|SX*" → dict; None for '::error::'."""
+    """sim-script output "V* DY Peg|347.21327 +17.21555|10.26|SXPheV*|SX*" → dict; None for SIMBAD's '::error::'
+    (it does not know the name). Anything else unreadable (a web page, a throttling notice, a cut-off reply) is a
+    FetchError, so a cached copy or a plain "SIMBAD did not answer" follows, never "not found"."""
     if "::error::" in text:
         return None
     for line in text.splitlines():
@@ -734,7 +803,7 @@ def parse_simbad_script(text: str) -> dict | None:
         return {"main_id": " ".join(parts[0].split()), "ra": ra, "dec": dec, "vmag": _f(parts[2].strip()),
                 "otype": parts[3].strip() if len(parts) > 3 else "",
                 "otype_short": parts[4].strip() if len(parts) > 4 else ""}
-    return None
+    raise FetchError("SIMBAD sent a reply that could not be read")
 
 
 def _fetch_simbad(name: str):
@@ -760,7 +829,9 @@ def resolve_simbad(name: str, refresh: bool = False) -> dict:
 
 def add_target(name: str, when_jd: float | None = None) -> Target:
     """Planet first (when the name looks like one, or the Archive knows it), else a VSX variable, else SIMBAD →
-    NeedsMode. Raises PlanetChoice (several planets), NeedsMode, NotFound or LookupError_ (nothing answered)."""
+    NeedsMode. Raises PlanetChoice (several planets), NeedsMode, NotFound or LookupError_. When the Archive or
+    VSX/VizieR did not answer, the result is LookupError_ with that cause, never NeedsMode (the name may well be a
+    planet or a variable). VSX down but VizieR's copy answering counts as answered."""
     clean = _clean(name)
     if not clean:
         raise NotFound("Type a name first.")
@@ -785,8 +856,9 @@ def add_target(name: str, when_jd: float | None = None) -> Target:
         # query decides, so "DY Peg" costs a single Archive call (the alias service hangs on unknown names).
         try:
             hosts = nea_query(f"select pl_name from pscomppars where hostname = '{_adql_str(clean)}'")
-        except FetchError:
+        except FetchError as exc:
             hosts = []
+            problems.append(f"The NASA Exoplanet Archive did not answer ({exc.reason}).")
         if hosts:
             t = try_planet()
             if t:
@@ -806,6 +878,13 @@ def add_target(name: str, when_jd: float | None = None) -> Target:
     except LookupError_ as exc:
         problems.append(exc.message)
         raise LookupError_(" ".join(problems)) from None
+    if problems:
+        # a service that should have known the name did not answer: say so rather than ask for a mode
+        raise LookupError_(" ".join(problems) + f" (SIMBAD knows {clean} as {s['main_id']}.)")
+    if str(s.get("otype_short") or "").startswith("Pl") or "planet" in str(s.get("otype") or "").lower():
+        raise NotFound(f"SIMBAD lists {clean} ({s['main_id']}) as a planet, but the NASA Exoplanet Archive has no "
+                       "transit ephemeris under that name. Try its Archive name (for example WASP-12 b), or type "
+                       "the planet's values by hand.")
     raise NeedsMode(clean, s["ra"], s["dec"], s.get("vmag"), s["main_id"], s.get("otype", ""))
 
 
@@ -904,7 +983,8 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     """Other good transits in the given nights, in John's order (thresholds from options):
       1. FULL transit: ingress − suggest_baseline_min … egress + suggest_baseline_min above every limit (sky.up_mask);
          the transit itself (ingress…egress) inside the planning darkness (site.sun_alt); the baselines may run
-         into nautical twilight (Sun ≤ −12°, or the planning darkness if that is brighter) — as the planner allows;
+         into nautical twilight (Sun ≤ −12°, or the planning darkness if that is brighter), as the planner does
+         (rule 2 in SPEC B: the plan doc's HAT-P-23 b baseline starts in twilight);
       2. host V in [suggest_vmin, suggest_vmax];  3. depth ≥ suggest_min_depth;
       4. mean sky.moon_sky_penalty over the window ≤ suggest_moon_penalty_max;
       5. ranked by S/N = depth × sqrt(minutes in transit) / noise_per_minute(V, Moon-brightened sky, airmass),
@@ -984,7 +1064,7 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
                     reference="Archive composite (planet list)", source="NEA")
         t = Target(name=p["name"], kind="transit", mode="T", ra=p["ra"], dec=p["dec"], vmag=p["vmag"],
                    enabled=False, suggested=True, source="NEA", planet=pl.__dict__.copy(), notes=note,
-                   added=_today_iso())
+                   added=today_iso(site))
         t.suggest_info = {"night": d.isoformat(), "t1": ev["t1"], "tc": ev["tc"], "t4": ev["t4"], "score": score,
                           "snr": snr, "moon_penalty": pen, "tc_sigma_min": sig}
         out.append(t)

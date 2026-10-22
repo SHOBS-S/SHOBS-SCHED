@@ -60,10 +60,12 @@ class Router:
     def __init__(self, rules):
         self.rules = rules
         self.calls = []
+        self.timeouts = []
 
     def __call__(self, url, timeout=30):
         u = urllib.parse.unquote_plus(url)
         self.calls.append(u)
+        self.timeouts.append(timeout)
         for needles, reply in self.rules:
             if all(n in u for n in needles):
                 if isinstance(reply, BaseException):
@@ -406,7 +408,10 @@ class TestVSXParse(unittest.TestCase):
         self.assertEqual(v["name"], "bet Per")
         self.assertEqual((el.epoch_kind, el.any_time), ("min", False))
         # EclipseDuration 14 % of 2.867343 d = 578 min; half-width ≈ 0.6 × that
-        self.assertAlmostEqual(el.event_halfwidth_min, 0.6 * 0.14 * 2.867343 * 1440, delta=0.1)
+        # 0.6 × 578 min = 347 min, capped at ±240 min
+        self.assertEqual(el.event_halfwidth_min, 240.0)
+        short = dict(v, period=0.5, eclipse_pct=10.0)               # 72-min eclipse → ±43.2 min
+        self.assertAlmostEqual(T.elements_from_vsx(short).event_halfwidth_min, 43.2)
 
     def test_eclipsing_without_duration(self):
         v, el = self.el("targets_vsx_v404lyr.json")                # "EA+GDOR": the eclipses are timed
@@ -489,8 +494,34 @@ class TestLookupVariable(Base):
             (["sim-script", "query id NGC 7789"], "targets_simbad_ngc7789.txt"),
             (["B/vsx/vsx", "CONTAINS"], "targets_vizier_cone_ngc7789.csv"),     # V0734 Cas, 45" away
         ])
+        with self.assertRaises(T.NotFound) as cm:
+            T.lookup_variable("NGC 7789")
+        self.assertEqual(cm.exception.message,
+                         "VSX did not answer (refused the request, HTTP 403) and VizieR's copy of VSX has no star "
+                         "called NGC 7789. Check the spelling, or try again later.")
+
+    def test_cluster_typed_cl_star(self):
+        """SIMBAD types some clusters "Cl*" (with a star sign): still not one star (review MUST 4)."""
+        self.route([
+            (["api.object"], DOWN),
+            (["B/vsx/vsx", "Name = "], EMPTY_VIZ),
+            (["sim-script"], b"NGC  7789|359.3342 +56.7261|6.7|Cluster*|Cl*\n"),
+            (["B/vsx/vsx", "CONTAINS"], "targets_vizier_cone_ngc7789.csv"),
+        ])
         with self.assertRaises(T.NotFound):
             T.lookup_variable("NGC 7789")
+
+    def test_cone_ignores_constant_or_periodless(self):
+        cst = fx(EMPTY_VIZ) + (b'1,2,"bet Per                       ",0,47.0422,40.9557,"CST                           "'
+                               b',,2.09,,"V         ",,,2.1,,"V       ",,,,,,"B8V",B\n')
+        self.route([
+            (["api.object"], VSX403),
+            (["B/vsx/vsx", "Name = "], EMPTY_VIZ),
+            (["sim-script", "query id Algol"], "targets_simbad_algol.txt"),
+            (["B/vsx/vsx", "CONTAINS"], cst),
+        ])
+        with self.assertRaises(T.NotFound):
+            T.lookup_variable("Algol")
 
     def test_vsx_says_unknown(self):
         r = self.route([(["api.object"], "targets_vsx_none.json")])
@@ -498,6 +529,7 @@ class TestLookupVariable(Base):
             T.lookup_variable("Nosuch Star")
         self.assertIn("VSX has no variable star called Nosuch Star", cm.exception.message)
         self.assertFalse(any("tapvizier" in u for u in r.calls))   # VSX answered: no fallback needed
+        self.assertEqual(r.timeouts, [T.VSX_TIMEOUT_S])              # one VSX call, short timeout
 
     def test_everything_down(self):
         self.route([([""], DOWN)])
@@ -534,7 +566,8 @@ class TestAddTarget(Base):
         self.route(planet_rules())
         t = T.add_target("hat-p-23b", WHEN)
         self.assertEqual((t.kind, t.mode, t.name), ("transit", "T", "HAT-P-23 b"))
-        self.assertEqual(t.added, date.today().isoformat())
+        self.assertRegex(t.added, r"^\d{4}-\d\d-\d\d$")
+        self.assertLessEqual(abs((date.fromisoformat(t.added) - date.today()).days), 1)   # midnight-safe
 
     def test_variable(self):
         r = self.route([
@@ -817,6 +850,195 @@ class TestCampaignProgress(unittest.TestCase):
         self.assertEqual(T.campaign_progress(hd, sch, today), (3, 5))  # 19, 21, 22
         self.assertEqual(T.campaign_progress(other, sch, today), (1, 1))
         self.assertEqual(T.campaign_progress(hd, Schedule(), today), (0, 5))
+
+
+# ---- review fixes (Fable review of 22 Oct) ---------------------------------------------------------------------------
+
+class TestReview(Base):
+    def test_http_exceptions_become_fetch_errors(self):
+        import http.client
+        orig = T.urllib.request.urlopen
+        try:
+            for exc in (http.client.IncompleteRead(b"x"), http.client.BadStatusLine("garbage"),
+                        http.client.RemoteDisconnected("closed")):
+                def boom(*a, _e=exc, **k):
+                    raise _e
+                T.urllib.request.urlopen = boom
+                with self.assertRaises(T.FetchError) as cm:
+                    T.http_get("https://example.org")
+                self.assertIn("network error", cm.exception.reason)
+        finally:
+            T.urllib.request.urlopen = orig
+
+    def test_cut_off_reply_falls_back_to_cache(self):
+        self.route([(["api.object", "DY Peg"], "targets_vsx_dypeg.json")])
+        T.lookup_variable("DY Peg", refresh=True)
+        self.route([([""], T.FetchError("network error: the reply was cut off or garbled (IncompleteRead)"))])
+        t = T.lookup_variable("DY Peg", refresh=True)
+        self.assertEqual(t.name, "DY Peg")
+        self.assertIn("cut off", t.lookup_note)
+
+    def test_archive_down_and_simbad_says_planet(self):
+        self.route([
+            (["exoplanetarchive"], DOWN),
+            (["api.object"], "targets_vsx_none.json"),
+            (["sim-script"], b"WASP-12b|097.6366525384800 +29.6722954173500||Planet|Pl\n"),
+        ])
+        with self.assertRaises(T.LookupError_) as cm:
+            T.add_target("wasp-12 b")
+        self.assertNotIsInstance(cm.exception, T.NotFound)
+        self.assertIn("NASA Exoplanet Archive did not answer", cm.exception.message)
+        self.assertIn("HTTP 503", cm.exception.message)
+
+    def test_archive_down_for_a_star_name_is_reported_not_needs_mode(self):
+        self.route([
+            (["exoplanetarchive"], DOWN),
+            (["api.object"], "targets_vsx_none.json"),
+            (["sim-script"], "targets_simbad_ngc7789.txt"),
+        ])
+        with self.assertRaises(T.LookupError_) as cm:
+            T.add_target("NGC 7789")
+        self.assertIn("did not answer (service unavailable, HTTP 503)", cm.exception.message)
+
+    def test_simbad_planet_with_archive_up(self):
+        self.route([
+            (["nph-aliaslookup"], TIMEOUT),
+            (["exoplanetarchive"], EMPTY_NEA),
+            (["api.object"], "targets_vsx_none.json"),
+            (["sim-script"], b"Foo-1b|097.6 +29.6||Planet|Pl\n"),
+        ])
+        with self.assertRaises(T.NotFound) as cm:
+            T.add_target("Foo-1 b")
+        self.assertIn("as a planet", cm.exception.message)
+
+    def test_unusable_cache_folder(self):
+        orig = settings.cache_dir
+
+        def no_cache():
+            raise PermissionError(13, "Permission denied", "/read-only/cache")
+        settings.cache_dir = no_cache
+        try:
+            self.route([(["api.object", "DY Peg"], "targets_vsx_dypeg.json")])
+            self.assertEqual(T.lookup_variable("DY Peg").name, "DY Peg")
+            self.route([([""], DOWN)])
+            with self.assertRaises(T.LookupError_):
+                T.lookup_variable("DY Peg")
+        finally:
+            settings.cache_dir = orig
+
+    def test_damaged_cache_files(self):
+        path = T._cache_path("VSX", "vsx:variable:dy peg")
+        for text in ("{not json",
+                     '{"format":"shobs-lookup-cache/1","key":"vsx:variable:dy peg","fetched_unix":"abc",'
+                     '"data":{"name":"X"}}',
+                     '{"format":"shobs-lookup-cache/1","key":"vsx:variable:dy peg","fetched_unix":1,'
+                     '"data":"garbage"}'):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            self.assertEqual(T.cache_read("VSX", "vsx:variable:dy peg"), (None, None))
+            self.route([(["api.object", "DY Peg"], "targets_vsx_dypeg.json")])
+            self.assertEqual(T.lookup_variable("DY Peg").name, "DY Peg")
+            os.remove(path)
+
+    def test_apostrophes_kept_and_escaped(self):
+        self.assertEqual(T._clean("Barnard\u2019s  Star"), "Barnard's Star")
+        r = self.route([
+            (["hostname = 'Barnard''s Star'"], EMPTY_NEA),
+            (["api.object", "Barnard's Star"], "targets_vsx_none.json"),
+            (["sim-script", "query id Barnard's Star"], b"NAME Barnard's Star|269.452 +04.693|9.51|BYDraV*|BY*\n"),
+        ])
+        with self.assertRaises(T.NeedsMode) as cm:
+            T.add_target("Barnard\u2019s Star")
+        self.assertEqual(cm.exception.main_id, "NAME Barnard's Star")
+        self.assertEqual(len(r.calls), 3)
+
+    def test_unreadable_simbad_reply(self):
+        with self.assertRaises(T.FetchError):
+            T.parse_simbad_script("<html><body>SIMBAD is temporarily unavailable</body></html>")
+        with self.assertRaises(T.FetchError):
+            T.parse_simbad_script("V* DY Peg|347.21")                  # cut off
+        self.route([
+            (["exoplanetarchive"], EMPTY_NEA),
+            (["api.object"], "targets_vsx_none.json"),
+            (["sim-script"], b"<html><body>SIMBAD is temporarily unavailable</body></html>"),
+        ])
+        with self.assertRaises(T.LookupError_) as cm:
+            T.add_target("DY Peg")
+        self.assertNotIsInstance(cm.exception, T.NotFound)
+        self.assertIn("SIMBAD did not answer", cm.exception.message)
+
+    def test_non_transiting_planet_needs_mode(self):
+        comp = fx("targets_nea_comp_tres3b.csv").decode()
+        head, row = comp.strip().split("\n")
+        cells = row.split(",")
+        cols = head.split(",")
+        cells[cols.index("tran_flag")] = "0"
+        not_transiting = (head + "\n" + ",".join(cells) + "\n").encode()
+        self.route([
+            (["nph-aliaslookup"], TIMEOUT),
+            (["pscomppars", "pl_name = 'TrES-3 b'"], not_transiting),
+            (["from ps where"], EMPTY_NEA),
+            (["pscomppars"], EMPTY_NEA),
+        ])
+        with self.assertRaises(T.NeedsMode) as cm:
+            T.lookup_planet("TrES-3 b", WHEN)
+        e = cm.exception
+        self.assertEqual((e.main_id, e.source), ("TrES-3 b", "the NASA Exoplanet Archive"))
+        self.assertAlmostEqual(e.ra, 268.0291106)
+        self.assertAlmostEqual(e.vmag, 12.362)
+        self.assertIn("does not transit", e.message)
+
+    def test_planet_without_duration_needs_mode(self):
+        import csv, io
+        row = next(csv.DictReader(io.StringIO(fx("targets_nea_comp_tres3b.csv").decode())))
+        row["pl_trandur"] = ""
+        clear_cache()
+        T.cache_write("NEA", "nea:planet:tres-3 b", "TrES-3 b", {"composite": row, "ps": []})
+        self.route([])
+        with self.assertRaises(T.NeedsMode) as cm:
+            T.lookup_planet("TrES-3 b", WHEN)
+        self.assertIn("no transit ephemeris", cm.exception.message)
+
+    def test_error_text_instead_of_csv(self):
+        self.route([(["nph-aliaslookup"], TIMEOUT), ([""], b"ERROR\nsomething went wrong\n")])
+        with self.assertRaises(T.LookupError_) as cm:
+            T.lookup_planet("WASP-12 b", WHEN)
+        self.assertNotIsInstance(cm.exception, T.NotFound)
+        self.assertIn("unexpected reply", cm.exception.message)
+        self.route([([""], b"")])
+        with self.assertRaises(T.FetchError):
+            T.vizier_query("SELECT TOP 5 * FROM \"B/vsx/vsx\" WHERE Name = 'x'")
+
+    def test_utc_and_hjd_rows_are_demoted(self):
+        base = {"pl_orbper": "2.0", "pl_orbpererr1": "1e-6", "pl_tranmid": "2460000.0", "pl_tranmiderr1": "0.0005"}
+        utc = dict(base, pl_tsystemref="BJD-UTC", pl_refname="UTC row")
+        tdb = dict(base, pl_tranmiderr1="0.0006", pl_tsystemref="BJD-TDB", pl_refname="TDB row")
+        self.assertEqual(T.most_precise_ephemeris([utc, tdb], WHEN)["reference"], "TDB row")
+        self.assertEqual(T.most_precise_ephemeris([dict(utc, pl_tsystemref=""), tdb], WHEN)["reference"], "UTC row")
+        for ref, doubtful in (("HJD", True), ("HJD-UTC", True), ("JD", True), ("BJD", False), ("BJD-TDB", False),
+                              ("", False)):
+            self.assertEqual(T._time_system_doubtful(ref), doubtful, ref)
+
+    def test_tran_flag_values(self):
+        self.assertTrue(T._transits({"tran_flag": "1"}))
+        self.assertTrue(T._transits({"tran_flag": "1.0"}))
+        self.assertTrue(T._transits({"tran_flag": " 1 "}))
+        self.assertFalse(T._transits({"tran_flag": "0"}))
+        self.assertFalse(T._transits({}))
+
+    def test_single_star_otypes(self):
+        for o in ("*", "SB*", "EB*", "V*", "SX*", "RR*", "Mi*", "BY*"):
+            self.assertTrue(T.is_single_star_otype(o), o)
+        for o in ("Cl*", "OpC", "GlC", "As*", "**", "Gr*", "C?*", "MGr", "St*", "G", "AGN", "", None, "Pl"):
+            self.assertFalse(T.is_single_star_otype(o), o)
+
+    def test_added_is_the_sites_tonight(self):
+        tokyo = Site(name="JP", lat=35.0, lon=139.0, tz="Asia/Tokyo")
+        self.assertEqual(T.today_iso(tokyo), sky.night_date_of(sky.now_jd(), "Asia/Tokyo").isoformat())
+        res = T.suggest_transits(SITE, OPTICS, {}, NIGHTS, catalog=small_catalog())
+        self.assertTrue(res)
+        want = sky.night_date_of(sky.now_jd(), SITE.tz).isoformat()
+        self.assertTrue(all(t.added == want for t in res))
 
 
 def tearDownModule():
