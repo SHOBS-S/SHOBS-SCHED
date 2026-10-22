@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import types
 import unittest
 from datetime import date, timedelta
@@ -226,6 +227,7 @@ class Base(unittest.TestCase):
         self._saved_modules = dict(sched_app._MODULES)
         if self.use_fakes:
             fakes, self.calls = make_fakes()
+            self.fakes = fakes
             sched_app._MODULES.clear()
             sched_app._MODULES.update(fakes)
         self.app = None
@@ -260,6 +262,13 @@ class Base(unittest.TestCase):
         self.app.update()
         return self.app
 
+    def settle(self, seconds: float = 0.4):
+        """Let the debounced redraws run (they wait 80 ms after the last resize)."""
+        t0 = time.time()
+        while time.time() - t0 < seconds:
+            self.app.update()
+            time.sleep(0.02)
+
     def pump(self):
         self.app.jobs.wait(300)
         for _ in range(3):
@@ -267,6 +276,7 @@ class Base(unittest.TestCase):
 
 
 class TestAppWithFakes(Base):
+    # ---- start, Setup ----
     def test_standalone_clean_home_every_page(self):
         app = self.open()
         self.assertEqual(app.page_index, 0, "a fresh home opens on Setup")
@@ -303,6 +313,11 @@ class TestAppWithFakes(Base):
         self.assertIn("site.lat", saved["set_here"])
         self.assertNotIn("site.lon", saved["set_here"])
         self.assertTrue(setup.tags["site.lat"].winfo_manager(), "the overridden field shows its 'set here' tag")
+        # typing SHOBS-P's own value back follows SHOBS-P again
+        setup.vars["site.lat"].set("35.303")
+        self.assertTrue(setup.save())
+        self.assertNotIn("site.lat", settings.load_settings()["set_here"])
+        self.assertFalse(setup.tags["site.lat"].winfo_manager())
         with open(p, encoding="utf-8") as fh:
             self.assertNotIn("set_here", fh.read(), "SHOBS-P's file is never written")
 
@@ -329,16 +344,44 @@ class TestAppWithFakes(Base):
         self.assertTrue(setup.msg_var.get().startswith("✔"))
         self.assertEqual(self.sa.parse_horizon("10 x")[0], [])
 
+    def test_setup_unsaved_changes_on_leave_and_close(self):
+        self.golden_home()
+        app = self.open()
+        app.show_page(0)
+        setup = app.pages[0]
+        setup.vars["site.min_alt"].set("35")
+        app.show_page(1)                                   # valid change: saved on the way out, and said so
+        self.assertEqual(app.page_index, 1)
+        self.assertEqual(settings.load_settings()["site"]["min_alt"], 35.0)
+        self.assertIn("kept", app.status_var.get())
+        app.show_page(0)
+        setup.vars["site.min_alt"].set("high")             # invalid: asked; "no" keeps the page
+        app.auto_answers = [False]
+        app.show_page(2)
+        self.assertEqual(app.page_index, 0)
+        self.assertTrue(setup.msg_var.get().startswith("✖ Not saved"))
+        app.auto_answers = [True]                          # "drop the changes"
+        app.show_page(2)
+        self.assertEqual(app.page_index, 2)
+        self.assertEqual(setup.vars["site.min_alt"].get(), "35")
+        app.show_page(0)
+        setup.vars["site.max_airmass"].set("2.5")
+        app.on_close()                                     # the window's close button saves too
+        self.app = None
+        self.assertEqual(settings.load_settings()["site"]["max_airmass"], 2.5)
+
+    # ---- Targets ----
     def test_targets_toggle_priority_add_suggest(self):
         self.golden_home()
         app = self.open()
         app.show_page(1)
         page = app.pages[1]
         self.pump()
+        self.assertNotIn("mode", page.tree["columns"], "the colored square carries the mode")
+        self.assertEqual(page.tree.column("next", "stretch"), True)
         dy = next(t for t in app.targets if t.name == "DY Peg")
         self.assertEqual(page.tree.set(dy.id, "plan"), "☑")
         self.assertEqual(page.tree.set(dy.id, "next"), "any time")
-        # click the Plan cell
         page.tree.see(dy.id)
         app.update()
         x, y, w, h = page.tree.bbox(dy.id, "plan")
@@ -349,10 +392,17 @@ class TestAppWithFakes(Base):
         page.set_priority(dy.id, "High")
         self.assertEqual(next(t for t in settings.load_targets() if t.name == "DY Peg").priority, "High")
         toi = next(t for t in app.targets if t.name == "TOI-2046 b")
-        self.assertEqual(page.tree.set(toi.id, "tc"), "⚠ ± 12.5 min")
+        self.assertIn("⚠ Tc ± 12.5 min", page.tree.set(toi.id, "source"))
+        page.tree.selection_set(toi.id)
+        app.update()
+        self.assertIn("depth 1.47 %", page.detail_var.get())
+        self.assertIn("Tc ⚠ ± 12.5 min", page.detail_var.get())
         hd = next(t for t in app.targets if t.name == "HD 219134")
-        self.assertIn("1 of 5 this week", page.tree.set(hd.id, "campaign"))
-        self.assertIn("HD 219134 c", page.tree.set(hd.id, "campaign"))
+        page.tree.selection_set(hd.id)
+        app.update()
+        self.assertIn("1 of 5 this week", page.detail_var.get())
+        self.assertIn("HD 219134 c", page.detail_var.get())
+        self.assertIn("none yet", page.tree.set("grp:suggested", "next"), "the empty hint, not in the Name column")
         # add: plain, unknown, needs a mode, several planets
         page.add("RR Lyr")
         self.pump()
@@ -373,7 +423,6 @@ class TestAppWithFakes(Base):
         page.add("RR Lyr")
         self.pump()
         self.assertTrue(page.add_ind.var.get().startswith("⚠ RR Lyr is already"))
-        # suggested transits, tick one, keep it
         page.find_suggested()
         self.pump()
         w2 = next(t for t in app.targets if t.name == "WASP-2 b")
@@ -393,44 +442,67 @@ class TestAppWithFakes(Base):
         hd = next(t for t in app.targets if t.name == "HD 219134")
         saved = []
         dlg = self.sa.EditTargetDialog(app, hd, on_save=saved.append, modal=False)
+        self.assertIsInstance(dlg.sb, self.sa.ScrollBody, "the body scrolls; the buttons stay on screen")
+        self.assertLessEqual(int(dlg.sb.canvas.cget("height")), int(app.winfo_screenheight() * 0.70))
         dlg.vars["min_alt"].set("40")
         dlg.vars["window"].set("21:00-02:30")
         dlg.vars["goal_per_week"].set("4")
         dlg.add_no_transit({"name": "HD 219134 d", "period": 46.86, "t0": 2457000.0, "t14": 0.2}, 10)
-        self.assertTrue(dlg.save())
+        dlg._return()                                       # Return = Save
         t = saved[0]
         kinds = [r["kind"] for r in t.rules]
         self.assertEqual(kinds.count("no_transit"), 3)
         self.assertIn({"kind": "min_alt", "value": 40.0}, t.rules)
         self.assertEqual(t.goal_per_week, 4)
-        dlg = self.sa.EditTargetDialog(app, hd, on_save=saved.append, modal=False)
-        dlg.vars["window"].set("late")
-        self.assertFalse(dlg.save())
-        self.assertTrue(dlg.msg_var.get().startswith("✖ Not saved: Only between"))
-        dlg.win.destroy()
+        for key, value, start in (("window", "late", "✖ Not saved: Only between"),
+                                  ("goal_per_week", "2.5", "✖ Not saved: Goal must be a whole number"),
+                                  ("block_min", "", "✖ Not saved: Block length is empty")):
+            dlg = self.sa.EditTargetDialog(app, hd, on_save=saved.append, modal=False)
+            dlg.vars[key].set(value)
+            self.assertFalse(dlg.save())
+            self.assertTrue(dlg.msg_var.get().startswith(start), dlg.msg_var.get())
+            dlg.win.focus_force()
+            app.update()
+            dlg.win.event_generate("<Escape>")              # Escape = Cancel
+            app.update()
+            self.assertFalse(dlg.win.winfo_exists())
+
+    # ---- Schedule ----
+    def build(self, start=date(2026, 10, 20), n=2):
+        page = self.app.pages[2]
+        self.app.show_page(2)
+        page.build(start, n)
+        self.pump()
+        return page
 
     def test_schedule_build_draw_lock_rebuild(self):
         self.golden_home()
         app = self.open()
-        app.show_page(2)
-        page = app.pages[2]
-        page.build(date(2026, 10, 20), 2)
-        self.pump()
+        page = self.build()
         self.assertEqual(len(app.schedule.nights), 2, page.ind.var.get())
         self.assertEqual(len(page.tabs), 2)
         self.assertTrue(page.msg_var.get().startswith("✔ Built 2 nights"), page.msg_var.get())
+        self.assertEqual(page.n_var.get(), "2")
+        self.assertEqual(app.options["nights"], 2)
         tab = page.tabs[0]
+        self.assertTrue(tab.tab_text().startswith("⚠ "), "warning mark first, no padding")
+        self.assertFalse(tab.tab_text().endswith(" "))
         app.update()
         tab.draw_bar()
         tab.draw_weather()
         texts = [tab.bar.itemcget(i, "text") for i in tab.bar.find_all() if tab.bar.type(i) == "text"]
         self.assertIn("Site clock", texts)
+        self.assertTrue(any(s.startswith("Moon ") and "%" in s for s in texts))
         self.assertTrue(any("·" in s or s.startswith("X ") for s in texts), "airmass values under the blocks")
+        fonts = {tab.bar.itemcget(i, "font") for i in tab.bar.find_all() if tab.bar.type(i) == "text"}
+        self.assertFalse([f for f in fonts if " 8" in f or " 7" in f], fonts)
         wtexts = [tab.wx.itemcget(i, "text") for i in tab.wx.find_all() if tab.wx.type(i) == "text"]
         self.assertTrue(any(s.startswith("⚠ dew from") for s in wtexts), wtexts)
         self.assertGreater(len(tab.table.get_children()), 3)
         first = tab.table.get_children()[0]
         self.assertTrue(tab.table.tag_has("modeV", first) or tab.table.tag_has("modeT", first))
+        self.assertFalse(self.sa.scrolls_itself(tab.table), "the wheel over the nightly table scrolls the page")
+        self.assertTrue(self.sa.scrolls_itself(app.pages[1].tree))
         # lock the second block, mark the first Done, rebuild: both survive
         iid = tab.table.get_children()[1]
         tab.table.selection_set(iid)
@@ -441,44 +513,228 @@ class TestAppWithFakes(Base):
         tab.select_block(int(first))
         tab.set_status("done")
         self.assertEqual(settings.load_schedule().nights[0]["blocks"][int(first)]["status"], "done")
-        page.build(date(2026, 10, 20), 2)
-        self.pump()
+        self.build()
         kept = [b for b in page.night(0).blocks_obj() if b.target_id == b_before.target_id]
         self.assertEqual(len(kept), 1)
         self.assertTrue(kept[0].locked)
         self.assertAlmostEqual(kept[0].start, b_before.start, places=6)
-        # edit times → set by you, rebuilt night keeps it
+        # edit times: the last block shortened → set by you, rebuilt night keeps it
         tab = page.tabs[0]
-        i = next(i for i, b in tab.blocks() if b.target_id == b_before.target_id)
-        self.assertTrue(tab.set_times(i, "23:00", "23:40"))
+        i, last = tab.blocks()[-1]
+        tz = app.site.tz
+        new_end = sky.hhmm(last.start + 30 / 1440, tz)
+        self.assertTrue(tab.set_times(i, sky.hhmm(last.start, tz), new_end))
         self.pump()
-        b = next(b for b in page.night(0).blocks_obj() if b.target_id == b_before.target_id)
+        b = next(b for b in page.night(0).blocks_obj() if b.target_id == last.target_id)
         self.assertTrue(b.set_by_user)
-        self.assertEqual(sky.hhmm(b.start, app.site.tz), "23:00")
-        k = next(k for k, x in enumerate(page.night(0).blocks_obj()) if x.target_id == b.target_id)
+        self.assertEqual(sky.hhmm(b.end, tz), new_end)
+        k = next(k for k, x in enumerate(page.night(0).blocks_obj()) if x.target_id == last.target_id)
         self.assertIn("set by you", page.tabs[0].table.set(str(k), "target"))
-        # Plan this instead → rebuild of that night with prefer
-        tid = app.targets[0].id
-        page.tabs[0].plan_instead(tid, app.targets[0].name)
-        self.pump()
-        self.assertEqual(self.calls["build_night"][-1]["prefer"], {tid})
+        self.assertTrue(tab.act_var.get().startswith(("✔", "⚠")), tab.act_var.get())
         # move a flexible block to the other night
         tab = page.tabs[0]
-        j, blk = next((k, x) for k, x in tab.blocks() if x.kind != "transit" and not x.locked)
+        j, blk = next((k, x) for k, x in tab.blocks() if not x.fixed and not x.locked and not x.set_by_user
+                      and x.status == "planned")
         tab.move_block(j, 1)
         self.pump()
         self.assertTrue(any(x.target_id == blk.target_id and x.set_by_user for x in page.night(1).blocks_obj()))
-        # re-review from "tonight" drops past nights into the history
+        self.assertFalse(any(x.target_id == blk.target_id and abs(x.start - blk.start) < 1e-6
+                             for x in page.night(0).blocks_obj()))
+
+    def test_edit_times_refuses_overlap_and_outside_night(self):
+        self.golden_home()
+        app = self.open()
+        page = self.build()
+        tab = page.tabs[0]
+        tz = app.site.tz
+        i0, b1 = tab.blocks()[0][0], tab.blocks()[1][1]
+        n_calls = len(self.calls["build_night"])
+        self.assertFalse(tab.set_times(i0, sky.hhmm(b1.start, tz), sky.hhmm(b1.end, tz)))
+        self.assertTrue(tab.act_var.get().startswith("✖"))
+        self.assertIn(f"overlaps {b1.name} {sky.hhmm(b1.start, tz)}–{sky.hhmm(b1.end, tz)}", tab.act_var.get())
+        self.assertFalse(tab.set_times(i0, "14:00", "15:00"))
+        self.assertIn("outside the night", tab.act_var.get())
+        self.assertEqual(len(self.calls["build_night"]), n_calls, "nothing rebuilt")
+
+    def test_failed_rebuild_changes_nothing(self):
+        self.golden_home()
+        app = self.open()
+        page = self.build()
+        before = json.dumps(app.schedule.to_dict(), sort_keys=True)
+        good = self.fakes["planner"].build_night
+
+        def boom(*a, **k):
+            raise RuntimeError("planner broke")
+        self.fakes["planner"].build_night = boom
+        tab = page.tabs[0]
+        i, last = tab.blocks()[-1]
+        tz = app.site.tz
+        self.assertTrue(tab.set_times(i, sky.hhmm(last.start, tz), sky.hhmm(last.start + 20 / 1440, tz)))
+        self.pump()
+        self.assertTrue(tab.act_var.get().startswith("✖"), tab.act_var.get())
+        j, blk = next((k, x) for k, x in tab.blocks() if not x.fixed)
+        tab.move_block(j, 1)
+        self.pump()
+        self.assertEqual(json.dumps(app.schedule.to_dict(), sort_keys=True), before)
+        self.assertEqual(json.dumps(settings.load_schedule().to_dict(), sort_keys=True), before)
+        self.fakes["planner"].build_night = good
+        # a fixed block cannot move
+        nd = page.night(0)
+        bl = nd.blocks_obj()
+        bl[j].fixed = True
+        nd.blocks = [x.to_dict() for x in bl]
+        page.set_night(0, nd)
+        tab.select_block(j)
+        self.assertTrue(str(tab.move_btn.state()).find("disabled") >= 0)
+        self.assertFalse(tab.move_block(j, 1))
+        self.assertTrue(tab.act_var.get().startswith("✖"))
+
+    def test_busy_build_refuses_edits_and_keeps_live_changes(self):
+        self.golden_home()
+        app = self.open()
+        page = self.build()
+        tab = page.tabs[0]
+        i, b = tab.blocks()[2]
+        page.build(date(2026, 10, 20), 2)                 # running now
+        self.assertTrue(page.busy)
+        self.assertIn("disabled", page.build_btn.state())
+        tab.select_block(i)
+        tab.lock_selected()
+        self.assertEqual(tab.act_var.get(), page.BUSY)
+        n_jobs = app.jobs.active
+        page.build(date(2026, 10, 20), 2)                 # a second click does not start another build
+        self.assertEqual(app.jobs.active, n_jobs)
+        # an edit that reached the live schedule during the build (e.g. from another window) is merged
+        app.schedule.nights[0]["blocks"][i]["locked"] = True
+        app.schedule.nights[0]["blocks"][i]["start"] += 5 / 1440
+        app.schedule.nights[0]["blocks"][i]["end"] += 5 / 1440
+        moved = dict(app.schedule.nights[0]["blocks"][i])
+        self.pump()
+        self.assertFalse(page.busy)
+        got = [x for x in page.night(0).blocks_obj() if x.target_id == moved["target_id"]]
+        self.assertEqual(len(got), 1)
+        self.assertTrue(got[0].locked)
+        self.assertAlmostEqual(got[0].start, moved["start"], places=6)
+        self.assertEqual(page.ind.var.get(), "✔ Done")
+
+    def test_plan_this_instead(self):
+        self.golden_home()
+        app = self.open()
+        page = self.build(n=1)
+        tab = page.tabs[0]
+        ok = tab.plan_instead_ok
+        self.assertTrue(ok({"reason": "collides with HAT-P-23 b; next chance 27 Oct"}))
+        self.assertTrue(ok({"reason": "no free stretch of 45 min left tonight (longest 9 min)"}))
+        self.assertFalse(ok({"reason": "collides with your locked block K2-29 b"}))
+        self.assertFalse(ok({"reason": "below your limits (altitude 22° at 21:00)"}))
+        tid = app.targets[0].id
+        tab.plan_instead(tid, app.targets[0].name)
+        self.pump()
+        self.assertEqual(self.calls["build_night"][-1]["prefer"], {tid})
+        self.assertTrue(tab.act_var.get().startswith("✔ Rebuilt with"), tab.act_var.get())
+        off = Target(name="Ghost", kind="variable", mode="V", ra=10.0, dec=10.0, enabled=False)
+        app.targets.append(off)
+        tab.plan_instead(off.id, "Ghost")
+        self.pump()
+        self.assertTrue(tab.act_var.get().startswith("✖ Still didn't fit"), tab.act_var.get())
+
+    def test_seven_nights_draw_only_the_visible_tab(self):
+        """Regression: a 7-night schedule froze the UI (every hidden tab redrew on every resize)."""
+        self.golden_home()
+        app = self.open()
+        counts = {}
+        orig = self.sa.NightTab.draw_bar
+
+        def counting(tab):
+            counts[tab.idx] = counts.get(tab.idx, 0) + 1
+            return orig(tab)
+        self.sa.NightTab.draw_bar = counting
+        try:
+            page = self.build(n=7)
+            self.settle()
+            self.assertEqual(len(page.tabs), 7)
+            self.assertEqual(set(counts), {0}, f"only the shown tab draws: {counts}")
+            self.assertLessEqual(counts[0], 2)
+            self.assertEqual(sum(1 for t in page.tabs if t.built), 1, "hidden tabs are built when first shown")
+            counts.clear()
+            app.geometry("1300x880+0+0")
+            self.settle()
+            self.assertLessEqual(sum(counts.values()), 2, f"one redraw per resize: {counts}")
+            self.assertEqual(set(counts) - {0}, set())
+            counts.clear()
+            page.nb.select(3)
+            self.settle()
+            self.assertEqual(set(counts), {3})
+            self.assertLessEqual(counts[3], 2)
+        finally:
+            self.sa.NightTab.draw_bar = orig
+
+    def test_rereview_keeps_future_nights(self):
+        self.golden_home()
+        app = self.open()
+        tonight = app.tonight()
+        page = self.build(start=tonight + timedelta(days=2), n=3)
+        dates = [n["date"] for n in app.schedule.nights]
+        self.assertEqual(page.review_start(), tonight + timedelta(days=2))
         page.rereview()
         self.pump()
+        self.assertEqual([n["date"] for n in app.schedule.nights], dates, "no future night dropped")
+        # a schedule that started before tonight rolls forward with its length
+        self.build(start=tonight - timedelta(days=2), n=3)
+        nd = page.night(0)
+        bl = nd.blocks_obj()
+        bl[0].locked = True
+        nd.blocks = [x.to_dict() for x in bl]
+        page.set_night(0, nd)
+        app.auto_answers = [False]                     # "locked blocks on past nights": cancel
+        page.rereview()
+        self.assertFalse(page.busy)
+        self.assertEqual(app.schedule.nights[0]["date"], (tonight - timedelta(days=2)).isoformat())
+        page.rereview()                                 # testing: confirmed
+        self.pump()
+        self.assertEqual(app.schedule.nights[0]["date"], tonight.isoformat())
+        self.assertEqual(len(app.schedule.nights), 3)
         self.assertTrue(app.schedule.history)
-        self.assertGreaterEqual(app.schedule.nights[0]["date"], app.tonight().isoformat())
+
+    def test_forecast_messages_and_typed_start(self):
+        self.golden_home()
+        app = self.open()
+        page = app.pages[2]
+        app.show_page(2)
+        page.start_var.set("2026-10-25")
+        self.assertEqual(page.chosen_start(), date(2026, 10, 25))
+        page.start_var.set("25 Oct 2026")
+        self.assertEqual(page.chosen_start(), date(2026, 10, 25))
+        page.start_var.set("soon")
+        self.assertIsNone(page.chosen_start())
+        page.build()
+        self.assertTrue(page.ind.var.get().startswith("✖ Type the first night"))
+        src = self.fakes["weather"].SOURCES["Open-Meteo"]
+        real = src.fetch
+
+        def no_hours(self_, site, start, n, options=None):
+            return {(start + timedelta(days=k)).isoformat(): {"ok": False, "note": "Open-Meteo did not answer "
+                    "(HTTP 503)", "hours": [], "summary": "No forecast"} for k in range(n)}
+        src.fetch = no_hours
+        self.build(n=1)
+        self.assertTrue(page.msg_var.get().startswith("⚠ Built 1 night"))
+        self.assertIn("built without weather", page.msg_var.get())
+
+        def partial(self_, site, start, n, options=None):
+            out = real(self_, site, start, n, options)
+            out[start.isoformat()]["note"] = "using the forecast from 5 h ago"
+            out[start.isoformat()]["ok"] = False
+            return out
+        src.fetch = partial
+        self.build(n=1)
+        self.assertIn("Forecast: using the forecast from 5 h ago", page.msg_var.get())
+        self.assertNotIn("without weather", page.msg_var.get())
+        src.fetch = real
 
     def test_export_clipboard_and_card(self):
         self.golden_home()
         app = self.open()
-        app.pages[2].build(date(2026, 10, 20), 1)
-        self.pump()
+        self.build(n=1)
         app.show_page(3)
         page = app.pages[3]
         self.assertIn("PLAN CARD 2026-10-20", page.preview.get("1.0", "end"))
@@ -512,19 +768,20 @@ class TestAppWithFakes(Base):
             self.assertTrue(app.pages[2].ind.var.get().startswith("✖ This copy of SHOBS-SCHED is missing planner"))
         finally:
             self.sa.importlib.import_module = real_import
-        fakes, _c = make_fakes()
-        self.sa._MODULES["planner"] = fakes["planner"]
+        self.sa._MODULES["planner"] = self.fakes["planner"]
 
         def nodark(d, site, optics, targets, options, **kw):
-            return NightPlan(date=d.isoformat(), didnt_fit=[{"target_id": "", "name": "Star",
-                                                             "reason": "no dark time tonight"}])
-        fakes["planner"].build_night = nodark
-        fakes["planner"].build_schedule = lambda start, n, *a, **k: Schedule(nights=[nodark(start, None, None, [],
-                                                                                             {}).to_dict()])
+            return NightPlan(date=d.isoformat(), notes=["✖ No dark time tonight: the Sun stays above −18°"],
+                             didnt_fit=[{"target_id": "", "name": "Star", "reason": "no dark time tonight"}])
+        self.fakes["planner"].build_night = nodark
+        self.fakes["planner"].build_schedule = lambda start, n, *a, **k: Schedule(
+            nights=[nodark(start, None, None, [], {}).to_dict()])
         app.pages[2].build(date(2026, 6, 20), 1)
         self.pump()
         tab = app.pages[2].tabs[0]
-        self.assertTrue(tab.warn_var.get().startswith("⚠ No dark time tonight"))
+        lines = [w.cget("text") for w in tab.notes_box.winfo_children()]
+        self.assertTrue(lines[0].startswith("✖ No dark time tonight"), lines)
+        self.assertEqual(tab.notes_box.winfo_children()[0].cget("style"), "Bad.TLabel")
         tab.draw_bar()
         tab.draw_weather()
 

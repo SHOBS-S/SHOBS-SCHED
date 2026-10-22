@@ -135,7 +135,7 @@ def setup(root) -> ttk.Style:
     st.configure("Card.TLabel", background=CARD, foreground=TEXT)
     st.configure("Bold.TLabel", background=CARD, foreground=TEXT, font=font(10, "bold"))
     st.configure("Hint.TLabel", background=CARD, foreground=HINT)
-    st.configure("Small.TLabel", background=CARD, foreground=HINT, font=font(8))
+    st.configure("Small.TLabel", background=CARD, foreground=HINT, font=font(9))
     st.configure("Title.TLabel", background=CARD, foreground=SIDE, font=font(16, "bold"))
     st.configure("Section.TLabel", background=CARD, foreground=SIDE, font=font(11, "bold"))
     st.configure("Tag.TLabel", background="#e9f0f5", foreground=SIDE, font=font(8), padding=(s(4), 0))

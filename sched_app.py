@@ -314,6 +314,17 @@ class JobIndicator(ttk.Frame):
 
 # ---- a body that scrolls only when it does not fit (as SHOBS-P's ScrollBody) -------------------------------------------
 
+def scrolls_itself(w) -> bool:
+    """True for a widget that uses the mouse wheel itself (a drop-down, or anything with its own vertical
+    scrollbar); the wheel over anything else (e.g. the nightly table, which shows all its rows) scrolls the page."""
+    try:
+        if str(w.winfo_class()) == "TCombobox":
+            return True
+        return bool(str(w.cget("yscrollcommand")))
+    except (tk.TclError, AttributeError):
+        return False
+
+
 class ScrollBody:
     def __init__(self, parent, bg: str = style.CARD):
         self.outer = ttk.Frame(parent, style="Card.TFrame")
@@ -364,7 +375,10 @@ class ScrollBody:
 
     def _wheel(self, event, units=None):
         try:
-            if str(event.widget.winfo_class()) in ("TCombobox", "Text", "Listbox", "Treeview"):
+            w = event.widget
+            if isinstance(w, str):
+                w = self.canvas.nametowidget(w)
+            if scrolls_itself(w):
                 return
             if not self.vbar.winfo_manager():
                 return
@@ -390,12 +404,22 @@ def _dialog(app, title: str):
     return win, body
 
 
+def _keys(win, ok, cancel=None):
+    """Return = OK, Escape = Cancel (also in every entry of the dialog)."""
+    win.bind("<Return>", lambda _e: ok())
+    win.bind("<KP_Enter>", lambda _e: ok())
+    win.bind("<Escape>", lambda _e: (cancel or win.destroy)())
+
+
 def _show_modal(app, win, focus=None):
     win.update_idletasks()
     try:
-        x = app.winfo_rootx() + max(0, (app.winfo_width() - win.winfo_reqwidth()) // 2)
-        y = app.winfo_rooty() + max(0, (app.winfo_height() - win.winfo_reqheight()) // 3)
-        win.geometry(f"+{x}+{y}")
+        sw, sh = app.winfo_screenwidth(), app.winfo_screenheight()
+        w, h = min(win.winfo_reqwidth(), int(sw * 0.9)), min(win.winfo_reqheight(), int(sh * 0.85))
+        x = app.winfo_rootx() + max(0, (app.winfo_width() - w) // 2)
+        y = app.winfo_rooty() + max(0, (app.winfo_height() - h) // 3)
+        x, y = min(max(0, x), max(0, sw - w)), min(max(0, y), max(0, sh - h - 40))
+        win.geometry(f"{w}x{h}+{x}+{y}")
     except tk.TclError:
         pass
     try:
@@ -403,7 +427,7 @@ def _show_modal(app, win, focus=None):
     except tk.TclError:
         pass
     if focus is not None:
-        focus.focus_set()
+        win.after(10, lambda: focus.focus_set() if focus.winfo_exists() else None)
     app.wait_window(win)
 
 
@@ -427,7 +451,32 @@ def ask_choice(app, title: str, message: str, choices, ok_text: str = "OK"):
         win.destroy()
     ttk.Button(row, text="Cancel", command=win.destroy).pack(side=tk.RIGHT)
     style.green_button(row, ok_text, ok).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
+    _keys(win, ok)
     _show_modal(app, win, cb)
+    return out["v"]
+
+
+def ask_yes_no(app, title: str, message: str, yes_text: str = "Continue") -> bool:
+    """A yes/no question (Return = yes, Escape = no). Tests answer through app.auto_answers."""
+    if app.auto_answers:
+        return bool(app.auto_answers.pop(0))
+    if app.testing:
+        return True
+    win, body = _dialog(app, title)
+    ttk.Label(body, text=message, style="Card.TLabel", wraplength=px(app, 460), justify=tk.LEFT).pack(
+        anchor="w", pady=(0, px(app, 8)))
+    out = {"v": False}
+    row = ttk.Frame(body, style="Card.TFrame")
+    row.pack(fill=tk.X, pady=(px(app, 12), 0))
+
+    def ok():
+        out["v"] = True
+        win.destroy()
+    ttk.Button(row, text="Cancel", command=win.destroy).pack(side=tk.RIGHT)
+    b = style.green_button(row, yes_text, ok)
+    b.pack(side=tk.RIGHT, padx=(0, px(app, 8)))
+    _keys(win, ok)
+    _show_modal(app, win, b)
     return out["v"]
 
 
@@ -453,6 +502,8 @@ def ask_times(app, title: str, message: str, start: str, end: str):
         win.destroy()
     ttk.Button(row, text="Cancel", command=win.destroy).pack(side=tk.RIGHT)
     style.green_button(row, "Set times", ok).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
+    _keys(win, ok)
+    e1.select_range(0, tk.END)
     _show_modal(app, win, e1)
     return out["v"]
 
@@ -485,13 +536,18 @@ class App(tk.Tk):
         self.title(settings.APP_TITLE)
         self.configure(bg=style.FRAME_BG)
         style.setup(self)
+        # fonts made once (every night tab and drawing shares them; they follow the display scaling)
+        self.fonts = {"small": tkfont.Font(self, font=style.font(9)), "norm": tkfont.Font(self, font=style.font(9)),
+                      "bold": tkfont.Font(self, font=style.font(9, "bold")),
+                      "head": tkfont.Font(self, font=style.font(10, "bold")),
+                      "body": tkfont.Font(self, font=style.font(10))}
         self.jobs = Jobs(self)
         self._info_cache: dict = {}
         self._info_lock = threading.Lock()
         self.load_all()
         self._build()
         self._place_window()
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
         first = 0 if not self.site.complete() else (1 if not self.targets else 2)
         self.show_page(first)
 
@@ -507,6 +563,12 @@ class App(tk.Tk):
             pass
         super().destroy()
 
+    def on_close(self):
+        """Window close: unsaved Setup changes are saved first when they are valid (or the user is asked)."""
+        if not self.pages[0].leave(closing=True):
+            return
+        self.destroy()
+
     # ---- data ----
     def load_all(self):
         s = settings.load_settings()
@@ -514,14 +576,26 @@ class App(tk.Tk):
         s, taken = settings.merge_shobs_p(s)
         self.settings = s
         self.p_taken = list(taken)
-        self.p_values = {}
-        for dotted in taken:
-            sec, _, key = dotted.partition(".")
-            self.p_values[dotted] = (s.get(sec) or {}).get(key) if key else s.get(sec)
+        self.p_values = self._shobs_p_values()
         self.targets: list[Target] = settings.load_targets()
         self.schedule: Schedule = settings.load_schedule()
         settings.log(f"opened; {len(self.targets)} targets, {len(self.schedule.nights)} nights"
                      + (f"; SHOBS-P settings read ({', '.join(taken)})" if taken else ""))
+
+    def _shobs_p_values(self) -> dict:
+        """SHOBS-P's own value of each field it can share ("site.lat" → 35.303), to tell an override from a value
+        typed back to SHOBS-P's."""
+        p = self.shobs_p or {}
+        out = {}
+        for key, (sec, field) in settings.SHOBS_P_FIELDS.items():
+            if key in p:
+                v = str(p[key] or "").strip() if field in ("name", "tz") else settings._num(p[key])
+                if v not in (None, ""):
+                    out[f"{sec}.{field}"] = v
+        mount = str(p.get("mount") or "").lower()
+        if mount:
+            out["site.mount"] = "altaz" if ("alt" in mount and "az" in mount) else "GEM"
+        return out
 
     @property
     def site(self):
@@ -583,10 +657,14 @@ class App(tk.Tk):
         if cls is None:
             return {}, f"unknown weather source “{name}”"
         try:
+            src = cls()
             try:
-                out = cls().fetch(self.site, start, int(n), dict(self.options))
-            except TypeError:                     # a source written to the older signature
-                out = cls().fetch(self.site, start, int(n))
+                import inspect
+                takes_options = len(inspect.signature(src.fetch).parameters) >= 4
+            except (TypeError, ValueError):
+                takes_options = True
+            out = (src.fetch(self.site, start, int(n), dict(self.options)) if takes_options
+                   else src.fetch(self.site, start, int(n)))
             out = out if isinstance(out, dict) else {}
             notes = {str(v.get("note")) for v in out.values() if isinstance(v, dict) and v.get("note")
                      and not v.get("ok", True)}
@@ -645,7 +723,7 @@ class App(tk.Tk):
                       ExportPage(self, holder)]
         for p in self.pages:
             p.frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self.page_index = 0
+        self.page_index = None
 
     def _place_window(self):
         try:
@@ -657,6 +735,9 @@ class App(tk.Tk):
             pass
 
     def show_page(self, i: int):
+        if getattr(self, "page_index", None) == 0 and i != 0 and hasattr(self, "pages"):
+            if not self.pages[0].leave():
+                return
         self.page_index = i
         page = self.pages[i]
         self.title_var.set(page.title)
@@ -968,6 +1049,7 @@ class SetupPage:
         self._units_changed()
         self._scale_hint()
         self._show_provenance()
+        self._snapshot = self.form_state()
 
     def _show_provenance(self):
         app = self.app
@@ -1110,14 +1192,18 @@ class SetupPage:
             return False
         s = self.app.settings
         new = {"site": site, "optics": op}
-        for dotted in self.app.p_taken:
+        for dotted, theirs in self.app.p_values.items():
             sec, _, key = dotted.partition(".")
             if sec not in new:
                 continue
-            old, now = self.app.p_values.get(dotted), new[sec].get(key)
-            same = (old == now) if not isinstance(old, (int, float)) or not isinstance(now, (int, float)) else (
-                abs(float(old) - float(now)) < 1e-9)
-            if not same:
+            mine = new[sec].get(key)
+            if isinstance(theirs, (int, float)) and isinstance(mine, (int, float)):
+                same = abs(float(theirs) - float(mine)) < 1e-6 * max(1.0, abs(float(theirs)))
+            else:
+                same = theirs == mine
+            if same:      # typed back to SHOBS-P's value: follow SHOBS-P again
+                s["set_here"] = [x for x in (s.get("set_here") or []) if x != dotted]
+            else:
                 settings.mark_set_here(s, dotted)
         s["site"], s["optics"] = site, op
         s["options"] = opts
@@ -1128,9 +1214,38 @@ class SetupPage:
         self.tz_hint.configure(text="")
         self._show_provenance()
         self.app.settings_changed()
+        self._snapshot = self.form_state()
         set_msg(self.msg_var, self.msg, "✔ Saved.")
         self.app.set_status("✔ Setup saved.")
         return True
+
+    def form_state(self) -> tuple:
+        vals = [(k, str(v.get())) for k, v in sorted(self.vars.items())]
+        vals += [(k, bool(v.get())) for k, v in sorted(self.est.items())]
+        return tuple(vals) + (self.horizon.get("1.0", tk.END).strip(),)
+
+    def dirty_form(self) -> bool:
+        snap = getattr(self, "_snapshot", None)
+        return snap is not None and self.form_state() != snap
+
+    def leave(self, closing: bool = False) -> bool:
+        """Leaving the page (or closing the window) with unsaved changes: save them when they are valid and say
+        so; otherwise ask whether to drop them. Returns False to stay."""
+        if not self.dirty_form():
+            return True
+        _s, _o, _p, errors = self.collect()
+        if not errors:
+            ok = self.save()
+            if ok:
+                self.app.set_status("✔ Setup saved: you left the page with changes, so they were kept.")
+            return ok or closing
+        where = "Close SHOBS-SCHED" if closing else "Leave the Setup page"
+        if ask_yes_no(self.app, "Setup not saved", f"Your Setup changes cannot be saved: {errors[0]} "
+                                                   f"{where} and drop them?", "Drop the changes"):
+            self.load_form()
+            return True
+        set_msg(self.msg_var, self.msg, f"✖ Not saved: {errors[0]}")
+        return False
 
 
 def parse_horizon(text: str) -> tuple[list, str]:
@@ -1177,16 +1292,18 @@ def read_horizon_csv(path: str) -> tuple[list, str]:
 class TargetsPage:
     title = "Targets"
     subtitle = ("What you want to observe. Click ☐ to plan a target (☑ = planned), click its Priority to change it, "
-                "and double-click a row to edit it.")
-    COLS = (("plan", "Plan"), ("mode", "Mode"), ("vmag", "V"), ("radec", "RA / Dec (J2000)"),
-            ("priority", "Priority"), ("next", "Next useful event"), ("source", "Source"), ("depth", "Depth"),
-            ("dur", "Duration"), ("tc", "Tc ±"), ("ref", "Ephemeris"), ("campaign", "Rules · goal · progress"))
+                "select a row for its details, and double-click it to edit. The square beside a name is its SHOBS-P "
+                "mode color.")
+    COLS = (("plan", "Plan"), ("vmag", "V"), ("radec", "RA / Dec (J2000)"), ("priority", "Priority"),
+            ("next", "Next useful event"), ("source", "Source"))
+    FIT = {"#0": 360, "next": 420, "source": 320}
 
     def __init__(self, app: App, parent):
         self.app = app
         self.dirty = True
         self.next_text: dict[str, str] = {}
         self._next_key = None
+        self._tc_cache: dict = {}
         self._badges = {m: style.badge_image(app, m) for m in ("V", "T", "D")}
         self.frame = ttk.Frame(parent, style="Card.TFrame")
         top = ttk.Frame(self.frame, style="Card.TFrame")
@@ -1214,6 +1331,10 @@ class TargetsPage:
         self.msg = ttk.Label(self.frame, textvariable=self.msg_var, style="Card.TLabel", justify=tk.LEFT)
         self.msg.pack(side=tk.BOTTOM, fill=tk.X, anchor="w")
         follow_wrap(self.msg, self.frame, px(app, 20))
+        self.detail_var = tk.StringVar()
+        self.detail = ttk.Label(self.frame, textvariable=self.detail_var, style="Card.TLabel", justify=tk.LEFT)
+        self.detail.pack(side=tk.BOTTOM, fill=tk.X, anchor="w", pady=(px(app, 6), 0))
+        follow_wrap(self.detail, self.frame, px(app, 20))
 
         tf = ttk.Frame(self.frame, style="Card.TFrame")
         tf.pack(fill=tk.BOTH, expand=True)
@@ -1222,8 +1343,8 @@ class TargetsPage:
         self.headings = {"#0": "Name", **dict(self.COLS)}
         self.tree.heading("#0", text="Name", anchor="w")
         for c, h in self.COLS:
-            self.tree.heading(c, text=h, anchor="w" if c not in ("plan", "mode", "vmag") else "center")
-            self.tree.column(c, anchor="center" if c in ("plan", "mode", "vmag") else "w")
+            self.tree.heading(c, text=h, anchor="w" if c not in ("plan", "vmag") else "center")
+            self.tree.column(c, anchor="center" if c in ("plan", "vmag") else "w")
         vb = ttk.Scrollbar(tf, orient=tk.VERTICAL, command=self.tree.yview)
         hb = ttk.Scrollbar(tf, orient=tk.HORIZONTAL, command=self.tree.xview)
         self.tree.configure(yscrollcommand=vb.set, xscrollcommand=hb.set)
@@ -1237,6 +1358,7 @@ class TargetsPage:
         self.tree.tag_configure("suggested", foreground="#3c4a52")
         self.tree.bind("<Button-1>", self._click, add="+")
         self.tree.bind("<Double-1>", self._double)
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self.show_detail())
         self._editor = None
 
     # ---- table ----
@@ -1266,42 +1388,88 @@ class TargetsPage:
             rows = by_group[key]
             planned = sum(1 for t in rows if t.enabled)
             label = f"{name}  ({len(rows)}{f', {planned} planned' if rows else ''})"
-            tree.insert("", tk.END, iid=f"grp:{key}", text=label, open=opened.get(key, True), tags=("group",))
+            hint = "" if rows else {"suggested": "none yet: press Find suggested transits",
+                                    "campaign": "none: a campaign is a star or field you visit on many nights",
+                                    }.get(key, "none")
+            vals = ["", "", "", "", hint, ""]       # the hint sits in the wide "Next useful event" column
+            tree.insert("", tk.END, iid=f"grp:{key}", text=label, values=vals, open=opened.get(key, True),
+                        tags=("group",))
             for t in sorted(rows, key=lambda x: (not x.enabled, x.name.lower())):
                 tags = []
                 if not t.enabled:
                     tags.append("off")
                 tree.insert(f"grp:{key}", tk.END, iid=t.id, text=" " + t.name, image=self._badges.get(t.mode, ""),
                             values=self.row_values(t, when, today), tags=tuple(tags))
-            if not rows:
-                hint = {"suggested": "none yet: press Find suggested transits",
-                        "campaign": "none: a campaign is a star or field you visit on many nights"}.get(key, "none")
-                tree.insert(f"grp:{key}", tk.END, iid=f"empty:{key}", text="   " + hint, tags=("off",))
         keep = [i for i in sel if tree.exists(i)]
         if keep:
             tree.selection_set(keep)
-        fit_columns(tree, self.headings, cap=300, extra={"#0": 420, "next": 480, "campaign": 480, "ref": 300})
+        fit_columns(tree, self.headings, cap=300, stretch="next", extra=self.FIT)
+        self.show_detail()
 
     def row_values(self, t: Target, when: float, today: date) -> tuple:
-        pl = t.planet_obj()
-        depth = dur = tc = ref = ""
-        if pl and t.kind == "transit":
-            depth = f"{pl.depth * 100:.2f} %" if pl.depth else "—"
-            dur = f"{pl.t14 * 24:.2f} h" if pl.t14 else "—"
-            ref = pl.reference or pl.source or ""
-            tc = self.tc_text(t, pl, when)
-        camp = ""
-        if t.kind == "campaign" or t.rules:
-            bits = [rules_summary(t)] if rules_summary(t) else []
-            if t.goal_per_week:
-                bits.append(self.progress_text(t, today))
-            camp = " · ".join(b for b in bits if b)
         src = f"✔ {t.source}" if t.source else "typed"
+        pl = t.planet_obj()
+        if pl and t.kind == "transit":
+            tc = self.tc_text(t, pl, when)
+            if tc.startswith("⚠"):
+                src += f"  ·  ⚠ Tc {tc[2:]}"
         nxt = self.next_text.get(t.id, "…" if self.app.site.complete() else "set the site first")
-        return ("☑" if t.enabled else "☐", t.mode, f"{t.vmag:.1f}" if t.vmag is not None else "—",
-                fmt_radec(t.ra, t.dec), t.priority, nxt, src, depth, dur, tc, ref, camp)
+        return ("☑" if t.enabled else "☐", f"{t.vmag:.1f}" if t.vmag is not None else "—",
+                fmt_radec(t.ra, t.dec), t.priority, nxt, src)
+
+    def detail_text(self, t: Target) -> str:
+        """The selected target's extras: transit depth, duration, ephemeris and Tc ±; campaign rules, goal and
+        progress; notes."""
+        bits = [f"{t.name} ({MODE_NAMES.get(t.mode, t.mode)})"]
+        pl = t.planet_obj()
+        if pl and t.kind == "transit":
+            if pl.depth:
+                bits.append(f"depth {pl.depth * 100:.2f} %")
+            if pl.t14:
+                bits.append(f"duration {pl.t14 * 24:.2f} h")
+            if pl.period:
+                bits.append(f"period {pl.period:.6f} d")
+            bits.append("Tc " + self.tc_text(t, pl, sky.now_jd()))
+            if pl.reference or pl.source:
+                bits.append(f"ephemeris: {pl.reference or pl.source}")
+        if t.kind == "transit" and not pl:
+            bits.append("⚠ no ephemeris: Edit… to type one")
+        el = t.elements_obj()
+        if el and el.vtype:
+            bits.append(f"{el.vtype}" + (f", P = {el.period:.5f} d" if el.period else ""))
+        rs = rules_summary(t)
+        if rs:
+            bits.append(rs)
+        if t.goal_per_week:
+            bits.append(self.progress_text(t, self.app.tonight()))
+        bits.append(f"exposure {fmt_num(t.exposure_s)} s" if t.exposure_s else "exposure: SCHED estimates it")
+        if t.kind != "transit":
+            bits.append(f"block {fmt_num(t.block_min)} min (at least {fmt_num(t.min_block_min)})")
+        if t.notes:
+            bits.append(f"notes: {t.notes}")
+        return "   ·   ".join(bits)
+
+    def show_detail(self):
+        ts = self.selected_targets()
+        if len(ts) == 1:
+            text = self.detail_text(ts[0])
+            self.detail_var.set(text)
+            self.detail.configure(style="Card.TLabel")
+        else:
+            self.detail_var.set("Select a target for its details (depth, ephemeris, rules, goal, progress).")
+            self.detail.configure(style="Hint.TLabel")
 
     def tc_text(self, t: Target, pl: Planet, when: float) -> str:
+        key = (pl.name, pl.period, pl.t0, pl.period_err, pl.t0_err, int(when))
+        if key not in self._tc_cache:
+            self._tc_cache[key] = self._tc_sigma(pl, when)
+        sig = self._tc_cache[key]
+        if sig is None:
+            return "—"
+        warn = sig > float(self.app.options.get("tc_sigma_warn_min", 10.0))
+        return f"{'⚠ ' if warn else ''}± {sig:.1f} min"
+
+    def _tc_sigma(self, pl: Planet, when: float):
         sig = None
         tg = mod("targets")
         if tg is not None and hasattr(tg, "tc_sigma_minutes"):
@@ -1312,10 +1480,7 @@ class TargetsPage:
         if sig is None and pl.period and pl.t0 and (pl.t0_err or pl.period_err):
             n = abs(round((when - pl.t0) / pl.period))
             sig = math.hypot(pl.t0_err or 0.0, n * (pl.period_err or 0.0)) * 1440.0
-        if sig is None:
-            return "—"
-        warn = sig > float(self.app.options.get("tc_sigma_warn_min", 10.0))
-        return f"{'⚠ ' if warn else ''}± {sig:.1f} min"
+        return sig
 
     def progress_text(self, t: Target, today: date) -> str:
         tg = mod("targets")
@@ -1364,7 +1529,7 @@ class TargetsPage:
             for tid, text in res.items():
                 if self.tree.exists(tid):
                     self.tree.set(tid, "next", text)
-            fit_columns(self.tree, self.headings, cap=300, extra={"#0": 420, "next": 480, "campaign": 480, "ref": 300})
+            fit_columns(self.tree, self.headings, cap=300, stretch="next", extra=self.FIT)
         app.jobs.run(work, done, None, "Next useful events")
 
     # ---- clicks ----
@@ -1480,7 +1645,7 @@ class TargetsPage:
                 return
             mode = dict(MODE_CHOICES).get(pick, "V")
             kind = {"V": "campaign", "T": "transit", "D": "campaign"}[mode]
-            t = Target(name=name if not getattr(exc, "main_id", "") else name, kind=kind, mode=mode,
+            t = Target(name=name, kind=kind, mode=mode,
                        ra=getattr(exc, "ra", None), dec=getattr(exc, "dec", None), vmag=getattr(exc, "vmag", None),
                        source="SIMBAD")
             if kind == "campaign":
@@ -1637,9 +1802,15 @@ class EditTargetDialog:
         self.app = app
         self.t = Target.from_dict(target.to_dict())
         self.on_save = on_save
-        self.win, body = _dialog(app, f"Edit {target.name}")
+        self.win, outer = _dialog(app, f"Edit {target.name}")
+        foot = ttk.Frame(outer, style="Card.TFrame")
+        foot.pack(side=tk.BOTTOM, fill=tk.X)
+        self.sb = ScrollBody(outer)
+        self.sb.outer.pack(fill=tk.BOTH, expand=True)
+        body = self.sb.inner
         self.vars: dict[str, tk.Variable] = {}
         self.no_transit = [r for r in self.t.rules if r.get("kind") == "no_transit"]
+        self.widgets: dict = {}
         r = 0
 
         def row(label, key, value, unit="", width=12, values=None):
@@ -1647,12 +1818,16 @@ class EditTargetDialog:
             ttk.Label(body, text=label, style="Card.TLabel").grid(row=r, column=0, sticky="w", pady=px(app, 2))
             var = tk.StringVar(value="" if value is None else str(value))
             self.vars[key] = var
+            f = ttk.Frame(body, style="Card.TFrame")
+            f.grid(row=r, column=1, columnspan=2, sticky="w", padx=px(app, 6), pady=px(app, 2))
             if values:
-                w = ttk.Combobox(body, textvariable=var, values=values, state="readonly", width=width)
+                w = ttk.Combobox(f, textvariable=var, values=values, state="readonly", width=width)
             else:
-                w = ttk.Entry(body, textvariable=var, width=width)
-            w.grid(row=r, column=1, sticky="w", padx=px(app, 6), pady=px(app, 2))
-            ttk.Label(body, text=unit, style="Hint.TLabel").grid(row=r, column=2, sticky="w")
+                w = ttk.Entry(f, textvariable=var, width=width)
+            w.pack(side=tk.LEFT)
+            if unit:
+                ttk.Label(f, text=unit, style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 6), 0))
+            self.widgets[key] = w
             r += 1
 
         def head(text):
@@ -1702,7 +1877,8 @@ class EditTargetDialog:
         lf.grid(row=r, column=0, columnspan=3, sticky="w", pady=px(app, 2))
         ttk.Label(lf, text="Planet", style="Card.TLabel").pack(side=tk.LEFT)
         self.nt_name = tk.StringVar()
-        ttk.Entry(lf, textvariable=self.nt_name, width=16).pack(side=tk.LEFT, padx=px(app, 4))
+        self.nt_entry = ttk.Entry(lf, textvariable=self.nt_name, width=16)
+        self.nt_entry.pack(side=tk.LEFT, padx=px(app, 4))
         ttk.Label(lf, text="margin", style="Card.TLabel").pack(side=tk.LEFT)
         self.nt_pad = tk.StringVar(value="0")
         ttk.Entry(lf, textvariable=self.nt_pad, width=4).pack(side=tk.LEFT, padx=px(app, 4))
@@ -1722,17 +1898,33 @@ class EditTargetDialog:
                   style="Hint.TLabel").grid(row=r, column=0, columnspan=3, sticky="w")
         r += 1
         self.msg_var = tk.StringVar()
-        self.msg = ttk.Label(body, textvariable=self.msg_var, style="Card.TLabel", wraplength=px(app, 460),
+        self.msg = ttk.Label(foot, textvariable=self.msg_var, style="Card.TLabel", wraplength=px(app, 460),
                              justify=tk.LEFT)
-        self.msg.grid(row=r, column=0, columnspan=3, sticky="w", pady=(px(app, 6), 0))
-        r += 1
-        btns = ttk.Frame(body, style="Card.TFrame")
-        btns.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(px(app, 10), 0))
+        self.msg.pack(anchor="w", fill=tk.X, pady=(px(app, 6), 0))
+        btns = ttk.Frame(foot, style="Card.TFrame")
+        btns.pack(fill=tk.X, pady=(px(app, 10), 0))
         ttk.Button(btns, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
         style.green_button(btns, "Save", self.save).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
         self._fill_nt()
+        _keys(self.win, self._return)
+        # the scrolling body: as tall as its contents, at most ~70 % of the screen (buttons always on screen)
+        self.win.update_idletasks()
+        sh = app.winfo_screenheight()
+        self.sb.canvas.configure(width=body.winfo_reqwidth(),
+                                 height=min(body.winfo_reqheight(), int(sh * 0.70) - foot.winfo_reqheight()))
+        first = self.widgets.get("exposure_s")
         if modal and not app.testing:
-            _show_modal(app, self.win)
+            _show_modal(app, self.win, first)
+
+    def _return(self):
+        """Return saves, except in the notes box (a new line there) and the planet box (looks the planet up)."""
+        focus = self.win.focus_get()
+        if focus is self.notes:
+            return
+        if focus is getattr(self, "nt_entry", None):
+            self._nt_add()
+            return
+        self.save()
 
     def _fill_nt(self):
         self.nt_list.delete(0, tk.END)
@@ -1808,9 +2000,18 @@ class EditTargetDialog:
                     raise ValueError("RA must be 0–24 h and Dec −90 to +90°.")
             t.vmag = num("vmag", "V magnitude", -2, 25)
             t.exposure_s = num("exposure_s", "Exposure", 0.001, 3600)
-            t.block_min = num("block_min", "Block length", 5, 900) or t.block_min
-            t.min_block_min = num("min_block_min", "Shortest useful block", 5, 900) or t.min_block_min
+            bl = num("block_min", "Block length", 5, 900)
+            if bl is None:
+                raise ValueError("Block length is empty: type the minutes you want per visit (e.g. 120).")
+            mb = num("min_block_min", "Shortest useful block", 5, 900)
+            if mb is None:
+                raise ValueError("Shortest useful block is empty: type the fewest minutes worth a visit (e.g. 45).")
+            if mb > bl:
+                raise ValueError("The shortest useful block cannot be longer than the block length.")
+            t.block_min, t.min_block_min = bl, mb
             g = num("goal_per_week", "Goal", 0, 7)
+            if g is not None and g != int(g):
+                raise ValueError("Goal must be a whole number of nights a week (0 to 7).")
             t.goal_per_week = int(g or 0)
             rules = [r for r in t.rules if r.get("kind") not in ("no_transit", "min_alt", "min_moon_sep", "window")]
             ma = num("min_alt", "Own minimum altitude", 0, 89)
@@ -1879,10 +2080,12 @@ class SchedulePage:
     title = "Schedule"
     subtitle = ("One tab per night, on the site's clock. Lock a block to keep it through rebuilds; "
                 "mark what happened (Done, Partial, Clouded out) and Re-review to roll the week forward.")
+    BUSY = "⚠ Wait for the build to finish."
 
     def __init__(self, app: App, parent):
         self.app = app
         self.dirty = True
+        self.busy = False
         self.frame = ttk.Frame(parent, style="Card.TFrame")
         self.wx_note = ""
         ctl = ttk.Frame(self.frame, style="Card.TFrame")
@@ -1893,12 +2096,15 @@ class SchedulePage:
                           width=3)
         cb.pack(side=tk.LEFT, padx=(px(app, 4), px(app, 12)))
         cb.bind("<<ComboboxSelected>>", lambda _e: self._nights_changed())
-        ttk.Label(ctl, text="starting", style="Card.TLabel").pack(side=tk.LEFT)
+        ttk.Label(ctl, text="first night", style="Card.TLabel").pack(side=tk.LEFT)
         self.start_var = tk.StringVar()
-        self.start_box = ttk.Combobox(ctl, textvariable=self.start_var, state="readonly", width=18)
+        # any date: pick one of the next nights or type one (2026-11-03, 3 Nov)
+        self.start_box = ttk.Combobox(ctl, textvariable=self.start_var, width=20)
         self.start_box.pack(side=tk.LEFT, padx=(px(app, 4), px(app, 12)))
-        style.green_button(ctl, "Build schedule", self.build).pack(side=tk.LEFT)
-        style.green_button(ctl, "Re-review schedule", self.rereview).pack(side=tk.LEFT, padx=px(app, 8))
+        self.build_btn = style.green_button(ctl, "Build schedule", self.build)
+        self.build_btn.pack(side=tk.LEFT)
+        self.review_btn = style.green_button(ctl, "Re-review schedule", self.rereview)
+        self.review_btn.pack(side=tk.LEFT, padx=px(app, 8))
         self.ind = JobIndicator(ctl)
         self.ind.pack(side=tk.LEFT, padx=px(app, 6))
         self.msg_var = tk.StringVar()
@@ -1909,6 +2115,7 @@ class SchedulePage:
                                      text="No schedule yet. Choose how many nights and the first night, then press "
                                           "Build schedule.")
         self.nb = ttk.Notebook(self.frame)
+        self.nb.bind("<<NotebookTabChanged>>", lambda _e: self._tab_changed())
         self.tabs: list[NightTab] = []
         self._start_dates: list[date] = []
 
@@ -1926,18 +2133,36 @@ class SchedulePage:
         self.n_var.set(str(min(7, max(1, n))))
         tonight = app.tonight()
         self._start_dates = [tonight + timedelta(days=k) for k in range(7)]
-        labels = [night_label(d.isoformat(), app.site) + (" (tonight)" if k == 0 else "")
-                  for k, d in enumerate(self._start_dates)]
+        labels = [self._label(d, k == 0) for k, d in enumerate(self._start_dates)]
         self.start_box.configure(values=labels)
-        if self.start_var.get() not in labels:
+        if not self.start_var.get().strip():
             self.start_var.set(labels[0])
 
-    def chosen_start(self) -> date:
+    def _label(self, d: date, tonight: bool = False) -> str:
+        return f"{night_label(d.isoformat(), self.app.site)} {d.year}" + (" (tonight)" if tonight else "")
+
+    def chosen_start(self) -> date | None:
+        """The first night from the box: one of the listed nights, or a typed date (2026-11-03, 3 Nov 2026,
+        3 Nov). None when it cannot be read."""
+        text = self.start_var.get().strip()
         labels = list(self.start_box.cget("values"))
-        try:
-            return self._start_dates[labels.index(self.start_var.get())]
-        except (ValueError, IndexError):
+        if text in labels:
+            return self._start_dates[labels.index(text)]
+        if not text:
             return self.app.tonight()
+        t = text.replace("(tonight)", "").strip()
+        for fmt in ("%Y-%m-%d", "%a %d %b %Y", "%d %b %Y", "%d %B %Y", "%a %d %b", "%d %b", "%d %B"):
+            try:
+                d = datetime.strptime(t, fmt).date()
+            except ValueError:
+                continue
+            if "%Y" not in fmt:
+                tonight = self.app.tonight()
+                d = d.replace(year=tonight.year)
+                if d < tonight - timedelta(days=60):
+                    d = d.replace(year=tonight.year + 1)
+            return d
+        return None
 
     def refresh(self):
         self._fill_controls()
@@ -1959,13 +2184,20 @@ class SchedulePage:
             self.rebuild_tabs()
             self.dirty = False
 
+    def current_index(self) -> int | None:
+        try:
+            return self.nb.index("current") if self.tabs else None
+        except tk.TclError:
+            return None
+
+    def _tab_changed(self):
+        k = self.current_index()
+        if k is not None and k < len(self.tabs):
+            self.tabs[k].shown()
+
     def rebuild_tabs(self, select: int | None = None):
-        cur = select
-        if cur is None:
-            try:
-                cur = self.nb.index("current") if self.tabs else 0
-            except tk.TclError:
-                cur = 0
+        """One (empty) tab per night; a tab builds its contents the first time it is shown."""
+        cur = select if select is not None else (self.current_index() or 0)
         for tab in self.tabs:
             tab.frame.destroy()
         self.tabs = []
@@ -1977,7 +2209,7 @@ class SchedulePage:
         self.placeholder.pack_forget()
         if not self.nb.winfo_manager():
             self.nb.pack(fill=tk.BOTH, expand=True, pady=(px(self.app, 4), 0))
-        for i, n in enumerate(nights):
+        for i, _n in enumerate(nights):
             tab = NightTab(self, i)
             self.nb.add(tab.frame, text=tab.tab_text())
             self.tabs.append(tab)
@@ -1985,10 +2217,30 @@ class SchedulePage:
             self.nb.select(min(max(0, cur), len(self.tabs) - 1))
         except tk.TclError:
             pass
+        self._tab_changed()
+
+    # ---- busy ----
+    def set_busy(self, on: bool):
+        self.busy = on
+        for b in (self.build_btn, self.review_btn):
+            try:
+                b.state(["disabled"] if on else ["!disabled"])
+            except tk.TclError:
+                pass
+
+    def refuse_if_busy(self, show=None) -> bool:
+        """True (and says so) while a build or rebuild runs: edits then would be lost."""
+        if not self.busy:
+            return False
+        # (the message line, not the indicator: its spinner keeps showing the running job)
+        (show or (lambda t: set_msg(self.msg_var, self.msg, t)))(self.BUSY)
+        return True
 
     # ---- building ----
-    def _ready(self, need_targets: bool = False) -> bool:
+    def _ready(self) -> bool:
         app = self.app
+        if self.refuse_if_busy():
+            return False
         if not app.site.complete():
             self.ind.finish("✖ Enter your site on the Setup page first (latitude, longitude, time zone).")
             return False
@@ -2004,11 +2256,22 @@ class SchedulePage:
             except Exception:
                 pass
 
+    def _run(self, work, done, label):
+        self.set_busy(True)
+
+        def finish(res, exc):
+            self.set_busy(False)
+            done(res, exc)
+        self.app.jobs.run(work, finish, self.ind, label)
+
     def build(self, start: date | None = None, n: int | None = None):
         if not self._ready():
             return
         app = self.app
         start = start or self.chosen_start()
+        if start is None:
+            self.ind.finish("✖ Type the first night as a date, e.g. 2026-11-03 or 3 Nov.")
+            return
         n = int(n or self.n_var.get() or 1)
         site, optics, opts = app.site, app.optics, dict(app.options)
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
@@ -2022,28 +2285,42 @@ class SchedulePage:
             self._prefetch_info(sch)
             return sch, wx, note
         settings.log(f"build schedule {start} × {n}, {len(targets)} targets")
-        app.jobs.run(work, self._built, self.ind, f"Building {n} night{'s' if n > 1 else ''}")
+        self._run(work, lambda r, e: self._built(r, e, prior), f"Building {n} night{'s' if n > 1 else ''}")
+
+    def review_start(self) -> date:
+        """Re-review rolls the schedule forward to tonight; a schedule that starts later keeps its first night (no
+        future night is dropped)."""
+        tonight = self.app.tonight()
+        nights = self.app.schedule.nights
+        first = date.fromisoformat(nights[0]["date"]) if nights else tonight
+        return max(tonight, first)
 
     def rereview(self):
         if not self._ready():
             return
         app = self.app
         pl = mod("planner")
-        today = app.tonight()
-        n = int(self.n_var.get() or app.options.get("nights", 1) or 1)
+        today = self.review_start()
+        past = [b for nd in app.schedule.nights_obj() if nd.date < today.isoformat()
+                for b in nd.blocks_obj() if (b.locked or b.set_by_user) and b.status == "planned"]
+        if past and not ask_yes_no(app, "Re-review", f"{len(past)} locked block{'s' if len(past) != 1 else ''} on "
+                                   "past nights (" + ", ".join(sorted({b.name for b in past})) + ") go to the "
+                                   "history as Planned (not Done). Mark them first if you observed them. Continue?"):
+            return
+        n = max(1, len(app.schedule.nights) or int(self.n_var.get() or 1))
         site, optics, opts = app.site, app.optics, dict(app.options)
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
         prior = Schedule.from_dict(app.schedule.to_dict())
 
         def work():
             wx, note = app.fetch_weather(today, n)
-            # rereview moves past nights to the history and rebuilds from today (keeping the schedule's length)
+            # rereview moves past nights to the history and rebuilds from today, keeping the schedule's length
             sch = pl.rereview(prior, today, site, optics, targets, opts, weather_by_date=wx or None)
             self._attach_weather(sch, wx)
             self._prefetch_info(sch)
             return sch, wx, note
         settings.log(f"re-review from {today}")
-        app.jobs.run(work, self._built, self.ind, "Re-reviewing")
+        self._run(work, lambda r, e: self._built(r, e, prior), "Re-reviewing")
 
     @staticmethod
     def _attach_weather(sch: Schedule, wx: dict):
@@ -2051,12 +2328,37 @@ class SchedulePage:
             if not nd.get("weather") and isinstance(wx, dict) and isinstance(wx.get(nd.get("date")), dict):
                 nd["weather"] = wx[nd["date"]]
 
-    def _built(self, res, exc):
+    def _merge_live(self, sch: Schedule, prior: Schedule):
+        """Edits made to the live schedule while the build ran (lock, set times, status) win over the result."""
+        def key(b):
+            return (b.get("target_id"), round(b.get("start", 0), 6), round(b.get("end", 0), 6),
+                    bool(b.get("locked")), bool(b.get("set_by_user")), b.get("status", "planned"))
+        before = {n.get("date"): {key(b) for b in n.get("blocks", [])} for n in prior.nights}
+        out = {n.get("date"): n for n in sch.nights}
+        for live in self.app.schedule.nights:
+            d = live.get("date")
+            if d not in out:
+                continue
+            for b in live.get("blocks", []):
+                if key(b) in before.get(d, set()):
+                    continue                       # unchanged since the build started
+                res = out[d].setdefault("blocks", [])
+                if b.get("locked") or b.get("set_by_user"):
+                    res[:] = [x for x in res if x.get("target_id") != b.get("target_id")] + [dict(b)]
+                    res.sort(key=lambda x: x.get("start", 0))
+                else:
+                    for x in res:
+                        if x.get("target_id") == b.get("target_id"):
+                            x["status"] = b.get("status", "planned")
+
+    def _built(self, res, exc, prior: Schedule | None = None):
         app = self.app
         if exc is not None:
             self.ind.finish(f"✖ The schedule could not be built: {exc}")
             return
         sch, wx, note = res
+        if prior is not None:
+            self._merge_live(sch, prior)
         old = {(n.get("date"), b.get("target_id")): b.get("status") for n in app.schedule.nights
                for b in n.get("blocks", [])}
         for nd in sch.nights:                     # keep the marks the user made (planner keeps them too)
@@ -2069,19 +2371,29 @@ class SchedulePage:
         app.schedule = sch
         app.schedule_changed()
         self.wx_note = note
-        self.rebuild_tabs(select=0)
         nights = sch.nights_obj()
         if nights:
             self.n_var.set(str(min(7, len(nights))))
+            app.options["nights"] = min(7, len(nights))
+            settings.save_settings(app.settings)
+            self.start_var.set(self._label(date.fromisoformat(nights[0].date),
+                                           nights[0].date == app.tonight().isoformat()))
+        self.rebuild_tabs(select=0)
+        self.dirty = False
         blocks = sum(len(n.blocks) for n in nights)
         nofit = len({d.get("target_id") or d.get("name") for n in nights for d in n.didnt_fit})
-        parts = [f"✔ Built {len(nights)} night{'s' if len(nights) != 1 else ''}: {blocks} "
-                 f"block{'s' if blocks != 1 else ''}"]
+        text = (f"Built {len(nights)} night{'s' if len(nights) != 1 else ''}: {blocks} "
+                f"block{'s' if blocks != 1 else ''}")
         if nofit:
-            parts.append(f"{nofit} target{'s' if nofit != 1 else ''} didn't fit (see each night)")
-        text = "; ".join(parts) + "."
-        if note:
-            text = f"⚠ No forecast ({note}); built without weather. " + text[2:]
+            text += f"; {nofit} target{'s' if nofit != 1 else ''} didn't fit (see each night)"
+        text += "."
+        any_hours = any((n.weather or {}).get("hours") for n in nights)
+        if not any_hours:
+            text = f"⚠ {text} No forecast" + (f" ({note})" if note else "") + ", so it was built without weather."
+        elif note:
+            text = f"⚠ {text} Forecast: {note}."
+        else:
+            text = "✔ " + text
         set_msg(self.msg_var, self.msg, text)
         self.ind.finish("✔ Done")
         app.set_status(text)
@@ -2101,27 +2413,36 @@ class SchedulePage:
             except tk.TclError:
                 pass
 
-    def rebuild_night(self, idx: int, prefer=(), extra_locked: list | None = None, then_msg: str = ""):
-        if not self._ready():
-            return
+    def rebuild_night(self, idx: int, prefer=(), extra_locked: list | None = None, then_msg=None,
+                      drop: Block | None = None, on_success=None, show=None) -> bool:
+        """Rebuild one night around its locked blocks (+ extra_locked, − drop). Nothing is written unless the
+        planner succeeds: then on_success(new) may change other nights, and then_msg(new) (or a string) is shown."""
+        show = show or (lambda t: set_msg(self.msg_var, self.msg, t))
+        if self.refuse_if_busy(show) or not self._ready():
+            return False
         app = self.app
         pl = mod("planner")
         night = self.night(idx)
         d = date.fromisoformat(night.date)
-        locked = [b for b in night.blocks_obj() if b.locked or b.set_by_user] + list(extra_locked or [])
+
+        def same(a: Block, b: Block) -> bool:
+            return a.target_id == b.target_id and abs(a.start - b.start) < 1e-6 and abs(a.end - b.end) < 1e-6
+        locked = [b for b in night.blocks_obj() if (b.locked or b.set_by_user or b.status != "planned")
+                  and not (drop is not None and same(b, drop))] + list(extra_locked or [])
         site, optics, opts = app.site, app.optics, dict(app.options)
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
         history = list(app.schedule.history)
         old_status = {b.target_id: b.status for b in night.blocks_obj() if b.status != "planned"}
+        date_iso = night.date
 
         def work():
-            new = pl.build_night(d, site, optics, targets, opts, locked=locked, weather=night.weather,
-                                 history=history, prefer=set(prefer))
-            return new
+            return pl.build_night(d, site, optics, targets, opts, locked=locked, weather=night.weather,
+                                  history=history, prefer=set(prefer))
 
         def done(new, exc):
             if exc is not None:
-                self.ind.finish(f"✖ {night_label(night.date, site)} could not be rebuilt: {exc}")
+                self.ind.finish(f"✖ {night_label(date_iso, site)} could not be rebuilt ({exc}); nothing changed.")
+                show(f"✖ {night_label(date_iso, site)} could not be rebuilt ({exc}); nothing changed.")
                 return
             if isinstance(new, dict):
                 new = NightPlan.from_dict(new)
@@ -2130,12 +2451,27 @@ class SchedulePage:
             for b in new.blocks:
                 if b.get("target_id") in old_status and b.get("status", "planned") == "planned":
                     b["status"] = old_status[b["target_id"]]
-            if idx < len(app.schedule.nights):
-                self.set_night(idx, new)
+            k = next((i for i, n in enumerate(app.schedule.nights) if n.get("date") == date_iso), None)
+            if k is None:
+                self.ind.finish("⚠ That night is no longer in the schedule.")
+                return
+            app.schedule.nights[k] = new.to_dict()
+            if on_success is not None:
+                on_success(new)
+            self.set_night(k, new)
+            for j, tab in enumerate(self.tabs):
+                if j != k:
+                    tab.fill()
+                    try:
+                        self.nb.tab(tab.frame, text=tab.tab_text())
+                    except tk.TclError:
+                        pass
             self.ind.finish("✔ Done")
-            if then_msg:
-                set_msg(self.msg_var, self.msg, then_msg)
-        app.jobs.run(work, done, self.ind, f"Rebuilding {night_label(night.date, site)}")
+            text = then_msg(new) if callable(then_msg) else then_msg
+            if text:
+                show(text)
+        self._run(work, done, f"Rebuilding {night_label(date_iso, site)}")
+        return True
 
 
 class Axis:
@@ -2163,41 +2499,59 @@ class Axis:
 
 class NightTab:
     """One night: weather strip, block bar with airmass bands, the nightly table, its actions, and below it flats and
-    darks, didn't fit (with Plan this instead) and free time."""
+    darks, didn't fit (with Plan this instead) and free time.
+
+    Speed: the contents are built the first time the tab is shown; the canvases draw only while they are on screen,
+    and a resize redraws once after the window settles (80 ms) and only when the width really changed."""
+
+    PLAN_INSTEAD_REASONS = ("collides with", "no free stretch", "no room")
 
     def __init__(self, page: SchedulePage, idx: int):
         self.page, self.app, self.idx = page, page.app, idx
-        app = self.app
         self.frame = ttk.Frame(page.nb, style="Card.TFrame")
+        self.built = False
+        self.stale = True
+        self._drawn_w = {"wx": None, "bar": None}
+        self._pending = {"wx": None, "bar": None}
+        f = self.app.fonts
+        self.small, self.norm, self.bold = f["small"], f["norm"], f["bold"]
+        self.lh = self.norm.metrics("linespace")
+
+    # ---- lazy contents ----
+    def shown(self):
+        """The tab became the visible one: build its contents once, then bring them up to date."""
+        if not self.built:
+            self._build_ui()
+        if self.stale:
+            self.fill()
+        else:
+            self.frame.after_idle(self.redraw)
+
+    def _build_ui(self):
+        app = self.app
+        self.built = True
         self.body = ScrollBody(self.frame)
         self.body.outer.pack(fill=tk.BOTH, expand=True)
         inner = self.body.inner
-        self.small = tkfont.Font(app, font=style.font(8))
-        self.norm = tkfont.Font(app, font=style.font(9))
-        self.bold = tkfont.Font(app, font=style.font(9, "bold"))
-        self.lh = self.norm.metrics("linespace")
         pad = px(app, 10)
         self.head_var = tk.StringVar()
         head = ttk.Label(inner, textvariable=self.head_var, style="Card.TLabel", justify=tk.LEFT)
         head.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 8), px(app, 2)))
         follow_wrap(head, inner, 2 * pad)
-        self.warn_var = tk.StringVar()
-        self.warn = ttk.Label(inner, textvariable=self.warn_var, style="Warn.TLabel", justify=tk.LEFT)
-        follow_wrap(self.warn, inner, 2 * pad)
-        self.warn_anchor = ttk.Frame(inner, style="Card.TFrame")
-        self.warn_anchor.pack(fill=tk.X, padx=pad)
+        self.notes_box = ttk.Frame(inner, style="Card.TFrame")
+        self.notes_box.pack(fill=tk.X, padx=pad)
         self.wx = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=int(self.lh * 7.4))
         self.wx.pack(fill=tk.X, padx=pad, pady=(px(app, 4), 0))
         self.bar = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=int(self.lh * 8.0))
         self.bar.pack(fill=tk.X, padx=pad)
-        legend = ("Blocks take the color of the SHOBS-P mode they will be reduced in.  ▼ meridian  ·  yellow line: "
-                  "Moon up  ·  gold outline: locked or set by you  ·  band under a block: airmass, light = low "
-                  "(start · best · end)")
+        legend = ("Blocks take the color of the SHOBS-P mode they will be reduced in   ·   ▼ the target's meridian   ·   "
+                  "yellow line: Moon up   ·   gold outline: locked or set by you   ·   band under a block: airmass, "
+                  "light = low (start · best · end)")
         lg = ttk.Label(inner, text=legend, style="Small.TLabel", justify=tk.LEFT)
-        lg.pack(anchor="w", fill=tk.X, padx=pad, pady=(0, px(app, 8)))
+        lg.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 2), px(app, 8)))
         follow_wrap(lg, inner, 2 * pad)
-        self.wx.bind("<Configure>", lambda _e: self.draw_weather())
-        self.bar.bind("<Configure>", lambda _e: self.draw_bar())
+        self.wx.bind("<Configure>", lambda e: self._configured("wx", e.width))
+        self.bar.bind("<Configure>", lambda e: self._configured("bar", e.width))
 
         # nightly table
         cols = (("time", "Time"), ("target", "Target"), ("radec", "RA / Dec (J2000)"), ("mode", "SHOBS-P mode"),
@@ -2223,11 +2577,12 @@ class NightTab:
         self.detail.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 4), 0))
         follow_wrap(self.detail, inner, 2 * pad)
         act = ttk.Frame(inner, style="Card.TFrame")
-        act.pack(fill=tk.X, padx=pad, pady=px(app, 6))
+        act.pack(fill=tk.X, padx=pad, pady=(px(app, 6), 0))
         self.lock_btn = ttk.Button(act, text="Lock", command=self.lock_selected)
         self.lock_btn.pack(side=tk.LEFT)
         ttk.Button(act, text="Remove", command=self.remove_selected).pack(side=tk.LEFT, padx=px(app, 6))
-        ttk.Button(act, text="Move to night…", command=self.move_selected).pack(side=tk.LEFT)
+        self.move_btn = ttk.Button(act, text="Move to night…", command=self.move_selected)
+        self.move_btn.pack(side=tk.LEFT)
         ttk.Button(act, text="Edit times…", command=self.edit_times).pack(side=tk.LEFT, padx=px(app, 6))
         ttk.Label(act, text="Status", style="Card.TLabel").pack(side=tk.LEFT, padx=(px(app, 12), px(app, 4)))
         self.status_var = tk.StringVar()
@@ -2236,9 +2591,11 @@ class NightTab:
         self.status_box.pack(side=tk.LEFT)
         self.status_box.bind("<<ComboboxSelected>>", lambda _e: self.set_status(STATUS_KEY.get(self.status_var.get(),
                                                                                                  "planned")))
+        # the action's message on its own row, wrapping
         self.act_var = tk.StringVar()
-        self.act_msg = ttk.Label(act, textvariable=self.act_var, style="Card.TLabel")
-        self.act_msg.pack(side=tk.LEFT, padx=px(app, 10))
+        self.act_msg = ttk.Label(inner, textvariable=self.act_var, style="Card.TLabel", justify=tk.LEFT)
+        self.act_msg.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 4), px(app, 4)))
+        follow_wrap(self.act_msg, inner, 2 * pad)
 
         lower = ttk.Frame(inner, style="Card.TFrame")
         lower.pack(fill=tk.X, padx=pad, pady=(px(app, 4), px(app, 12)))
@@ -2251,7 +2608,6 @@ class NightTab:
         self.free_box = ttk.LabelFrame(lower, text="Free time", style="Group.TLabelframe", padding=px(app, 8))
         for k, b in enumerate((self.flats_box, self.nofit_box, self.free_box)):
             b.grid(row=0, column=k, sticky="nsew", padx=(0 if k == 0 else px(app, 8), 0))
-        self.fill()
 
     def _table_bar(self, first, last):
         try:
@@ -2264,22 +2620,60 @@ class NightTab:
             self.table_hbar.pack(fill=tk.X)
         self.table_hbar.set(first, last)
 
+    # ---- drawing on demand ----
+    def _canvas(self, which):
+        return self.wx if which == "wx" else self.bar
+
+    def _configured(self, which: str, width: int):
+        if width == self._drawn_w[which]:
+            return
+        if self._pending[which] is not None:
+            try:
+                self.frame.after_cancel(self._pending[which])
+            except tk.TclError:
+                pass
+        self._pending[which] = self.frame.after(80, lambda: self._draw(which))
+
+    def _draw(self, which: str, force: bool = False):
+        self._pending[which] = None
+        if not self.built:
+            return
+        c = self._canvas(which)
+        try:
+            if not c.winfo_viewable():
+                self._drawn_w[which] = None          # draw when shown
+                return
+            w = int(c.winfo_width())
+        except tk.TclError:
+            return
+        if not force and w == self._drawn_w[which]:
+            return
+        self._drawn_w[which] = w
+        (self.draw_weather if which == "wx" else self.draw_bar)()
+
+    def redraw(self):
+        self._draw("wx", force=True)
+        self._draw("bar", force=True)
+
     # ---- data ----
     def night(self) -> NightPlan:
         return self.page.night(self.idx)
 
     def tab_text(self) -> str:
         n = self.app.schedule.nights[self.idx]
-        mark = ""
-        if any(b.get("cautions") for b in n.get("blocks", [])) or n.get("didnt_fit"):
-            mark = "  ⚠"
-        return f"  {night_label(n.get('date', ''), self.app.site)}{mark}  "
+        warn = (any(b.get("cautions") for b in n.get("blocks", [])) or n.get("didnt_fit")
+                or any(str(x).startswith(("✖", "⚠")) for x in n.get("notes", []) or []))
+        return ("⚠ " if warn else "") + night_label(n.get("date", ""), self.app.site)
 
     def blocks(self) -> list[tuple[int, Block]]:
         bl = self.night().blocks_obj()
         return sorted(enumerate(bl), key=lambda p: p[1].start)
 
     def fill(self):
+        if not self.built:
+            self.stale = True
+            return
+        self.stale = False
         app, night, site = self.app, self.night(), self.app.site
         tz = site.tz
         info = app.night_info(date.fromisoformat(night.date)) if night.date else None
@@ -2301,21 +2695,26 @@ class NightTab:
             bits.append(str(wx["summary"]))
         self.head_var.set(f"{night_label(night.date, site)}   ·   " + "   ·   ".join(bits) if bits else
                           night_label(night.date, site))
-        warn = ""
-        if not night.dusk or not night.dawn:
+        # night-wide lines from the planner (✖ no dark time, ⚠ dew ...), each colored by its icon
+        for w in self.notes_box.winfo_children():
+            w.destroy()
+        lines = [str(x) for x in (night.notes or []) if str(x).strip()]
+        if (not night.dusk or not night.dawn) and not any("dark" in x.lower() for x in lines):
             darkest = (info or {}).get("darkest_sun_alt")
-            warn = ("⚠ No dark time tonight: the Sun stays above " + f"{site.sun_alt:.0f}°"
-                    + (f" (lowest {darkest:.1f}°)" if darkest is not None else "")
-                    + ". Choose nautical darkness on the Setup page to plan in what darkness there is.")
-        self.warn_var.set(warn)
-        if warn:
-            self.warn.pack(in_=self.warn_anchor, anchor="w", fill=tk.X, pady=(0, px(app, 4)))
-        else:
-            self.warn.pack_forget()
+            lines.append("✖ No dark time tonight: the Sun stays above " + f"{site.sun_alt:.0f}°"
+                         + (f" (lowest {darkest:.1f}°)" if darkest is not None else "")
+                         + ". Choose nautical darkness on the Setup page to plan in what darkness there is.")
+        if (not night.dusk or not night.dawn) and site.sun_alt <= -17.9 and \
+                not any("nautical" in x.lower() for x in lines):
+            lines.append("⚠ Choose nautical darkness on the Setup page to plan in what darkness there is.")
+        for line in lines:
+            lab = ttk.Label(self.notes_box, text=line, justify=tk.LEFT,
+                            style=style.status_style(style.kind_of(line)) if line[:1] in "✖⚠✔" else "Card.TLabel")
+            lab.pack(anchor="w", fill=tk.X, pady=(0, px(app, 2)))
+            follow_wrap(lab, self.notes_box, px(app, 4))
         self.fill_table()
         self.fill_lower()
-        self.draw_weather()
-        self.draw_bar()
+        self.redraw()
 
     # ---- table ----
     def table_rows(self, night: NightPlan) -> list[tuple[int, Block, dict]]:
@@ -2377,13 +2776,16 @@ class NightTab:
                        values=(r["time"], target, r["radec"], r["mode"], r["alt"], r["meridian"], r["exposure"],
                                r["frames"], notes))
         tbl.configure(height=max(2, len(rows)))
-        fit_columns(tbl, self.headings, cap=260, stretch="notes", extra={"notes": 520, "target": 300})
+        # notes are capped (the full text is in the line under the table) so the table's natural width stays sane
+        fit_columns(tbl, self.headings, cap=220, stretch="notes", extra={"notes": 300, "target": 260})
         keep = [s for s in sel if tbl.exists(s)]
         if keep:
             tbl.selection_set(keep)
         self._selected()
 
     def selected(self) -> tuple[int, Block] | None:
+        if not self.built:
+            return None
         sel = self.table.selection()
         if not sel:
             return None
@@ -2406,19 +2808,29 @@ class NightTab:
         self.detail.configure(style="Card.TLabel")
         self.status_var.set(STATUS_LABELS.get(b.status, "Planned"))
         self.lock_btn.configure(text="Unlock" if (b.locked or b.set_by_user) else "Lock")
+        try:
+            self.move_btn.state(["disabled"] if b.fixed else ["!disabled"])
+        except tk.TclError:
+            pass
 
     def _act(self, text: str):
+        if not self.built:
+            return
         self.act_var.set(text)
         self.act_msg.configure(style=style.status_style(style.kind_of(text)))
 
     # ---- actions ----
     def _need(self):
+        if self.page.refuse_if_busy(self._act):
+            return None
         s = self.selected()
         if s is None:
             self._act("⚠ Select a block in the table first.")
         return s
 
     def select_block(self, i: int):
+        if not self.built:
+            self.shown()
         if self.table.exists(str(i)):
             self.table.selection_set(str(i))
             self._selected()
@@ -2456,8 +2868,9 @@ class NightTab:
         if s is None:
             return
         i, b = s
-        if b.fixed and b.kind == "transit":
-            self._act("✖ A transit happens at its own time; it cannot move to another night.")
+        if b.fixed:
+            self._act(f"✖ {b.name} happens at a time set by the sky (a transit or a timed event); it cannot move "
+                      "to another night.")
             return
         nights = self.app.schedule.nights
         others = [(k, night_label(n["date"], self.app.site)) for k, n in enumerate(nights) if k != self.idx]
@@ -2472,10 +2885,16 @@ class NightTab:
         k = dict((l, kk) for kk, l in others)[pick]
         self.move_block(i, k)
 
-    def move_block(self, i: int, k: int):
+    def move_block(self, i: int, k: int) -> bool:
+        """Put block i on night k (same clock time, locked, set by you). The source night changes only after the
+        destination night has been rebuilt with it."""
+        if self.page.refuse_if_busy(self._act):
+            return False
         night = self.night()
-        bl = night.blocks_obj()
-        b = bl.pop(i)
+        b = night.blocks_obj()[i]
+        if b.fixed:
+            self._act(f"✖ {b.name} happens at a time set by the sky; it cannot move to another night.")
+            return False
         dst = self.page.night(k)
         days = (date.fromisoformat(dst.date) - date.fromisoformat(night.date)).days
         shift = days * (1.0 - 3.93 / 1440.0)       # same sidereal place (a star rises ~4 min earlier each night)
@@ -2485,10 +2904,23 @@ class NightTab:
         for key in ("t1", "tc", "t4", "meridian"):
             if getattr(nb, key) is not None:
                 setattr(nb, key, None if key != "meridian" else getattr(nb, key) + shift)
-        night.blocks = [x.to_dict() for x in bl]
-        self.page.set_night(self.idx, night)
-        self.page.rebuild_night(k, extra_locked=[nb], then_msg=f"✔ Moved {b.name} to "
-                                f"{night_label(dst.date, self.app.site)} ({sky.hhmm(nb.start, self.app.site.tz)}).")
+        src_date, tz = night.date, self.app.site.tz
+
+        def remove_from_source(_new):
+            for nd in self.app.schedule.nights:
+                if nd.get("date") == src_date:
+                    nd["blocks"] = [x for x in nd.get("blocks", [])
+                                    if not (x.get("target_id") == b.target_id and abs(x.get("start", 0) - b.start)
+                                            < 1e-6)]
+
+        def message(new: NightPlan) -> str:
+            got = next((x for x in new.blocks_obj() if x.target_id == b.target_id), None)
+            text = f"Moved {b.name} to {night_label(dst.date, self.app.site)} ({span_text(nb.start, nb.end, tz)})."
+            if got is not None and got.cautions:
+                return f"⚠ {text} {got.cautions[0].lstrip('⚠ ')}"
+            return "✔ " + text
+        return self.page.rebuild_night(k, extra_locked=[nb], then_msg=message, on_success=remove_from_source,
+                                       show=self._act)
 
     def edit_times(self):
         s = self._need()
@@ -2503,7 +2935,19 @@ class NightTab:
             return
         self.set_times(i, *ans)
 
+    def night_limits(self, night: NightPlan) -> tuple[float, float]:
+        """Sunset to sunrise (the times a block may be set to), or noon to noon without a sunset."""
+        d = date.fromisoformat(night.date)
+        info = self.app.night_info(d) or {}
+        a = info.get("sunset") or night.civil_dusk or night.dusk
+        b = info.get("sunrise") or night.civil_dawn or night.dawn
+        if not a or not b:
+            a, b = sky.night_span(d, self.app.site)
+        return a, b
+
     def set_times(self, i: int, start_text: str, end_text: str) -> bool:
+        if self.page.refuse_if_busy(self._act):
+            return False
         night = self.night()
         tz = self.app.site.tz
         try:
@@ -2517,15 +2961,29 @@ class NightTab:
         if e <= s:
             self._act("✖ The end must come after the start.")
             return False
+        lo, hi = self.night_limits(night)
+        if s < lo - 0.5 / 1440 or e > hi + 0.5 / 1440:
+            self._act(f"✖ {span_text(s, e, tz)} is outside the night (sunset {sky.hhmm(lo, tz)} to sunrise "
+                      f"{sky.hhmm(hi, tz)}).")
+            return False
         bl = night.blocks_obj()
-        b = bl.pop(i)
-        b.start, b.end = s, e
-        b.locked = b.set_by_user = True
-        night.blocks = [x.to_dict() for x in bl]
-        self.page.set_night(self.idx, night, redraw=False)
-        self.page.rebuild_night(self.idx, extra_locked=[b],
-                                then_msg=f"✔ {b.name} set by you: {span_text(s, e, tz)}.")
-        return True
+        b = bl[i]
+        for j, x in enumerate(bl):
+            if j != i and x.start < e and s < x.end:
+                self._act(f"✖ {span_text(s, e, tz)} overlaps {x.name} {span_text(x.start, x.end, tz)}. "
+                          "Remove or move that block first, or pick other times.")
+                return False
+        nb = Block.from_dict(b.to_dict())
+        nb.start, nb.end = s, e
+        nb.locked = nb.set_by_user = True
+
+        def message(new: NightPlan) -> str:
+            got = next((x for x in new.blocks_obj() if x.target_id == b.target_id and x.set_by_user), None)
+            text = f"{b.name} set by you: {span_text(s, e, tz)}."
+            if got is not None and got.cautions:
+                return f"⚠ {text} {got.cautions[0].lstrip('⚠ ')}"
+            return "✔ " + text
+        return self.page.rebuild_night(self.idx, extra_locked=[nb], drop=b, then_msg=message, show=self._act)
 
     def set_status(self, status: str):
         s = self._need()
@@ -2541,6 +2999,13 @@ class NightTab:
         self._act(f"✔ {b.name}: {STATUS_LABELS.get(status, status)}.")
 
     # ---- lower part ----
+    def plan_instead_ok(self, d: dict) -> bool:
+        """Plan this instead helps only when another block took the room (not for "below your limits" etc.)."""
+        reason = str(d.get("reason", "")).lower()
+        if "your locked block" in reason:
+            return False
+        return any(k in reason for k in self.PLAN_INSTEAD_REASONS)
+
     def fill_lower(self):
         night, site = self.night(), self.app.site
         for box in (self.flats_box, self.nofit_box, self.free_box):
@@ -2570,7 +3035,7 @@ class NightTab:
             lab.pack(side=tk.TOP, anchor="w", fill=tk.X)
             follow_wrap(lab, row, px(self.app, 8), least=120)
             tid = d.get("target_id")
-            if tid and tid in self.app.targets_by_id():
+            if tid and tid in self.app.targets_by_id() and self.plan_instead_ok(d):
                 style.green_button(row, "Plan this instead",
                                    lambda t=tid, nm=d.get("name", ""): self.plan_instead(t, nm)).pack(
                     side=tk.TOP, anchor="w", pady=(px(self.app, 2), 0))
@@ -2584,8 +3049,15 @@ class NightTab:
             mins = (b - a) * 1440
             para(self.free_box, f"Free {span_text(a, b, site.tz)}  ({mins:.0f} min)")
 
-    def plan_instead(self, tid: str, name: str = ""):
-        self.page.rebuild_night(self.idx, prefer={tid}, then_msg=f"✔ Rebuilt with {name or 'that target'} first.")
+    def plan_instead(self, tid: str, name: str = "") -> bool:
+        name = name or "that target"
+
+        def message(new: NightPlan) -> str:
+            if any(b.target_id == tid for b in new.blocks_obj()):
+                return f"✔ Rebuilt with {name} first."
+            why = next((d.get("reason", "") for d in new.didnt_fit if d.get("target_id") == tid), "")
+            return f"✖ Still didn't fit: {why or 'no room for it tonight'}."
+        return self.page.rebuild_night(self.idx, prefer={tid}, then_msg=message, show=self._act)
 
     # ---- drawing ----
     def _axis_range(self, night: NightPlan) -> tuple[float, float]:
@@ -2603,7 +3075,7 @@ class NightTab:
         return a - 12 / 1440.0, b + 12 / 1440.0
 
     def _gutter(self) -> int:
-        labels = ("Cloud", "Temp · dew", "Spread · wind", "Moon", "Blocks", "Airmass")
+        labels = ("Cloud", "Temp · dew", "Spread · wind", "Moon 100 %", "Blocks", "Airmass", "Site clock")
         return max([self.norm.measure(s) for s in labels] + [self.small.measure(self.app.site.tz or "")]) + px(
             self.app, 14)
 
@@ -2647,7 +3119,7 @@ class NightTab:
         src = wx.get("source") or ""
         if wx.get("note"):
             src += f" ({wx['note']})"
-        c.create_text(ax.x1, lh * 0.6, anchor="e", fill=style.HINT, font=style.font(8),
+        c.create_text(ax.x1, lh * 0.6, anchor="e", fill=style.HINT, font=style.font(9),
                       text=f"cloud %  ·  temperature (red) and dew point (blue) °{tu}  ·  spread °{tu} · wind "
                            f"{wind_unit(lu)}  ·  {src}")
         c.create_line(ax.x0, yb, ax.x1, yb, fill=style.LINE)
@@ -2689,14 +3161,14 @@ class NightTab:
                 top = yb - (yb - ya) * f
                 inside = top - 1 < ya + lh * 0.75          # no room above the bar: write inside it
                 yl = top + lh * 0.8 if inside else top - 1
-                c.create_text(x, yl, text=f"{cl:.0f}%", font=style.font(8), anchor="s",
+                c.create_text(x, yl, text=f"{cl:.0f}%", font=style.font(9), anchor="s",
                               fill=style.text_on(style.mix("#dfe6ec", "#6c7a86", f)) if inside else style.TEXT)
             t, dw = conv(h.get("temp_c")), conv(h.get("dew_c"))
             if t is not None and vals:
-                c.create_text(x, yv(t) - 2, text=f"{round(t) + 0:.0f}", fill=style.TEMP, font=style.font(8),
+                c.create_text(x, yv(t) - 2, text=f"{round(t) + 0:.0f}", fill=style.TEMP, font=style.font(9),
                               anchor="s")
             if dw is not None and vals:
-                c.create_text(x, yv(dw) + 2, text=f"{round(dw) + 0:.0f}", fill=style.DEW, font=style.font(8),
+                c.create_text(x, yv(dw) + 2, text=f"{round(dw) + 0:.0f}", fill=style.DEW, font=style.font(9),
                               anchor="n")
             sp = h.get("spread_c")
             if sp is None and h.get("temp_c") is not None and h.get("dew_c") is not None:
@@ -2705,7 +3177,7 @@ class NightTab:
             txt = (f"{round(sp * 1.8 if tu == 'F' else sp) + 0:.0f}°" if sp is not None else "–") + \
                   (f" · {round(wv) + 0:.0f}" if wv is not None else "")
             dew_lim = float(self.app.options.get("dew_spread_c", 2.5))
-            c.create_text(x, ye, text=txt, font=style.font(8),
+            c.create_text(x, ye, text=txt, font=style.font(9),
                           fill=style.WARN_FG if (sp is not None and sp < dew_lim) else style.TEXT)
         onset = wx.get("dew_onset")
         if onset and ax.j0 <= onset <= ax.j1:
@@ -2739,7 +3211,9 @@ class NightTab:
         ya0, ya1 = yb1 + lh * 0.25, yb1 + lh * 1.05   # airmass bands
         yt = ya1 + lh * 0.65                      # airmass values
         yh = yt + lh * 1.25                       # hour labels
-        c.create_text(4, (ym0 + ym1) / 2, text="Moon", anchor="w", fill=style.HINT, font=style.font(9))
+        illum = night.moon_illum
+        c.create_text(4, (ym0 + ym1) / 2, text="Moon" + (f" {illum * 100:.0f} %" if illum is not None else ""),
+                      anchor="w", fill=style.HINT, font=style.font(9))
         c.create_text(4, (yb0 + yb1) / 2, text="Blocks", anchor="w", fill=style.HINT, font=style.font(9))
         c.create_text(4, (ya0 + ya1) / 2, text="Airmass", anchor="w", fill=style.HINT, font=style.font(9))
         # sky: day / civil / nautical / astronomical twilight / night, from the Sun's altitude
@@ -2774,7 +3248,6 @@ class NightTab:
         except Exception:
             moon = np.zeros(jds.shape, dtype=bool)
         k = 0
-        illum = night.moon_illum
         first_x = None
         while k <= n:
             if moon[k]:
@@ -2787,13 +3260,9 @@ class NightTab:
                 if first_x is None:
                     first_x = (xa, xb)
             k += 1
-        if first_x and illum is not None:
-            lab = f"{illum * 100:.0f} %"
-            if first_x[1] - first_x[0] > self.small.measure(lab) + 10:
-                c.create_text(first_x[0] + 4, ym0 - 1, text=lab, anchor="nw", fill="#7a6400", font=style.font(7))
-        elif not first_x:
+        if not first_x:
             c.create_text(ax.x0 + 4, (ym0 + ym1) / 2, text="Moon down all night", anchor="w", fill=style.HINT,
-                          font=style.font(8))
+                          font=style.font(9))
         # blocks
         by_id = app.targets_by_id()
         for i, b in self.blocks():
@@ -2835,9 +3304,9 @@ class NightTab:
             if k % every == 0:
                 c.create_text(x, yh, text=lab if every == 1 else lab[:2], fill=style.TEXT, font=style.font(9))
         for x, lab, anc in dark_labels:
-            c.create_text(x, yh + lh * 0.95, text=lab, anchor=anc, fill=style.SIDE, font=style.font(8, "bold"))
+            c.create_text(x, yh + lh * 0.95, text=lab, anchor=anc, fill=style.SIDE, font=style.font(9, "bold"))
         c.create_text(4, yh, text="Site clock", anchor="w", fill=style.HINT, font=style.font(9))
-        c.create_text(4, yh + lh * 0.95, text=tz, anchor="w", fill=style.HINT, font=style.font(8))
+        c.create_text(4, yh + lh * 0.95, text=tz, anchor="w", fill=style.HINT, font=style.font(9))
 
     def _fit(self, text: str, width: float, f) -> str:
         if f.measure(text) <= width:
@@ -2884,7 +3353,7 @@ class NightTab:
             options += [full, f"X {b.airmass_best:.2f}" if b.airmass_best else ""]
         for text in options:
             if text and f.measure(text) <= xb - xa - 4:
-                c.create_text((xa + xb) / 2, yt, text=text, font=style.font(8),
+                c.create_text((xa + xb) / 2, yt, text=text, font=style.font(9),
                               fill=style.WARN_FG if high else style.TEXT)
                 break
 
@@ -2949,11 +3418,12 @@ class ExportPage:
         btns = ttk.Frame(self.frame, style="Card.TFrame")
         btns.pack(fill=tk.X, pady=(0, px(app, 8)))
         style.green_button(btns, "Copy ASIAIR CSV", self.copy_csv).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Save CSV…", command=self.save_csv).pack(side=tk.LEFT, padx=px(app, 8))
+        style.green_button(btns, "Save CSV…", self.save_csv).pack(side=tk.LEFT, padx=px(app, 8))
         style.green_button(btns, "Print plan card", self.print_card).pack(side=tk.LEFT)
         self.msg_var = tk.StringVar()
-        self.msg = ttk.Label(btns, textvariable=self.msg_var, style="Card.TLabel")
-        self.msg.pack(side=tk.LEFT, padx=px(app, 12))
+        self.msg = ttk.Label(self.frame, textvariable=self.msg_var, style="Card.TLabel", justify=tk.LEFT)
+        self.msg.pack(anchor="w", fill=tk.X, pady=(0, px(app, 8)))
+        follow_wrap(self.msg, self.frame, px(app, 20))
         ttk.Label(self.frame, text="Plan card preview", style="Section.TLabel").pack(anchor="w")
         pf = ttk.Frame(self.frame, style="Card.TFrame")
         pf.pack(fill=tk.BOTH, expand=True, pady=(px(app, 2), 0))
@@ -3118,9 +3588,14 @@ class ExportPage:
             return None
         if open_browser and not self.app.testing:
             try:
-                webbrowser.open("file:///" + path.replace(os.sep, "/").lstrip("/"))
+                opened = webbrowser.open("file:///" + path.replace(os.sep, "/").lstrip("/"))
             except Exception as exc:
-                self._msg(f"⚠ The plan card is at {path}; the browser did not open ({exc}).")
+                opened, why = False, str(exc)
+            else:
+                why = "no browser answered"
+            if not opened:
+                self._msg(f"✖ The browser did not open ({why}). The plan card is saved at {path}: open it "
+                          "yourself and print it from there.")
                 return path
         self._msg("✔ The plan card is open in your browser; print it from there.")
         return path
