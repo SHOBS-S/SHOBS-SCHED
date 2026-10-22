@@ -629,14 +629,15 @@ class TestSuggest(Base):
             self.assertNotIn(n, names)
         self.assertNotIn("GJ 1214 b", names)                         # V 15.1: too faint
         self.assertNotIn("55 Cnc e", names)                          # V 5.95: too bright
-        # HAT-P-23 b's 23 Oct transit is full, but a 95 % Moon brightens its sky by ~2.6 mag (> 1.5 allowed)
-        self.assertNotIn("HAT-P-23 b", names)
+        # HAT-P-23 b's 23 Oct transit is full; a 95 % Moon brightens its sky by ~2.6 mag, inside the 3.0 allowed
+        # (John observed it that night)
+        self.assertIn("HAT-P-23 b", names)
         self.assertEqual(len(names), len(set(names)))               # each planet once
         for t in res:
             self.assertEqual((t.kind, t.mode, t.suggested, t.enabled), ("transit", "T", True, False))
             self.assertRegex(t.notes, r"^\w{3} \d{1,2} \w{3}: ingress \d\d:\d\d, egress \d\d:\d\d \(site clock\)")
             self.assertTrue(t.planet_obj().ok())
-            self.assertLessEqual(t.suggest_info["moon_penalty"], 1.5)
+            self.assertLessEqual(t.suggest_info["moon_penalty"], settings.DEFAULT_OPTIONS["suggest_moon_penalty_max"])
         scores = [t.suggest_info["score"] for t in res]
         self.assertEqual(scores, sorted(scores, reverse=True))
         toi = next(t for t in res if t.name == "TOI-2046 b")
