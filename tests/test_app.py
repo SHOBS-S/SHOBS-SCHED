@@ -1207,6 +1207,26 @@ class TestPlanetHosts(Base):
     def nt_names(rules):
         return [r["planet"]["name"] for r in rules if r.get("kind") == "no_transit"]
 
+    def test_target_edit_marks_schedule_stale(self):
+        """John 22 Oct: after editing a target the Schedule page showed the old plan with no hint to rebuild."""
+        self.golden_home()
+        app = self.open()
+        page = app.pages[2]
+        app.show_page(2)
+        page.build(n=1)
+        app.jobs.wait()
+        self.pump()
+        self.assertFalse(page.setup_stale)
+        app.targets_changed()
+        app.show_page(2)
+        self.pump()
+        self.assertTrue(page.setup_stale)
+        self.assertIn("targets changed", page.msg_var.get())
+        page.build(n=1)
+        app.jobs.wait()
+        self.pump()
+        self.assertFalse(page.setup_stale, "a build clears it")
+
     def test_removed_windows_stay_removed(self):
         """Review fix: a campaign whose planet windows were all removed on purpose is not re-ticked next time."""
         self.golden_home()

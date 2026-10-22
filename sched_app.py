@@ -882,6 +882,8 @@ class App(tk.Tk):
         self.pages[3].dirty = True
 
     def targets_changed(self):
+        if self.schedule.nights:                  # the saved schedule was built from the old target list
+            self.pages[2].setup_stale = True
         self.pages[2].dirty = True
 
     def schedule_changed(self):
@@ -2165,6 +2167,7 @@ class EditTargetDialog:
         self.pl_box.grid(row=r, column=0, columnspan=3, sticky="w")
         self.pl_ind = JobIndicator(self.pl_box)
         self.pl_ind.label.configure(wraplength=px(app, 440), justify=tk.LEFT)
+        follow_wrap(self.pl_ind.label, body, pad=px(app, 40), least=px(app, 440))   # use the dialog's full width
         self.pl_ind.pack(anchor="w")
         self.pl_checks = ttk.Frame(self.pl_box, style="Card.TFrame")
         self.pl_checks.pack(anchor="w", padx=(px(app, 12), 0))
@@ -2668,8 +2671,8 @@ class SchedulePage:
     subtitle = ("One tab per night, on the site's clock. Lock a block to keep it through rebuilds; "
                 "mark what happened (Done, Partial, Clouded out) and Re-review to roll the week forward.")
     BUSY = "⚠ Wait for the build to finish."
-    STALE = ("⚠ Setup changed since this schedule was built: press Build schedule (or Re-review) to rebuild it "
-             "with the new settings.")
+    STALE = ("⚠ Setup or targets changed since this schedule was built: press Build schedule (or Re-review) to "
+             "rebuild it with the changes.")
 
     def __init__(self, app: App, parent):
         self.app = app
