@@ -464,7 +464,7 @@ class ReviewFixes(unittest.TestCase):
         hd = gtarget(self.g, "HD 219134")
         self.assertIn("defocus", hd.notes.lower())
         ex = planner.estimate_exposure(hd, self.optics, {})
-        self.assertTrue(ex["note"].startswith("Your exposure; defocused (stars ~2× wider): predicted peak ~"),
+        self.assertTrue(ex["note"].startswith("Your exposure; defocused (stars ~1.5× wider): predicted peak ~"),
                         ex["note"])
         ex = planner.estimate_exposure(Target(vmag=11.4, exposure_s=60), self.optics, {})
         self.assertTrue(ex["note"].startswith("Your exposure; predicted peak"))
@@ -692,7 +692,10 @@ class CadenceDefocus(unittest.TestCase):
         infocus = planner.predict_peak_adu(hd.vmag, 0.75, self.optics, {})
         defoc = planner.predict_peak_adu(hd.vmag, 0.75, self.optics, {}, defocused=True)
         self.assertGreater(infocus, 35000)
-        self.assertLess(defoc, infocus / 3, "2x wider stars: about a quarter of the peak")
+        self.assertLess(defoc, infocus / 1.8, "1.5x wider stars: under half the peak")
+        self.assertTrue(15000 < defoc < 23000, f"default matches HD 219134 at +125 steps (~19k): {defoc:,.0f}")
+        two = planner.predict_peak_adu(hd.vmag, 0.75, self.optics, {"defocus_fwhm_factor": 2.0}, defocused=True)
+        self.assertLess(two, infocus / 3, "2x wider stars: about a quarter of the peak")
         wider = planner.predict_peak_adu(hd.vmag, 0.75, self.optics, {"defocus_fwhm_factor": 3.0}, defocused=True)
         self.assertLess(wider, defoc)
         ex = planner.estimate_exposure(hd, self.optics, {})

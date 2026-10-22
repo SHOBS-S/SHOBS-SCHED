@@ -165,7 +165,7 @@ def _e_per_adu(optics) -> tuple[float, bool]:
 
 def _defocus_factor(o: dict) -> float:
     try:
-        f = float(o.get("defocus_fwhm_factor") or 2.0)
+        f = float(o.get("defocus_fwhm_factor") or 1.5)
     except (TypeError, ValueError):
         f = 2.0
     return f if f >= 1.0 else 1.0
@@ -175,7 +175,7 @@ def predict_peak_adu(vmag, exposure_s, optics, options=None, airmass: float = 1.
                      moon_penalty: float = 0.0, defocused: bool = False) -> float | None:
     """Predicted raw peak (ADU) of a star's brightest pixel (Bayer green for a color camera), sky included.
     Gaussian PSF of FWHM options['fwhm_arcsec'] integrated over the central pixel. defocused: the FWHM is widened by
-    options['defocus_fwhm_factor'] (default 2×) — a Gaussian of the wider FWHM stands in for the donut, so it is a
+    options['defocus_fwhm_factor'] (default 1.5×, which matched a +125-step defocus on HD 219134: ~19k ADU at 0.75 s) — a Gaussian of the wider FWHM stands in for the donut, so it is a
     rough estimate. None when V or the optics are missing."""
     if vmag is None or not optics or not optics.aperture_mm:
         return None

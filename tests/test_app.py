@@ -410,7 +410,7 @@ class TestAppWithFakes(Base):
         setup.vars["site.lat"].set("35.3")
         setup.vars["site.lon"].set("-81.94")
         setup.vars["site.tz"].set("America/New_York")
-        self.assertEqual(setup.vars["options.defocus_fwhm_factor"].get(), "2")
+        self.assertEqual(setup.vars["options.defocus_fwhm_factor"].get(), "1.5")
         setup.vars["optics.camera_angle_deg"].set("400")
         self.assertFalse(setup.save())
         self.assertIn("Usual camera angle", setup.msg_var.get())

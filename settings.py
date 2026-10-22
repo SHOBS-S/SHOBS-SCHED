@@ -85,7 +85,7 @@ DEFAULT_OPTIONS = {
     # exposures
     "target_peak_frac": 0.8,           # aim the predicted peak at this fraction of the linear limit
     "fwhm_arcsec": 3.0,                # typical seeing FWHM for the cold-start estimate
-    "defocus_fwhm_factor": 2.0,        # a defocused target's stars are this many times wider (peak estimate)
+    "defocus_fwhm_factor": 1.5,        # a defocused target's stars are this many times wider (peak estimate)
 }
 
 

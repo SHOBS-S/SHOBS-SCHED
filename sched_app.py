@@ -1111,7 +1111,7 @@ class SetupPage:
         v["optics.color"].set("color" if op.get("color_camera", True) else "mono")
         v["optics.frame_overhead_s"].set(fmt_num(op.get("frame_overhead_s")))
         v["optics.camera_angle_deg"].set(fmt_num(op.get("camera_angle_deg")))
-        v["options.defocus_fwhm_factor"].set(fmt_num(opts.get("defocus_fwhm_factor", 2.0)))
+        v["options.defocus_fwhm_factor"].set(fmt_num(opts.get("defocus_fwhm_factor", 1.5)))
         for key, var in self.est.items():
             var.set(key in (op.get("estimates") or []))
         v["site.mount"].set("altaz" if site.get("mount") == "altaz" else "GEM")
@@ -1252,7 +1252,7 @@ class SetupPage:
         op["camera_angle_deg"] = num("optics.camera_angle_deg", "Usual camera angle", 0, 360, required=False,
                                      what="degrees")
         dfw = num("options.defocus_fwhm_factor", "Defocus widens stars", 1, 20, required=False, what="times")
-        opts["defocus_fwhm_factor"] = dfw if dfw is not None else 2.0
+        opts["defocus_fwhm_factor"] = dfw if dfw is not None else 1.5
         site["mount"] = v["site.mount"].get() or "GEM"
         pm = num("site.past_meridian_min", "Tracking past the meridian", 0, 120, required=False, what="minutes")
         site["past_meridian_min"] = pm if pm is not None else 0.0
