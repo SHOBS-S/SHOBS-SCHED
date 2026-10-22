@@ -450,8 +450,8 @@ class _Night:
                    f"{deg(site.sun_alt)})")
             if site.sun_alt < sky.NAUTICAL and lowest is not None and lowest < sky.NAUTICAL:
                 why += "; nautical darkness (Sun below −12°) is possible if you allow it in Setup"
-            elif lowest is not None and lowest < sky.CIVIL:
-                why += f"; a brighter darkness setting in Setup (above {deg(lowest)}) would give some time"
+            elif lowest is not None and lowest >= sky.NAUTICAL:
+                why += "; the sky never gets darker than nautical twilight tonight"
             plan.notes.append("✖ " + why[0].upper() + why[1:])
             for t in enabled:
                 self.didnt_fit(t, "no dark time tonight")
@@ -1290,21 +1290,26 @@ def rereview(schedule: Schedule, today: date, site, optics, targets, options,
     its status and minutes), the schedule keeps its length (7 nights normally) from today on, and everything not
     locked/marked is rebuilt — so targets whose blocks were Clouded out or Partial are back in the pool, and a
     Clouded/Partial campaign night counts as missed for its weekly goal (only Done counts)."""
-    nights = schedule.nights_obj()
-    length = len(nights) or 7
+    length = len(schedule.nights) or 7
+    prior = fold_past(schedule, today)
+    return build_schedule(today, length, site, optics, targets, options, prior=prior,
+                          weather_by_date=weather_by_date)
+
+
+def fold_past(schedule: Schedule, before: date) -> Schedule:
+    """Move every night dated before `before` into the history (one record per block with its status and
+    minutes) so Done/Partial/Clouded marks keep counting toward weekly goals; later nights stay as they are."""
     history = list(schedule.history)
     keep = []
-    for n in nights:
+    for n in schedule.nights_obj():
         try:
             nd = date.fromisoformat(n.date)
         except ValueError:
             continue
-        if nd < today:
+        if nd < before:
             for b in n.blocks_obj():
                 history.append({"date": n.date, "target_id": b.target_id, "name": b.name,
                                 "status": b.status or "planned", "minutes": round(b.minutes(), 1)})
         else:
             keep.append(n.to_dict())
-    prior = Schedule(nights=keep, history=history, built=schedule.built)
-    return build_schedule(today, length, site, optics, targets, options, prior=prior,
-                          weather_by_date=weather_by_date)
+    return Schedule(nights=keep, history=history, built=schedule.built)

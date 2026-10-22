@@ -530,8 +530,22 @@ def night_clock_jd(night_date: date, hh: int, mm: int, tz: str) -> float:
 class App(tk.Tk):
     def __init__(self, testing: bool = False):
         style.enable_windows_dpi()
+        if sys.platform == "win32":     # same ID the shortcut carries, so the pinned icon and the window group
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ShilohHill.SHOBS-SCHED")
+            except Exception:
+                pass
         super().__init__(className="SHOBS-SCHED")
         self.testing = testing
+        try:                            # window/taskbar icon (not the Tk feather)
+            if sys.platform == "win32":
+                self.iconbitmap(default=os.path.join(APP_DIR, "shobs_sched.ico"))
+            else:
+                self._icon_img = tk.PhotoImage(file=os.path.join(APP_DIR, "shobs_sched.png"))
+                self.iconphoto(True, self._icon_img)
+        except Exception:
+            pass
         self.auto_answers: list = []
         self.title(settings.APP_TITLE)
         self.configure(bg=style.FRAME_BG)
@@ -1205,6 +1219,16 @@ class SetupPage:
                 s["set_here"] = [x for x in (s.get("set_here") or []) if x != dotted]
             else:
                 settings.mark_set_here(s, dotted)
+        # a value typed here while SHOBS-P has none (or isn't installed) is the user's own: a SHOBS-P installed
+        # later must not overwrite it (only empty fields get filled from SHOBS-P)
+        shared = {f"{sec}.{fld}" for sec, fld in settings.SHOBS_P_FIELDS.values()} | {"site.mount"}
+        for dotted in shared:
+            if dotted in self.app.p_values:
+                continue
+            sec, _, key = dotted.partition(".")
+            val = new.get(sec, {}).get(key)
+            if val not in (None, "") and not (isinstance(val, str) and not val.strip()):
+                settings.mark_set_here(s, dotted)
         s["site"], s["optics"] = site, op
         s["options"] = opts
         if not settings.save_settings(s):
@@ -1809,6 +1833,7 @@ class EditTargetDialog:
         self.sb.outer.pack(fill=tk.BOTH, expand=True)
         body = self.sb.inner
         self.vars: dict[str, tk.Variable] = {}
+        self.loaded: dict[str, str] = {}       # field text as opened (unchanged text = unchanged value)
         self.no_transit = [r for r in self.t.rules if r.get("kind") == "no_transit"]
         self.widgets: dict = {}
         r = 0
@@ -1818,6 +1843,7 @@ class EditTargetDialog:
             ttk.Label(body, text=label, style="Card.TLabel").grid(row=r, column=0, sticky="w", pady=px(app, 2))
             var = tk.StringVar(value="" if value is None else str(value))
             self.vars[key] = var
+            self.loaded[key] = var.get().strip()
             f = ttk.Frame(body, style="Card.TFrame")
             f.grid(row=r, column=1, columnspan=2, sticky="w", padx=px(app, 6), pady=px(app, 2))
             if values:
@@ -2041,6 +2067,9 @@ class EditTargetDialog:
                 dep = num("depth", "Depth", 0.001, 100)
                 pl["depth"] = dep / 100.0 if dep else None
                 pl["reference"] = v.get("reference", "")
+                for k in ("period", "t0", "t14", "depth"):   # text left as opened keeps the full-precision value
+                    if v.get(k, "").strip() == self.loaded.get(k, "") and k in before:
+                        pl[k] = before[k]
                 changed = any(not _close(before.get(k), pl.get(k)) for k in ("period", "t0", "t14", "depth"))
                 if changed:
                     pl["source"] = "typed"
@@ -2170,7 +2199,8 @@ class SchedulePage:
         if not app.site.complete():
             set_msg(self.msg_var, self.msg, "✖ Enter your site on the Setup page first (latitude, longitude, "
                                             "time zone); then build.")
-        elif not self.msg_var.get() or self.msg_var.get().startswith("✖ Enter your site"):
+        elif (app.schedule.nights and app.schedule.nights[0].get("date", "") < app.tonight().isoformat()) \
+                or not self.msg_var.get() or self.msg_var.get().startswith("✖ Enter your site"):
             nights = app.schedule.nights
             if nights and nights[0].get("date", "") < app.tonight().isoformat():
                 set_msg(self.msg_var, self.msg,
@@ -2275,8 +2305,13 @@ class SchedulePage:
         n = int(n or self.n_var.get() or 1)
         site, optics, opts = app.site, app.optics, dict(app.options)
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
-        prior = Schedule.from_dict(app.schedule.to_dict())
         pl = mod("planner")
+        prior = Schedule.from_dict(app.schedule.to_dict())
+        live_prior = prior
+        if any(nd.get("date", "") < start.isoformat() for nd in prior.nights):
+            # nights before the new first night go into the history, so their Done/Partial/Clouded marks keep
+            # counting toward weekly goals instead of being dropped by the rebuild
+            prior = pl.fold_past(prior, start)
 
         def work():
             wx, note = app.fetch_weather(start, n)
@@ -2285,7 +2320,7 @@ class SchedulePage:
             self._prefetch_info(sch)
             return sch, wx, note
         settings.log(f"build schedule {start} × {n}, {len(targets)} targets")
-        self._run(work, lambda r, e: self._built(r, e, prior), f"Building {n} night{'s' if n > 1 else ''}")
+        self._run(work, lambda r, e: self._built(r, e, live_prior), f"Building {n} night{'s' if n > 1 else ''}")
 
     def review_start(self) -> date:
         """Re-review rolls the schedule forward to tonight; a schedule that starts later keeps its first night (no
@@ -2348,7 +2383,8 @@ class SchedulePage:
                     res.sort(key=lambda x: x.get("start", 0))
                 else:
                     for x in res:
-                        if x.get("target_id") == b.get("target_id"):
+                        if x.get("target_id") == b.get("target_id") and \
+                                abs(x.get("start", 0) - b.get("start", 0)) < 1e-6:
                             x["status"] = b.get("status", "planned")
 
     def _built(self, res, exc, prior: Schedule | None = None):
@@ -2359,11 +2395,11 @@ class SchedulePage:
         sch, wx, note = res
         if prior is not None:
             self._merge_live(sch, prior)
-        old = {(n.get("date"), b.get("target_id")): b.get("status") for n in app.schedule.nights
-               for b in n.get("blocks", [])}
-        for nd in sch.nights:                     # keep the marks the user made (planner keeps them too)
-            for b in nd.get("blocks", []):
-                st = old.get((nd.get("date"), b.get("target_id")))
+        old = {(n.get("date"), b.get("target_id"), round(b.get("start", 0), 6)): b.get("status")
+               for n in app.schedule.nights for b in n.get("blocks", [])}
+        for nd in sch.nights:                     # keep the marks the user made (planner keeps them too); keyed on
+            for b in nd.get("blocks", []):        # the start too, so a re-planned block is not born "Clouded out"
+                st = old.get((nd.get("date"), b.get("target_id"), round(b.get("start", 0), 6)))
                 if st and st != "planned" and b.get("status", "planned") == "planned":
                     b["status"] = st
         if not sch.built:
@@ -2432,7 +2468,14 @@ class SchedulePage:
         site, optics, opts = app.site, app.optics, dict(app.options)
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
         history = list(app.schedule.history)
-        old_status = {b.target_id: b.status for b in night.blocks_obj() if b.status != "planned"}
+        for other in app.schedule.nights_obj():   # same view a full build gives: earlier nights count as planned
+            if other.date < night.date:
+                for b in other.blocks_obj():
+                    history.append({"date": other.date, "target_id": b.target_id, "name": b.name,
+                                    "status": b.status or "planned", "minutes": round(b.minutes(), 1),
+                                    "scheduled": True})
+        old_status = {(b.target_id, round(b.start, 6)): b.status for b in night.blocks_obj()
+                      if b.status != "planned"}
         date_iso = night.date
 
         def work():
@@ -2449,8 +2492,9 @@ class SchedulePage:
             if not new.weather and night.weather:
                 new.weather = night.weather
             for b in new.blocks:
-                if b.get("target_id") in old_status and b.get("status", "planned") == "planned":
-                    b["status"] = old_status[b["target_id"]]
+                k_ = (b.get("target_id"), round(b.get("start", 0), 6))
+                if k_ in old_status and b.get("status", "planned") == "planned":
+                    b["status"] = old_status[k_]
             k = next((i for i, n in enumerate(app.schedule.nights) if n.get("date") == date_iso), None)
             if k is None:
                 self.ind.finish("⚠ That night is no longer in the schedule.")
@@ -2701,10 +2745,14 @@ class NightTab:
         lines = [str(x) for x in (night.notes or []) if str(x).strip()]
         if (not night.dusk or not night.dawn) and not any("dark" in x.lower() for x in lines):
             darkest = (info or {}).get("darkest_sun_alt")
+            nautical_helps = site.sun_alt <= -17.9 and darkest is not None and darkest < -12
             lines.append("✖ No dark time tonight: the Sun stays above " + f"{site.sun_alt:.0f}°"
                          + (f" (lowest {darkest:.1f}°)" if darkest is not None else "")
-                         + ". Choose nautical darkness on the Setup page to plan in what darkness there is.")
+                         + (". Choose nautical darkness on the Setup page to plan in what darkness there is."
+                            if nautical_helps else "."))
+        darkest = (info or {}).get("darkest_sun_alt")
         if (not night.dusk or not night.dawn) and site.sun_alt <= -17.9 and \
+                darkest is not None and darkest < -12 and \
                 not any("nautical" in x.lower() for x in lines):
             lines.append("⚠ Choose nautical darkness on the Setup page to plan in what darkness there is.")
         for line in lines:
@@ -3588,7 +3636,12 @@ class ExportPage:
             return None
         if open_browser and not self.app.testing:
             try:
-                opened = webbrowser.open("file:///" + path.replace(os.sep, "/").lstrip("/"))
+                if sys.platform == "win32":
+                    os.startfile(path)          # handles spaces and non-ASCII in the user's folder name
+                    opened = True
+                else:
+                    import pathlib
+                    opened = webbrowser.open(pathlib.Path(path).resolve().as_uri())
             except Exception as exc:
                 opened, why = False, str(exc)
             else:
