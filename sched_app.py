@@ -2635,7 +2635,11 @@ class NightTab:
     darks, didn't fit (with Plan this instead) and free time.
 
     Speed: the contents are built the first time the tab is shown; the canvases draw only while they are on screen,
-    and a resize redraws once after the window settles (80 ms) and only when the width really changed."""
+    and a resize redraws once after the window settles (80 ms) and only when the size really changed.
+
+    Size: the weather strip and the block bar have a minimum height (in text lines, so they follow the fonts and the
+    display scaling); when the window is taller than the tab's contents they take most of the spare height, up to
+    a maximum, so the graph grows with the window instead of leaving empty space below."""
 
     PLAN_INSTEAD_REASONS = ("collides with", "no free stretch", "no room")
 
@@ -2644,8 +2648,9 @@ class NightTab:
         self.frame = ttk.Frame(page.nb, style="Card.TFrame")
         self.built = False
         self.stale = True
-        self._drawn_w = {"wx": None, "bar": None}
+        self._drawn_w = {"wx": None, "bar": None}     # (width, height) last drawn
         self._pending = {"wx": None, "bar": None}
+        self._fit_job = None
         f = self.app.fonts
         self.small, self.norm, self.bold = f["small"], f["norm"], f["bold"]
         self.lh = self.norm.metrics("linespace")
@@ -2673,18 +2678,22 @@ class NightTab:
         follow_wrap(head, inner, 2 * pad)
         self.notes_box = ttk.Frame(inner, style="Card.TFrame")
         self.notes_box.pack(fill=tk.X, padx=pad)
-        self.wx = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=int(self.lh * 7.4))
+        hw, hb = self.graph_heights(0, 0)
+        self.wx = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=hw)
         self.wx.pack(fill=tk.X, padx=pad, pady=(px(app, 4), 0))
-        self.bar = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=int(self.lh * 8.0))
-        self.bar.pack(fill=tk.X, padx=pad)
+        self.bar = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=hb)
+        self.bar.pack(fill=tk.X, padx=pad, pady=(px(app, 4), 0))
         legend = ("Blocks take the color of the SHOBS-P mode they will be reduced in   ·   ▼ the target's meridian   ·   "
                   "yellow line: Moon up   ·   gold outline: locked or set by you   ·   band under a block: airmass, "
                   "light = low (start · best · end)")
         lg = ttk.Label(inner, text=legend, style="Small.TLabel", justify=tk.LEFT)
-        lg.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 2), px(app, 8)))
+        lg.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 6), px(app, 8)))
         follow_wrap(lg, inner, 2 * pad)
-        self.wx.bind("<Configure>", lambda e: self._configured("wx", e.width))
-        self.bar.bind("<Configure>", lambda e: self._configured("bar", e.width))
+        self.wx.bind("<Configure>", lambda e: self._configured("wx", e.width, e.height))
+        self.bar.bind("<Configure>", lambda e: self._configured("bar", e.width, e.height))
+        # the graph grows with the window: refit when the visible area or the contents change size
+        self.body.canvas.bind("<Configure>", lambda _e: self._fit_later(), add="+")
+        inner.bind("<Configure>", lambda _e: self._fit_later(), add="+")
 
         # nightly table
         cols = (("time", "Time"), ("target", "Target"), ("radec", "RA / Dec (J2000)"), ("mode", "SHOBS-P mode"),
@@ -2757,8 +2766,48 @@ class NightTab:
     def _canvas(self, which):
         return self.wx if which == "wx" else self.bar
 
-    def _configured(self, which: str, width: int):
-        if width == self._drawn_w[which]:
+    # ---- graph height ----
+    GRAPH_LINES = {"wx": (10.0, 17.0), "bar": (9.5, 13.5)}   # min, max height in text lines
+    GRAPH_SHARE = 0.8                                       # share of the spare window height the graph takes
+
+    def graph_heights(self, view_h: int, other_h: int) -> tuple[int, int]:
+        """Heights of the weather strip and the block bar for a visible area `view_h` px tall whose other contents
+        take `other_h` px: the minimum, plus most of the spare height, up to the maximum."""
+        lh = self.lh
+        (wa, wb), (ba, bb) = self.GRAPH_LINES["wx"], self.GRAPH_LINES["bar"]
+        wmin, bmin, wroom, broom = lh * wa, lh * ba, lh * (wb - wa), lh * (bb - ba)
+        spare = max(0.0, view_h - other_h - wmin - bmin - px(self.app, 4))
+        grow = min(spare * self.GRAPH_SHARE, wroom + broom)
+        return int(wmin + grow * wroom / (wroom + broom)), int(bmin + grow * broom / (wroom + broom))
+
+    def _fit_later(self):
+        if self._fit_job is None:
+            self._fit_job = self.frame.after(30, self.fit_height)
+
+    def fit_height(self) -> bool:
+        """Size the two canvases for the visible area; True when a height changed."""
+        self._fit_job = None
+        if not self.built:
+            return False
+        try:
+            view_h = int(self.body.canvas.winfo_height())
+            if view_h < 20:
+                return False
+            hw, hb = int(self.wx.cget("height")), int(self.bar.cget("height"))
+            other = int(self.body.inner.winfo_reqheight()) - hw - hb
+            nw, nb = self.graph_heights(view_h, other)
+            if abs(nw - hw) < 3 and abs(nb - hb) < 3:
+                return False
+            self.wx.configure(height=nw)
+            self.bar.configure(height=nb)
+        except tk.TclError:
+            return False
+        return True
+
+    def _configured(self, which: str, width: int, height: int | None = None):
+        if height is None:
+            height = int(self._canvas(which).cget("height"))
+        if (width, height) == self._drawn_w[which]:
             return
         if self._pending[which] is not None:
             try:
@@ -2776,12 +2825,12 @@ class NightTab:
             if not c.winfo_viewable():
                 self._drawn_w[which] = None          # draw when shown
                 return
-            w = int(c.winfo_width())
+            size = (int(c.winfo_width()), int(c.winfo_height()))
         except tk.TclError:
             return
-        if not force and w == self._drawn_w[which]:
+        if not force and size == self._drawn_w[which]:
             return
-        self._drawn_w[which] = w
+        self._drawn_w[which] = size
         (self.draw_weather if which == "wx" else self.draw_bar)()
 
     def redraw(self):
@@ -3225,6 +3274,36 @@ class NightTab:
         j0, j1 = self._axis_range(night)
         return Axis(j0, j1, self._gutter(), w - px(self.app, 6))
 
+    def wx_rows(self, H: float) -> dict:
+        """The weather strip's rows for a canvas H px tall: legend line, cloud bars (ya–yb), temperature / dew
+        lines (yc–yd, with room for the numbers above and below), spread · wind text (ye); the bars and the lines
+        share the height beyond the fixed text rows."""
+        lh = self.lh
+        top, gap, pad_t, row_s, bottom = lh * 1.5, lh * 0.9, lh * 0.8, lh * 1.2, lh * 0.5
+        var = max(lh * 3.0, H - (top + 2 * gap + 2 * pad_t + row_s + bottom))
+        ya = top
+        yb = ya + var * 0.38
+        yc = yb + gap
+        yd = yc + 2 * pad_t + var * 0.62
+        ye = yd + gap + row_s / 2
+        return {"legend": lh * 0.65, "ya": ya, "yb": yb, "yc": yc, "yd": yd, "pad_t": pad_t, "ye": ye,
+                "sep1": (yb + yc) / 2, "sep2": yd + gap * 0.55}
+
+    def bar_rows(self, H: float) -> dict:
+        """The block bar's rows for a canvas H px tall: Moon line, sky band with the blocks (yb0–yb1, takes the
+        height beyond the text rows), airmass band (ya0–ya1), airmass values (yt), hour labels (yh), dark/dawn (yd)."""
+        lh = self.lh
+        yb0 = lh * 1.5
+        below = lh * (0.35 + 1.1 + 0.8 + 1.35 + 1.1 + 0.65)
+        extra = max(0.0, H - yb0 - below - lh * 2.4)       # the band and the airmass strip share any extra height
+        yb1 = yb0 + lh * 2.4 + extra * 0.85
+        ya0 = yb1 + lh * 0.35
+        ya1 = ya0 + lh * 1.1 + extra * 0.15
+        yt = ya1 + lh * 0.8
+        yh = yt + lh * 1.35
+        return {"ym": lh * 0.7, "yb0": yb0, "yb1": yb1, "ya0": ya0, "ya1": ya1, "yt": yt, "yh": yh,
+                "yd": yh + lh * 1.1}
+
     def draw_weather(self):
         c = self.wx
         c.delete("all")
@@ -3242,20 +3321,21 @@ class NightTab:
             msg = "No forecast for this night" + (f" ({note})" if note else
                                                   " (none fetched yet, or the night is beyond the forecast)")
             c.create_rectangle(ax.x0, lh * 0.4, ax.x1, H - lh * 0.4, outline=style.LINE, fill="#f7f9fb")
-            c.create_text((ax.x0 + ax.x1) / 2, H / 2, text=msg, fill=style.HINT, font=style.font(9))
-            c.create_text(4, H / 2, text="Weather", anchor="w", fill=style.HINT, font=style.font(9))
+            c.create_text((ax.x0 + ax.x1) / 2, H / 2, text=msg, fill=style.HINT, font=self.norm)
+            c.create_text(4, H / 2, text="Weather", anchor="w", fill=style.HINT, font=self.norm)
             return
-        ya, yb = lh * 1.3, lh * 3.0             # cloud bars (legend row above)
-        yc, yd = lh * 3.3, lh * 6.0             # temperature / dew area (numbers above / below the lines)
-        ye = lh * 6.75                          # spread · wind text row
+        r = self.wx_rows(H)
+        ya, yb, yc, yd, ye, pt = r["ya"], r["yb"], r["yc"], r["yd"], r["ye"], r["pad_t"]
         tu, lu = site.temp_unit or "C", site.length_unit or "m"
-        c.create_text(4, (ya + yb) / 2, text="Cloud", anchor="w", fill=style.HINT, font=style.font(9))
-        c.create_text(4, (yc + yd) / 2, text="Temp · dew", anchor="w", fill=style.HINT, font=style.font(9))
-        c.create_text(4, ye, text="Spread · wind", anchor="w", fill=style.HINT, font=style.font(9))
+        for ys in (r["sep1"], r["sep2"]):        # faint lines between the rows
+            c.create_line(4, ys, ax.x1, ys, fill="#e9eef2")
+        c.create_text(4, (ya + yb) / 2, text="Cloud", anchor="w", fill=style.HINT, font=self.norm)
+        c.create_text(4, (yc + yd) / 2, text="Temp · dew", anchor="w", fill=style.HINT, font=self.norm)
+        c.create_text(4, ye, text="Spread · wind", anchor="w", fill=style.HINT, font=self.norm)
         src = wx.get("source") or ""
         if wx.get("note"):
             src += f" ({wx['note']})"
-        c.create_text(ax.x1, lh * 0.6, anchor="e", fill=style.HINT, font=style.font(9),
+        c.create_text(ax.x1, r["legend"], anchor="e", fill=style.HINT, font=self.norm,
                       text=f"cloud %  ·  temperature (red) and dew point (blue) °{tu}  ·  spread °{tu} · wind "
                            f"{wind_unit(lu)}  ·  {src}")
         c.create_line(ax.x0, yb, ax.x1, yb, fill=style.LINE)
@@ -3278,7 +3358,7 @@ class NightTab:
             lo, hi = min(vals), max(vals)
             if hi - lo < 4:
                 lo, hi = (lo + hi) / 2 - 2, (lo + hi) / 2 + 2
-            yv = lambda v: (yd - lh * 0.75) - (v - lo) / (hi - lo) * ((yd - lh * 0.75) - (yc + lh * 0.75))
+            yv = lambda v: (yd - pt) - (v - lo) / (hi - lo) * ((yd - pt) - (yc + pt))
             for idx, color in ((1, style.TEMP), (2, style.DEW)):
                 pts = []
                 for row in temps:
@@ -3297,14 +3377,14 @@ class NightTab:
                 top = yb - (yb - ya) * f
                 inside = top - 1 < ya + lh * 0.75          # no room above the bar: write inside it
                 yl = top + lh * 0.8 if inside else top - 1
-                c.create_text(x, yl, text=f"{cl:.0f}%", font=style.font(9), anchor="s",
+                c.create_text(x, yl, text=f"{cl:.0f}%", font=self.norm, anchor="s",
                               fill=style.text_on(style.mix("#dfe6ec", "#6c7a86", f)) if inside else style.TEXT)
             t, dw = conv(h.get("temp_c")), conv(h.get("dew_c"))
             if t is not None and vals:
-                c.create_text(x, yv(t) - 2, text=f"{round(t) + 0:.0f}", fill=style.TEMP, font=style.font(9),
+                c.create_text(x, yv(t) - 2, text=f"{round(t) + 0:.0f}", fill=style.TEMP, font=self.norm,
                               anchor="s")
             if dw is not None and vals:
-                c.create_text(x, yv(dw) + 2, text=f"{round(dw) + 0:.0f}", fill=style.DEW, font=style.font(9),
+                c.create_text(x, yv(dw) + 2, text=f"{round(dw) + 0:.0f}", fill=style.DEW, font=self.norm,
                               anchor="n")
             sp = h.get("spread_c")
             if sp is None and h.get("temp_c") is not None and h.get("dew_c") is not None:
@@ -3313,7 +3393,7 @@ class NightTab:
             txt = (f"{round(sp * 1.8 if tu == 'F' else sp) + 0:.0f}°" if sp is not None else "–") + \
                   (f" · {round(wv) + 0:.0f}" if wv is not None else "")
             dew_lim = float(self.app.options.get("dew_spread_c", 2.5))
-            c.create_text(x, ye, text=txt, font=style.font(9),
+            c.create_text(x, ye, text=txt, font=self.norm,
                           fill=style.WARN_FG if (sp is not None and sp < dew_lim) else style.TEXT)
         onset = wx.get("dew_onset")
         if onset and ax.j0 <= onset <= ax.j1:
@@ -3321,8 +3401,8 @@ class NightTab:
             c.create_line(x, ya - lh * 0.2, x, H, fill=style.WARN_FG, dash=(4, 3), width=max(1, px(self.app, 2)))
             label = f"⚠ dew from {sky.hhmm(onset, site.tz)}"
             anchor = "w" if x + gl.measure(label) + 10 < ax.x1 else "e"
-            tid = c.create_text(x + (5 if anchor == "w" else -5), lh * 0.6, text=label, anchor=anchor,
-                                fill=style.WARN_FG, font=style.font(9, "bold"))
+            tid = c.create_text(x + (5 if anchor == "w" else -5), r["legend"], text=label, anchor=anchor,
+                                fill=style.WARN_FG, font=self.bold)
             bb = c.bbox(tid)
             if bb:
                 r = c.create_rectangle(bb[0] - 3, bb[1] - 1, bb[2] + 3, bb[3] + 1, fill=style.WARN_BG,
@@ -3342,16 +3422,17 @@ class NightTab:
             return
         app, night, site, lh = self.app, self.night(), self.app.site, self.lh
         tz = site.tz
-        ym0, ym1 = lh * 0.25, lh * 0.75           # Moon line row
-        yb0, yb1 = lh * 0.9, lh * 3.0             # sky band with the blocks
-        ya0, ya1 = yb1 + lh * 0.25, yb1 + lh * 1.05   # airmass bands
-        yt = ya1 + lh * 0.65                      # airmass values
-        yh = yt + lh * 1.25                       # hour labels
+        r = self.bar_rows(int(c.cget("height")))
+        ym0 = ym1 = r["ym"]                       # Moon line row
+        yb0, yb1 = r["yb0"], r["yb1"]             # sky band with the blocks
+        ya0, ya1 = r["ya0"], r["ya1"]             # airmass bands
+        yt = r["yt"]                              # airmass values
+        yh, ydk = r["yh"], r["yd"]                # hour labels, dark / dawn
         illum = night.moon_illum
         c.create_text(4, (ym0 + ym1) / 2, text="Moon" + (f" {illum * 100:.0f} %" if illum is not None else ""),
-                      anchor="w", fill=style.HINT, font=style.font(9))
-        c.create_text(4, (yb0 + yb1) / 2, text="Blocks", anchor="w", fill=style.HINT, font=style.font(9))
-        c.create_text(4, (ya0 + ya1) / 2, text="Airmass", anchor="w", fill=style.HINT, font=style.font(9))
+                      anchor="w", fill=style.HINT, font=self.norm)
+        c.create_text(4, (yb0 + yb1) / 2, text="Blocks", anchor="w", fill=style.HINT, font=self.norm)
+        c.create_text(4, (ya0 + ya1) / 2, text="Airmass", anchor="w", fill=style.HINT, font=self.norm)
         # sky: day / civil / nautical / astronomical twilight / night, from the Sun's altitude
         n = max(60, int((ax.x1 - ax.x0) / 2))
         jds = np.linspace(ax.j0, ax.j1, n + 1)
@@ -3398,7 +3479,7 @@ class NightTab:
             k += 1
         if not first_x:
             c.create_text(ax.x0 + 4, (ym0 + ym1) / 2, text="Moon down all night", anchor="w", fill=style.HINT,
-                          font=style.font(9))
+                          font=self.norm)
         # blocks
         by_id = app.targets_by_id()
         for i, b in self.blocks():
@@ -3413,7 +3494,7 @@ class NightTab:
             name = b.name + {"done": " ✔", "clouded": " ✖", "partial": " ½"}.get(b.status, "")
             txt = self._fit(name, xb - xa - 8, self.bold)
             if txt:
-                c.create_text((xa + xb) / 2, (yb0 + yb1) / 2, text=txt, fill="#ffffff", font=style.font(9, "bold"),
+                c.create_text((xa + xb) / 2, (yb0 + yb1) / 2, text=txt, fill="#ffffff", font=self.bold,
                               tags=(f"blk{i}",))
             c.tag_bind(f"blk{i}", "<Button-1>", lambda _e, k=i: self.select_block(k))
             # meridian tick
@@ -3438,11 +3519,11 @@ class NightTab:
             c.create_line(x, yb1, x, yb1 + lh * 0.2, fill=style.HINT)
             lab = sky.hhmm(j, tz)
             if k % every == 0:
-                c.create_text(x, yh, text=lab if every == 1 else lab[:2], fill=style.TEXT, font=style.font(9))
+                c.create_text(x, yh, text=lab if every == 1 else lab[:2], fill=style.TEXT, font=self.norm)
         for x, lab, anc in dark_labels:
-            c.create_text(x, yh + lh * 0.95, text=lab, anchor=anc, fill=style.SIDE, font=style.font(9, "bold"))
-        c.create_text(4, yh, text="Site clock", anchor="w", fill=style.HINT, font=style.font(9))
-        c.create_text(4, yh + lh * 0.95, text=tz, anchor="w", fill=style.HINT, font=style.font(9))
+            c.create_text(x, ydk, text=lab, anchor=anc, fill=style.SIDE, font=self.bold)
+        c.create_text(4, yh, text="Site clock", anchor="w", fill=style.HINT, font=self.norm)
+        c.create_text(4, ydk, text=tz, anchor="w", fill=style.HINT, font=self.norm)
 
     def _fit(self, text: str, width: float, f) -> str:
         if f.measure(text) <= width:
@@ -3480,17 +3561,32 @@ class NightTab:
         vals = [v for v in (b.airmass_start, b.airmass_best, b.airmass_end) if v is not None]
         high = (max(vals) if vals else 0) > mx + 0.005 or bool(np.nanmax(xs) > mx + 0.005 if np.isfinite(xs).any()
                                                                else False)
+        self._airmass_values(c, b, xa, xb, yt, high)
+
+    def _airmass_values(self, c, b: Block, xa, xb, yt, high: bool):
+        """The airmass numbers under a block, never wider than the block (so neighbors never overlap): start at the
+        left edge, best in the middle, end at the right edge when there is room; else joined; else shorter."""
         f = self.small
-        full = " · ".join(f"{v:.2f}" for v in (b.airmass_start, b.airmass_best, b.airmass_end) if v is not None)
-        options = []
+        inset = f.measure(" ")                   # keeps this block's numbers apart from the neighbor's
+        room = xb - xa - 2 * inset
+        fill = style.WARN_FG if high else style.TEXT
+        trio = [b.airmass_start, b.airmass_best, b.airmass_end]
+        gap = f.measure("    ")
+        if not high and all(v is not None for v in trio):
+            texts = [f"{v:.2f}" for v in trio]
+            if sum(f.measure(t) for t in texts) + 2 * gap <= room:
+                c.create_text(xa + inset, yt, text=texts[0], anchor="w", font=f, fill=fill, tags=("am",))
+                c.create_text((xa + xb) / 2, yt, text=texts[1], font=f, fill=fill, tags=("am",))
+                c.create_text(xb - inset, yt, text=texts[2], anchor="e", font=f, fill=fill, tags=("am",))
+                return
+        full = " · ".join(f"{v:.2f}" for v in trio if v is not None)
         if high:
-            options += [f"⚠ high airmass  {full}", "⚠ high airmass", "⚠ high", "⚠"]
+            options = [f"⚠ high airmass  {full}", "⚠ high airmass", "⚠ high", "⚠"]
         else:
-            options += [full, f"X {b.airmass_best:.2f}" if b.airmass_best else ""]
+            options = [full, f"X {b.airmass_best:.2f}" if b.airmass_best else ""]
         for text in options:
-            if text and f.measure(text) <= xb - xa - 4:
-                c.create_text((xa + xb) / 2, yt, text=text, font=style.font(9),
-                              fill=style.WARN_FG if high else style.TEXT)
+            if text and f.measure(text) <= room:
+                c.create_text((xa + xb) / 2, yt, text=text, font=f, fill=fill, tags=("am",))
                 break
 
 
@@ -3556,6 +3652,9 @@ class ExportPage:
         style.green_button(btns, "Copy ASIAIR CSV", self.copy_csv).pack(side=tk.LEFT)
         style.green_button(btns, "Save CSV…", self.save_csv).pack(side=tk.LEFT, padx=px(app, 8))
         style.green_button(btns, "Print plan card", self.print_card).pack(side=tk.LEFT)
+        # after a save: open the folder the CSV went to (shown only then)
+        self.saved_path = ""
+        self.open_btn = ttk.Button(btns, text="Open folder", command=self.open_folder)
         self.msg_var = tk.StringVar()
         self.msg = ttk.Label(self.frame, textvariable=self.msg_var, style="Card.TLabel", justify=tk.LEFT)
         self.msg.pack(anchor="w", fill=tk.X, pady=(0, px(app, 8)))
@@ -3680,24 +3779,56 @@ class ExportPage:
         text = self.csv_text()
         if text is None:
             return
-        nights = self.chosen()
-        name = f"SHOBS-SCHED_{nights[0].date}.csv" if nights else "SHOBS-SCHED.csv"
         path = filedialog.asksaveasfilename(parent=self.app, title="Save the ASIAIR coordinate list",
-                                            defaultextension=".csv", initialfile=name,
+                                            defaultextension=".csv", initialfile=self.suggested_name(),
+                                            initialdir=settings.export_dir(self.app.settings),
                                             filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
         if not path:
             return
         self.write_csv(path, text)
 
+    def suggested_name(self) -> str:
+        nights = sorted(n.date for n in self.chosen() if n.date)
+        return f"SHOBS-SCHED_ASIAIR_{nights[0]}.csv" if nights else "SHOBS-SCHED_ASIAIR.csv"
+
     def write_csv(self, path: str, text: str) -> bool:
+        path = os.path.abspath(path)
         try:
             with open(path, "w", encoding="utf-8", newline="") as fh:
                 fh.write(text)
         except OSError as exc:
             self._msg(f"✖ Not saved: {exc.strerror or exc}.")
             return False
-        self._msg(f"✔ Saved {os.path.basename(path)} ({self.count_rows(text)} targets).")
+        n = self.count_rows(text)
+        self._msg(f"✔ Saved {n} target{'s' if n != 1 else ''} to {path}")
+        self.saved_path = path
+        folder = os.path.dirname(path)
+        if folder and folder != self.app.settings.get("export_dir"):
+            self.app.settings["export_dir"] = folder         # Save CSV opens here next time
+            settings.save_settings(self.app.settings)
+        if not self.open_btn.winfo_manager():
+            self.open_btn.pack(side=tk.LEFT, padx=(px(self.app, 8), 0))
+        settings.log(f"ASIAIR CSV saved to {path} ({n} rows)")
         return True
+
+    def open_folder(self) -> str | None:
+        """Show the folder of the last saved CSV in Explorer (Windows) or the file manager (never in tests)."""
+        folder = os.path.dirname(self.saved_path) if self.saved_path else ""
+        if not folder or not os.path.isdir(folder):
+            self._msg("⚠ Save the CSV first; the folder it went to opens here.")
+            return None
+        if self.app.testing:
+            return folder
+        try:
+            if sys.platform == "win32":
+                os.startfile(folder)          # noqa: S606 - the user's own folder
+            else:
+                import subprocess
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", folder])
+        except Exception as exc:
+            self._msg(f"✖ The folder did not open ({exc}). The CSV is at {self.saved_path}")
+            return None
+        return folder
 
     def print_card(self, open_browser: bool = True) -> str | None:
         ex = mod("export")

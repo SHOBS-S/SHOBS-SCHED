@@ -90,7 +90,46 @@ DEFAULT_OPTIONS = {
 
 def default_settings() -> dict:
     return {"version": APP_VERSION, "site": Site().to_dict(), "optics": Optics().to_dict(),
-            "options": dict(DEFAULT_OPTIONS), "observer_code": "", "set_here": [], "shobs_p_read": ""}
+            "options": dict(DEFAULT_OPTIONS), "observer_code": "", "set_here": [], "shobs_p_read": "",
+            "export_dir": ""}
+
+
+def _windows_downloads() -> str | None:
+    """The real Downloads known folder on Windows (it can be moved, e.g. to another drive), or None."""
+    try:
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD),
+                        ("Data4", ctypes.c_ubyte * 8)]
+        u = uuid.UUID("{374DE290-123F-4565-9164-39C4925E467B}")      # FOLDERID_Downloads
+        g = GUID(u.fields[0], u.fields[1], u.fields[2], (ctypes.c_ubyte * 8).from_buffer_copy(u.bytes[8:]))
+        out = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None, ctypes.byref(out)) != 0:
+            return None
+        path = out.value
+        ctypes.windll.ole32.CoTaskMemFree(out)
+        return path or None
+    except Exception:
+        return None
+
+
+def downloads_dir() -> str:
+    """The user's Downloads folder (Windows: the Downloads known folder), else ~/Downloads, else the home folder."""
+    if os.name == "nt":
+        p = _windows_downloads()
+        if p and os.path.isdir(p):
+            return p
+    p = os.path.join(os.path.expanduser("~"), "Downloads")
+    return p if os.path.isdir(p) else os.path.expanduser("~")
+
+
+def export_dir(s: dict) -> str:
+    """Where Save CSV opens: the last folder used when it still exists, else the Downloads folder."""
+    last = str((s or {}).get("export_dir") or "")
+    return last if last and os.path.isdir(last) else downloads_dir()
 
 
 def _read_json(path: str):
