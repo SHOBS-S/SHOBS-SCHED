@@ -40,8 +40,11 @@ def variable_events(el: VarElements, ra: float, dec: float, jd0: float, jd1: flo
     n0 = math.ceil((jd0 + corr - e) / p)
     n1 = math.floor((jd1 + corr - e) / p)
     out = []
-    for n in range(n0, n1 + 1):
-        t = e + n * p - corr
+    for n in range(n0 - 1, n1 + 2):            # one spare cycle each side: the range used a mid-range correction
+        t_b = e + n * p
+        t = t_b - float(sky.bjd_minus_jd_days(t_b, ra, dec))   # barycentric correction at this event
+        if not (jd0 <= t <= jd1):
+            continue
         out.append({"cycle": n, "t": t, "kind": el.epoch_kind or "max", "start": t - half, "end": t + half})
     return out
 

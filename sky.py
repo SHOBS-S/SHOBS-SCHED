@@ -372,6 +372,11 @@ def night_info(d: date, site) -> dict:
     out["dark_ok"] = w is not None
     out["sunset"], out["sunrise"] = out.pop("sun_dusk"), out.pop("sun_dawn")
     j0, j1 = night_span(d, site)
+    # polar night/day: no real sunset or sunrise inside the span (night_window returned the span's ends)
+    if out["sunset"] is not None and abs(out["sunset"] - j0) < 1e-9:
+        out["sunset"] = None
+    if out["sunrise"] is not None and abs(out["sunrise"] - j1) < 1e-9:
+        out["sunrise"] = None
     mid = 0.5 * (out["dusk"] + out["dawn"]) if w else 0.5 * (j0 + j1)
     out["moon_illum"] = float(moon_radec(mid)[2])
     out["moonrise"], out["moonset"] = moon_rise_set(d, site)

@@ -89,7 +89,7 @@ class GoldenTest(unittest.TestCase):
                 ds = diff_min(b.start, clock_jd(d, st, tz))
                 de = diff_min(b.end, clock_jd(d, en, tz))
                 why = EXPLAINED.get((n["date"], name), "")
-                note = "; ".join(b.notes[:1] + [c for c in b.cautions if "linear limit" not in c])
+                note = "; ".join(b.notes[:1] + b.cautions)
                 out.append(f"  {name:<12} {st}–{en}   {sky.hhmm(b.start, tz)}–{sky.hhmm(b.end, tz)}   "
                            f"{ds:+6.0f} {de:+6.0f}  {mer} / {sky.hhmm(b.meridian, tz):<8} {note}")
                 for line in cls._why(n["date"], name, b, ds, de, d, clock_jd(d, st, tz), clock_jd(d, en, tz), mer):
@@ -130,7 +130,10 @@ class GoldenTest(unittest.TestCase):
         if abs(de) > 15 and not b.fixed:
             want = float(t.get("block_min") or 120)
             got = b.minutes()
-            if got < want - 1:
+            early = [n for n in b.notes if n.startswith("Ends ") and "early so" in n]
+            if got < want - 1 and early:
+                lines.append(f"block cut to {got:.0f} of its {want:.0f} min: {early[0][0].lower()}{early[0][1:]}")
+            elif got < want - 1:
                 lines.append(f"block cut to {got:.0f} of its {want:.0f} min (free time before the next block)")
             else:
                 lines.append(f"SCHED gives a flexible target its block_min ({want:.0f} min); the hand plan "
@@ -224,6 +227,25 @@ class GoldenTest(unittest.TestCase):
             bl = p.blocks_obj()
             for a, b in zip(bl, bl[1:]):
                 self.assertLessEqual(a.end + 3 / 1440 - 1e-6, b.start, iso)
+
+
+class GoldenWeek(unittest.TestCase):
+    def test_all_targets_seven_nights(self):
+        """All 9 golden targets enabled for 7 nights: the weekly-goal campaign NGC 7789 (goal 1) gets a night, and
+        HD 219134 (High, goal 5) gets at least 5."""
+        g, site, optics = load()
+        targets = [Target.from_dict(dict(td, id=td["name"])) for td in g["targets"]]
+        sch = planner.build_schedule(date(2026, 10, 19), 7, site, optics, targets, {})
+        nights = {name: 0 for name in ("NGC 7789", "HD 219134")}
+        for n in sch.nights_obj():
+            names = {b.name for b in n.blocks_obj()}
+            for k in nights:
+                nights[k] += k in names
+            bl = n.blocks_obj()
+            for a, b in zip(bl, bl[1:]):
+                self.assertLessEqual(a.end, b.start + 1e-9, n.date)
+        self.assertGreaterEqual(nights["NGC 7789"], 1)
+        self.assertGreaterEqual(nights["HD 219134"], 5)
 
 
 if __name__ == "__main__":

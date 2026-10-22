@@ -250,5 +250,87 @@ class Collisions(unittest.TestCase):
         self.assertEqual([x["name"] for x in plan.blocks], ["Deep b"])
 
 
+class GemCollisions(unittest.TestCase):
+    """Collision trimming on a GEM obeys the flip rule (the later block never starts just after its meridian)."""
+
+    def setUp(self):
+        _g, self.site = golden()                      # GEM, 5 min tracking margin
+        self.d = date(2026, 10, 20)
+
+    def jd(self, hh, mm):
+        day = self.d if hh >= 12 else self.d + timedelta(days=1)
+        return sky.local_jd(day, hh, mm, self.site.tz)
+
+    def check(self, plan):
+        lead = planner.DEFAULT_OPTIONS["flip_lead_min"]
+        bl = plan.blocks_obj()
+        self.assertEqual(len(bl), 2, plan.didnt_fit)
+        a, b = bl
+        self.assertLessEqual(a.end + 3 / 1440, b.start + 1e-6)
+        self.assertGreaterEqual((a.end - a.t4) * 1440, 20 - 0.1)
+        for blk in bl:
+            m = sky.target_meridian(blk.ra, blk.dec, self.site, blk.start)
+            dm = (blk.start - m) * 1440
+            self.assertFalse(-5 < dm < 60, f"{blk.name} starts {dm:.0f} min from its meridian")
+        m_b = sky.target_meridian(b.ra, b.dec, self.site, b.start)
+        if b.start < m_b < b.t1:                       # pre-flip frames are dropped: what is left must be ≥ 20
+            self.assertGreaterEqual((b.t1 - m_b) * 1440 - 4, 20 - 0.1)
+            self.assertAlmostEqual((m_b - b.start) * 1440, lead, delta=1.0)
+        return a, b
+
+    def test_later_block_starts_before_its_meridian(self):
+        # Alpha 20:30–22:30 (baseline to 23:30); Beta 23:50–01:50, meridian 23:05. An even split would start
+        # Beta at ~23:11, 6 min after its meridian; SCHED starts it 12 min before (22:53) and ends Alpha at 22:50.
+        a = transit("Alpha b", ra_on_meridian(self.site, self.jd(21, 0)), 50.0, self.jd(21, 30), 2.0, 3.0)
+        b = transit("Beta b", ra_on_meridian(self.site, self.jd(23, 5)), 50.0, self.jd(0, 50), 2.0, 3.7)
+        for pa, pb in (("Normal", "Normal"), ("Normal", "High"), ("High", "Normal")):
+            a.priority, b.priority = pa, pb
+            x, y = self.check(planner.build_night(self.d, self.site, OPTICS, [a, b], {}))
+            self.assertIn(sky.hhmm(y.start, self.site.tz), ("22:53", "22:54"))      # meridian 23:05–23:06
+            self.assertAlmostEqual((y.start - x.end) * 1440, 3.0, delta=0.1)
+
+    def test_hour_after_when_before_impossible(self):
+        # Alpha's egress 22:55 leaves no room to start Beta 12 min before its 23:05 meridian; Beta starts an hour
+        # after the meridian instead (00:05, still 25 min before its 00:30 ingress)
+        a = transit("Alpha b", ra_on_meridian(self.site, self.jd(21, 0)), 50.0, self.jd(21, 55), 2.0, 3.0)
+        b = transit("Beta b", ra_on_meridian(self.site, self.jd(23, 5)), 50.0, self.jd(1, 30), 2.0, 3.7)
+        _x, y = self.check(planner.build_night(self.d, self.site, OPTICS, [a, b], {}))
+        m_b = sky.target_meridian(y.ra, y.dec, self.site, y.start)
+        self.assertGreaterEqual((y.start - m_b) * 1440, 60 - 0.5)
+        self.assertGreaterEqual((y.t1 - y.start) * 1440, 20 - 0.1)
+
+    def test_no_flip_safe_start_gets_a_caution(self):
+        # meridian 23:25, Alpha egress 23:00, Beta ingress 00:30: neither 23:13 nor 00:25 works
+        a = transit("Alpha b", ra_on_meridian(self.site, self.jd(21, 0)), 50.0, self.jd(22, 0), 2.0, 3.0)
+        b = transit("Beta b", ra_on_meridian(self.site, self.jd(23, 25)), 50.0, self.jd(1, 30), 2.0, 3.7)
+        plan = planner.build_night(self.d, self.site, OPTICS, [a, b], {})
+        y = next(x for x in plan.blocks_obj() if x.name == "Beta b")
+        self.assertTrue(any("after its meridian" in c for c in y.cautions), y.cautions)
+
+
+class DstTimedEvent(unittest.TestCase):
+    def test_minimum_across_the_change(self):
+        """Night of Sat 31 Oct 2026 (25 h): a minimum at 01:45 EDT with ±60 min crosses 02:00 → 01:00 EST.
+        The block is 120 real minutes long, shown 00:45–01:45 on the site clock."""
+        _g, site = golden()
+        d = date(2026, 10, 31)
+        t_min = sky.local_jd(date(2026, 11, 1), 1, 45, site.tz)          # fold=0: the first 01:45 (EDT)
+        self.assertEqual(sky.to_local(t_min, site.tz).utcoffset().total_seconds(), -4 * 3600)
+        ra = ra_on_meridian(site, t_min)
+        epoch = t_min + float(sky.bjd_minus_jd_days(t_min, ra, 40.0))
+        eb = Target(id="EB", name="EB Dst", kind="variable", mode="V", ra=ra, dec=40.0, vmag=11, exposure_s=60,
+                    elements={"vtype": "EA", "period": 3.3, "epoch": epoch, "epoch_kind": "min",
+                              "any_time": False, "event_halfwidth_min": 60})
+        site.mount = "altaz"
+        b = planner.build_night(d, site, OPTICS, [eb], {}).blocks_obj()[0]
+        self.assertAlmostEqual(b.minutes(), 120.0, delta=0.5)
+        self.assertAlmostEqual((b.start + b.end) / 2, t_min, delta=0.5 / 1440)
+        self.assertEqual(sky.hhmm(b.start, site.tz), "00:45")
+        self.assertEqual(sky.to_local(b.start, site.tz).utcoffset().total_seconds(), -4 * 3600)
+        self.assertEqual(sky.hhmm(b.end, site.tz), "01:45")
+        self.assertEqual(sky.to_local(b.end, site.tz).utcoffset().total_seconds(), -5 * 3600)
+        self.assertIn("Minimum at 01:45", b.notes[0])
+
+
 if __name__ == "__main__":
     unittest.main()

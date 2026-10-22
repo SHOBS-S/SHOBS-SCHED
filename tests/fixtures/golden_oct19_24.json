@@ -7,7 +7,7 @@
   "targets": [
     {"name": "HD 219134", "kind": "campaign", "mode": "V", "ra": 348.320833, "dec": 57.168333, "vmag": 5.57,
      "priority": "High", "block_min": 105, "min_block_min": 60, "goal_per_week": 5, "exposure_s": 0.75,
-     "cadence_overhead_s": 32.25,
+     "cadence_overhead_s": 32.25, "notes": "Defocus +125 steps",
      "rules": [{"kind": "no_transit", "pad_min": 0, "note": "No data while a planet transits",
                 "planet": {"name": "HD 219134 c", "period": 6.7650398, "period_err": 0.0000074, "t0": 2460599.497252,
                            "t0_err": 0.00097, "t14": 0.059208, "depth": 0.000315, "reference": "ExoFOP", "source": "NEA"}},

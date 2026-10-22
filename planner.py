@@ -54,6 +54,8 @@ FLIP_BEFORE_MIN = 5.0          # ... nor this close before it (no time to settle
 SEARCH_NIGHTS = 60             # how far ahead "next chance" looks
 AIRMASS_WEIGHT = 300.0         # flexible placement: minutes of distance from the ideal start per unit mean airmass
 LOST_MIN_WEIGHT = 1.5          # flexible placement: minutes of distance from the ideal start per usable minute lost
+NUDGE_MAX_MIN = 20.0           # an earlier flexible block may end up to this much early so the next one can start
+                               # before its meridian (instead of an hour after it)
 EPS = 0.2 * MIN
 
 # Cold-start exposure model (estimate_exposure). Calibrated so John's anchor (V 11.4, 60 s, 14" f/8,
@@ -77,6 +79,11 @@ def fmt_exposure(s: float | None) -> str:
     if s is None:
         return "—"
     return f"{float(s):g} s"
+
+
+def _k(adu: float) -> str:
+    """32000 → '32k'."""
+    return f"{adu / 1000:.0f}k"
 
 
 def _fmt_day(d: date) -> str:
@@ -195,12 +202,18 @@ def estimate_exposure(target: Target, optics, options: dict | None = None, airma
 
     if target.exposure_s:
         e = float(target.exposure_s)
+        if _defocused(target):
+            return {"exposure_s": e, "peak_adu": None, "is_estimate": False,
+                    "note": "Your exposure; defocused: peak estimate not valid"}
         p = peak(e)
         if p is None:
             return {"exposure_s": e, "peak_adu": None, "is_estimate": False, "note": "Your exposure"}
-        if p > limit:
-            note = (f"⚠ {fmt_exposure(e)} may pass your linear limit: predicted peak ~{p:,.0f} ADU "
-                    f"(limit {limit:,.0f}); a shorter exposure or a defocus would be safer")
+        # The cold-start model is rough (seeing, focus, transparency): only flag a clear excess.
+        if p >= 2.0 * limit:
+            note = (f"✖ estimate: peak ~{_k(p)}, over twice your {_k(limit)} limit — shorten {fmt_exposure(e)} "
+                    f"or defocus")
+        elif p > 1.5 * limit:
+            note = f"⚠ estimate: peak ~{_k(p)}, near your {_k(limit)} limit — check a frame"
         else:
             note = f"Your exposure; predicted peak ~{p:,.0f} ADU"
         return {"exposure_s": e, "peak_adu": p, "is_estimate": False, "note": note}
@@ -350,9 +363,13 @@ class _Night:
     def hh(self, jd):
         return sky.hhmm(jd, self.tz)
 
-    def gap(self, a_defocus: bool, b_defocus: bool) -> float:
-        g = float(self.o["overhead_slew_min"])
-        if a_defocus and not b_defocus:
+    def gap(self, a: Target | None, b: Target | None) -> float:
+        """Overhead between a block of target a and a following block of target b: the slew (none when both are
+        the same star, e.g. planets b and c of one system) plus a refocus after a defocused block."""
+        same = (a is not None and b is not None and a.ra is not None and b.ra is not None
+                and float(sky.sep_deg(a.ra, a.dec, b.ra, b.dec)) < 1.0 / 60.0)
+        g = 0.0 if same else float(self.o["overhead_slew_min"])
+        if _defocused(a) and not _defocused(b):
             g += float(self.o["overhead_focus_min"])
         return g * MIN
 
@@ -411,6 +428,8 @@ class _Night:
                 self.didnt_fit(t, "site not set up", with_next=False)
             self._keep_locked_without_sky("site not set up")
             return plan
+        if not sky.zone_ok(site.tz):
+            plan.notes.append(f"✖ Time zone '{site.tz}' not available; times shown in UTC")
         info = sky.night_info(self.d, site)
         self.info = info
         plan.dusk, plan.dawn = info["dusk"], info["dawn"]
@@ -448,6 +467,7 @@ class _Night:
         self.grid = g0 + np.arange(n) * MIN
         focus = float(self.o["overhead_focus_min"]) * MIN
         self.flex_dark = (self.grid >= self.dusk + focus - EPS) & (self.grid + MIN <= self.dawn + EPS)
+        self.moon_up = np.asarray(sky.moon_alt_at(site, self.grid), dtype=float) > 0.0
         self.dew = None
         if self.weather and self.weather.get("dew_onset"):
             self.dew = float(self.weather["dew_onset"])
@@ -481,6 +501,8 @@ class _Night:
             t = by_id.get(b.target_id)
             p = _P(tg=t, tid=b.target_id, name=b.name or (t.name if t else "?"), kind="locked", start=b.start,
                    end=b.end, block=b)
+            if b.end <= b.start:
+                p.cautions.append("⚠ Ends before it starts: check the times")
             if b.t1 is not None and b.t4 is not None:
                 p.c_lo, p.c_hi = b.t1, b.t4
             for q in self.placed:
@@ -500,7 +522,9 @@ class _Night:
                     p.cautions.append(f"⚠ Inside a blackout: {bo['reason']} {self.hh(bo['start'])}–"
                                       f"{self.hh(bo['end'])}")
             self.placed.append(p)
-            self.done_ids.add(b.target_id)
+            # a Clouded-out / Partial block stays as a record, but its target is planned again tonight
+            if b.locked or b.set_by_user or (b.status or "planned") not in ("clouded", "partial"):
+                self.done_ids.add(b.target_id)
 
     # 2. fixed-time targets ----------------------------------------------------------------------------------------
     def _fixed_candidates(self, t: Target) -> tuple[list[_P], str]:
@@ -545,12 +569,16 @@ class _Night:
             i_lo, i_hi = self.idx(c_lo), self.idx(c_hi)
             if not np.all(up[max(0, i_lo):i_hi + 1]):
                 k = max(0, i_lo) + int(np.argmin(up[max(0, i_lo):i_hi + 1]))
-                reasons.append(f"{label} below your limits (altitude {a['alt'][k]:.0f}° at {self.hh(self.grid[k])})")
+                reasons.append(f"{label} below your limits (altitude {a['alt'][k]:.0f}° at {self.hh(self.grid[k])}; "
+                               f"limit {a['lim'][k]:.0f}°)")
                 continue
-            if moon_lim is not None and np.min(a["moon"][i_lo:i_hi + 1]) < moon_lim:
-                reasons.append(f"Moon too close during the {label} ({np.min(a['moon'][i_lo:i_hi + 1]):.0f}°; "
-                               f"your limit {moon_lim:g}°)")
-                continue
+            if moon_lim is not None:
+                sl = slice(max(0, i_lo), i_hi + 1)
+                near = (a["moon"][sl] < moon_lim) & self.moon_up[sl]
+                if np.any(near):
+                    reasons.append(f"Moon too close during the {label} ({np.min(a['moon'][sl][near]):.0f}°; "
+                                   f"your limit {moon_lim:g}°)")
+                    continue
             blk = [b for b in events.blackouts(t, c_lo - min_side, c_hi + min_side)]
             if blk:
                 reasons.append(f"blacked out ({blk[0]['reason']})")
@@ -589,16 +617,22 @@ class _Night:
         settle = float(self.o["flip_settle_min"]) * MIN
         margin = float(self.site.past_meridian_min or 0.0) * MIN
         for m in self.meridians(t):
-            # meridian in the after-egress baseline: end inside the tracking margin if the baseline allows
-            if p.c_hi < m < p.end and p.end - m > margin:
+            # meridian in the block (after-egress baseline, or the transit itself with a wide margin): end inside
+            # the tracking margin when egress + the minimum baseline still fits there — no flip at all
+            if p.start < m < p.end and p.end - m > margin and p.c_hi + p.min_post <= m + margin + EPS:
                 # a 2-minute safety margin when the baseline allows it, else right up to the margin
-                new_end = max(m + margin - 2 * MIN, p.c_hi + p.min_post)
-                if new_end <= m + margin + EPS:
-                    p.end = new_end
+                p.end = max(m + margin - 2 * MIN, p.c_hi + p.min_post)
             # meridian in the before-ingress baseline: start flip_lead before it (pre-flip frames are dropped)
             if p.start < m < p.c_lo:
                 if p.c_lo - (m + settle) >= p.min_pre - EPS:
-                    p.start = max(p.start, m - lead)
+                    s_new = m - lead
+                    if s_new >= p.start:
+                        p.start = s_new
+                    elif m - p.start < FLIP_BEFORE_MIN * MIN:
+                        # starting a few minutes before the meridian leaves no time to settle: start earlier
+                        i, j = self.idx(s_new), self.idx(p.start)
+                        if s_new >= self.base_lo - EPS and i >= 0 and np.all(up[i:j + 1]):
+                            p.start = s_new
                 else:
                     p.cautions.append(f"⚠ Meridian flip only {(p.c_lo - m) * 1440:.0f} min before the event "
                                       f"({self.hh(m)})")
@@ -655,7 +689,7 @@ class _Night:
             self.done_ids.add(t.id)
 
     def _overlap(self, p: _P, q: _P) -> bool:
-        g = self.gap(p.defocus, q.defocus)
+        g = self.gap(p.tg, q.tg)
         return p.start < q.end + g and q.start < p.end + g
 
     @staticmethod
@@ -668,6 +702,34 @@ class _Night:
         x = min(x, space - min_b)
         return x, min(b, space - x)
 
+    def _bad_start_meridian(self, t: Target, s: float) -> float | None:
+        """GEM: the meridian a start at s sits too close to (FLIP_BEFORE_MIN before … FLIP_AFTER_MIN after)."""
+        if not self.gem or t is None:
+            return None
+        for m in self.meridians(t):
+            if -FLIP_BEFORE_MIN * MIN < s - m < FLIP_AFTER_MIN * MIN:
+                return m
+        return None
+
+    def _flip_start(self, q: _P, s: float, earliest: float) -> float:
+        """A start for fixed block q (wanted: s; not before `earliest`) that obeys the flip rule: flip_lead
+        before the meridian (pre-flip frames dropped, so the baseline after the flip must still be ≥ the minimum),
+        else an hour after it; s unchanged when neither works."""
+        m = self._bad_start_meridian(q.tg, s)
+        if m is None:
+            return s
+        lead = float(self.o["flip_lead_min"]) * MIN
+        settle = float(self.o["flip_settle_min"]) * MIN
+        s1 = m - lead
+        if s1 >= max(earliest, self.base_lo) - EPS and q.c_lo - (m + settle) >= q.min_pre - EPS:
+            i, j = self.idx(s1), self.idx(s)
+            if i >= 0 and np.all(self.arr(q.tg)["up"][i:j + 1]):
+                return s1
+        s2 = m + FLIP_AFTER_MIN * MIN
+        if q.c_lo - s2 >= q.min_pre - EPS:
+            return s2
+        return s
+
     def _try_fit(self, c: _P) -> tuple[bool, _P | None]:
         """Fit candidate c among the placed blocks, trimming baselines (c's and other fixed blocks') toward their
         minimum. Commits trims only on success. Returns (ok, the block it collides with)."""
@@ -676,7 +738,7 @@ class _Night:
         c_mid = 0.5 * (c.c_lo + c.c_hi)
         for p in sorted(self.placed, key=lambda q: q.start):
             ps, pe = new[id(p)]
-            g_pc, g_cp = self.gap(p.defocus, c.defocus), self.gap(c.defocus, p.defocus)
+            g_pc, g_cp = self.gap(p.tg, c.tg), self.gap(c.tg, p.tg)
             if pe + g_pc <= cs + EPS or ce + g_cp <= ps + EPS:
                 continue
             p_mid = 0.5 * (p.c_lo + p.c_hi) if p.c_lo is not None else 0.5 * (ps + pe)
@@ -687,10 +749,17 @@ class _Night:
                 if p.trimmable:
                     space = c.c_lo - p.c_hi - g_pc
                     post, pre = self._split(space, pe - p.c_hi, c.c_lo - cs, p.min_post, c.min_pre)
-                    new[id(p)][1] = p.c_hi + post
-                    cs = c.c_lo - pre
+                    s_new = c.c_lo - pre
+                    s_flip = self._flip_start(c, s_new, p.c_hi + p.min_post + g_pc)
+                    if s_flip != s_new:               # the later block obeys the flip rule; p gives way
+                        cs = s_flip
+                        new[id(p)][1] = min(pe, s_flip - g_pc)
+                    else:
+                        new[id(p)][1] = p.c_hi + post
+                        cs = s_new
                 else:
                     cs = max(cs, pe + g_pc)
+                    cs = self._flip_start(c, cs, pe + g_pc)
             else:                                     # p after c
                 p_fix_start = (p.c_lo - p.min_pre) if p.trimmable else ps
                 if c.c_hi + c.min_post + g_cp > p_fix_start + EPS:
@@ -698,8 +767,14 @@ class _Night:
                 if p.trimmable:
                     space = p.c_lo - c.c_hi - g_cp
                     post, pre = self._split(space, ce - c.c_hi, p.c_lo - ps, c.min_post, p.min_pre)
-                    ce = c.c_hi + post
-                    new[id(p)][0] = p.c_lo - pre
+                    s_new = p.c_lo - pre
+                    s_flip = self._flip_start(p, s_new, c.c_hi + c.min_post + g_cp)
+                    if s_flip != s_new:
+                        new[id(p)][0] = s_flip
+                        ce = min(ce, s_flip - g_cp)
+                    else:
+                        ce = c.c_hi + post
+                        new[id(p)][0] = s_new
                 else:
                     ce = min(ce, ps - g_cp)
             if ce - c.c_hi < c.min_post - EPS or c.c_lo - cs < c.min_pre - EPS:
@@ -707,7 +782,7 @@ class _Night:
         # final check: nothing overlaps after all the trims
         for p in self.placed:
             ps, pe = new[id(p)]
-            if ps < ce + self.gap(c.defocus, p.defocus) - EPS and cs < pe + self.gap(p.defocus, c.defocus) - EPS:
+            if ps < ce + self.gap(c.tg, p.tg) - EPS and cs < pe + self.gap(p.tg, c.tg) - EPS:
                 return False, p
         for p in self.placed:
             ps, pe = new[id(p)]
@@ -728,8 +803,8 @@ class _Night:
             if r.get("target_id") != t.id:
                 continue
             try:
-                rd = date.fromisoformat(r.get("date", ""))
-            except ValueError:
+                rd = date.fromisoformat(str(r.get("date") or ""))
+            except (TypeError, ValueError):
                 continue
             st = r.get("status")
             if monday <= rd < self.d and (st == "done" or (st == "planned" and r.get("scheduled"))):
@@ -737,10 +812,21 @@ class _Night:
         return len(dates)
 
     def _behind(self, t: Target) -> bool:
+        """A campaign is behind its weekly goal (week = Mon–Sun, counting Done nights and nights planned earlier
+        in this schedule) when it cannot reach the goal without tonight, or when it is behind an even pace:
+        count < ceil(goal × (nights of the week so far, tonight included) / 7). So a goal of 1 is behind from
+        Monday until it has a night, a goal of 2 from Monday until one night and from Thursday until two."""
         if t.kind != "campaign" or not t.goal_per_week:
             return False
-        expected = math.floor(t.goal_per_week * self.d.weekday() / 7.0)
-        return self._week_count(t) < expected
+        goal = int(t.goal_per_week)
+        count = self._week_count(t)
+        if count >= goal:
+            return False
+        remaining = 7 - self.d.weekday()            # tonight through Sunday night
+        return goal - count >= remaining or count < math.ceil(goal * (self.d.weekday() + 1) / 7.0)
+
+    def _goal_unmet(self, t: Target) -> bool:
+        return t.kind == "campaign" and bool(t.goal_per_week) and self._week_count(t) < int(t.goal_per_week)
 
     def _flex_mask(self, t: Target) -> tuple[np.ndarray, str, list]:
         """Where t may be observed tonight (before occupancy), the reason when nowhere, and its blackouts."""
@@ -753,12 +839,15 @@ class _Night:
         m = self.flex_dark & a["up"]
         if longest(m) < need:
             up_min = int(np.sum(m))
+            dark = self.flex_dark
             if up_min == 0:
-                return m, "below your limits all night", []
+                hi = float(np.max(a["alt"][dark])) if np.any(dark) else float("nan")
+                k = int(np.argmax(np.where(dark, a["alt"], -99.0)))
+                return m, (f"below your limits all night (highest {hi:.0f}°; limit {a['lim'][k]:.0f}° there)"), []
             return m, f"up only {longest(m)} min in a row in the dark (needs {need})", []
         for r in t.rules_obj():
             if r.kind == "min_moon_sep" and r.value is not None:
-                m2 = m & (a["moon"] >= float(r.value))
+                m2 = m & ((a["moon"] >= float(r.value)) | ~self.moon_up)
                 if longest(m2) < need:
                     best = float(np.max(a["moon"][m])) if np.any(m) else 0.0
                     return m2, f"Moon too close ({best:.0f}° at best; your limit {float(r.value):g}°)", []
@@ -799,34 +888,115 @@ class _Night:
             behind = self._behind(t)
             if behind:
                 rank -= 1
-            info.append(((0 if t.id in self.prefer else 1, rank, 0 if behind else 1, int(np.sum(m)), t.name),
-                         t, m, bos))
+            # same priority: a campaign with an unmet weekly goal goes before targets without one
+            info.append(((0 if t.id in self.prefer else 1, rank, 0 if behind else 1,
+                          0 if self._goal_unmet(t) else 1, int(np.sum(m)), t.name), t, m, bos, rank))
         info.sort(key=lambda x: x[0])
-        for _key, t, m, bos in info:
-            p = self._best_flex(t, m)
+        missed = []
+        for _key, t, m, bos, rank in info:
+            p = self._place_one_flex(t, m)
             if p is None:
-                need = int(math.ceil(float(t.min_block_min or 45.0)))
-                free = m & self._free_mask(t)
-                longest = max((r1 - r0 for r0, r1 in _runs(free)), default=0)
-                self.didnt_fit(t, f"no free stretch of {need} min left tonight (longest {longest} min)")
+                missed.append((t, m, bos, rank))
             else:
-                if self._behind(t):
-                    p.notes.append(f"Behind its weekly goal ({self._week_count(t)} of {t.goal_per_week} so far): "
-                                   f"moved up one priority level")
-                p.ev = {"blackouts": bos}
-                self.placed.append(p)
+                self._accept_flex(p, t, bos, rank)
             self.done_ids.add(t.id)
+        # second pass: a target that got nothing may take time from same- or lower-priority flexible blocks that
+        # are longer than their minimum (they shrink toward min_block_min)
+        for t, m, bos, rank in missed:
+            p = self._squeeze_for(t, m, rank)
+            if p is not None:
+                self._accept_flex(p, t, bos, rank)
+                continue
+            need = int(math.ceil(float(t.min_block_min or 45.0)))
+            free = m & self._free_mask(t)
+            longest = max((r1 - r0 for r0, r1 in _runs(free)), default=0)
+            self.didnt_fit(t, f"no free stretch of {need} min left tonight (longest {longest} min)")
+
+    def _accept_flex(self, p: _P, t: Target, bos: list, rank: int):
+        if self._behind(t):
+            p.notes.append(f"Behind its weekly goal ({self._week_count(t)} of {t.goal_per_week} so far): "
+                           f"moved up one priority level")
+        p.ev = {"blackouts": bos}
+        p.rank = rank
+        self.placed.append(p)
+
+    def _squeeze_for(self, x: Target, mask: np.ndarray, rank: int) -> _P | None:
+        """Shrink one placed flexible block (same or lower priority, longer than its minimum) so x fits."""
+        x_need = float(x.min_block_min or 45.0)
+        peers = [p for p in self.placed if p.kind == "flex" and getattr(p, "rank", 1) >= rank]
+        peers.sort(key=lambda p: -(p.end - p.start))
+        for p in peers:
+            p_min = min(float(p.tg.min_block_min or 45.0), float(p.tg.block_min or 120.0)) * MIN
+            if (p.end - p.start) - p_min < x_need * MIN - EPS:
+                continue
+            orig = (p.start, p.end)
+            for var in ((orig[0], orig[0] + p_min), (orig[1] - p_min, orig[1])):
+                if var[0] != orig[0] and self._bad_start_meridian(p.tg, var[0]) is not None:
+                    continue
+                p.start, p.end = var
+                q = self._best_flex(x, mask)
+                p.start, p.end = orig
+                if q is None:
+                    continue
+                lo, hi = orig
+                if q.start >= var[1]:
+                    hi = min(hi, q.start - self.gap(p.tg, x))
+                else:
+                    lo = max(lo, q.end + self.gap(x, p.tg))
+                if hi - lo < p_min - EPS:
+                    continue
+                if lo != orig[0] and self._bad_start_meridian(p.tg, lo) is not None:
+                    continue
+                p.start, p.end = lo, hi
+                p.notes.append(f"Shortened to make room for {x.name}")
+                return q
+        return None
 
     def _free_mask(self, t: Target) -> np.ndarray:
         free = np.ones(len(self.grid), dtype=bool)
-        d_t = _defocused(t)
         for p in self.placed:
-            g_before = self.gap(d_t, p.defocus)     # t then p
-            g_after = self.gap(p.defocus, d_t)      # p then t
+            g_before = self.gap(t, p.tg)     # t then p
+            g_after = self.gap(p.tg, t)      # p then t
             free &= ~((self.grid > p.start - g_before - MIN + 1e-7) & (self.grid < p.end + g_after - 1e-7))
         return free
 
-    def _best_flex(self, t: Target, mask: np.ndarray) -> _P | None:
+    def _ideal_start(self, t: Target) -> float:
+        lead = float(self.o["flip_lead_min"])
+        want = float(t.block_min or 120.0)
+        mid = 0.5 * (self.dusk + self.dawn)
+        m_ideal = min(self.meridians(t), key=lambda m: abs(m - mid))
+        return m_ideal - (lead * MIN if self.gem else want / 2.0 * MIN)
+
+    def _place_one_flex(self, t: Target, mask: np.ndarray) -> _P | None:
+        """_best_flex, plus (GEM) the nudge: when an earlier flexible block's end keeps t from starting before its
+        meridian, that block may end up to NUDGE_MAX_MIN early (never under its minimum) if that is cheaper
+        overall (the lost minutes count at LOST_MIN_WEIGHT)."""
+        p, cost = self._best_flex(t, mask, with_cost=True)
+        if p is None or not self.gem:
+            return p
+        ideal = self._ideal_start(t)
+        if p.start <= ideal + EPS:
+            return p
+        for a in sorted((q for q in self.placed if q.kind == "flex"), key=lambda q: q.end):
+            g = self.gap(a.tg, t)
+            if not (a.start < ideal < a.end + g + MIN):
+                continue
+            new_end = ideal - g
+            a_min = min(float(a.tg.min_block_min or 45.0), float(a.tg.block_min or 120.0)) * MIN
+            lost = (a.end - new_end) * 1440.0
+            if lost < 0.5 or new_end - a.start < a_min - EPS or lost > NUDGE_MAX_MIN + 1e-6:
+                continue
+            old = a.end
+            a.end = new_end
+            q, c2 = self._best_flex(t, mask, with_cost=True)
+            if q is not None and c2 + LOST_MIN_WEIGHT * lost < cost:
+                a.notes.append(f"Ends {lost:.0f} min early so {t.name} can start before its meridian")
+                a.dew_cut = False
+                return q
+            a.end = old
+        return p
+
+    def _best_flex(self, t: Target, mask: np.ndarray, with_cost: bool = False):
         ok = mask & self._free_mask(t)
         a = self.arr(t)
         want = int(round(float(t.block_min or 120.0)))
@@ -862,17 +1032,19 @@ class _Night:
                 (fallback if bad_start else cands).append(row)
         pool = cands or fallback
         if not pool:
-            return None
-        max_u = max(r[2] for r in pool)
-        min_x = min(r[3] for r in pool)
-        best = min(pool, key=lambda r: (abs(g[r[0]] - ideal) * 1440.0 + LOST_MIN_WEIGHT * (max_u - r[2])
-                                        + AIRMASS_WEIGHT * (r[3] - min_x), r[0]))
+            return (None, None) if with_cost else None
+
+        def cost(r):     # absolute, so costs of different free layouts compare (the nudge)
+            return (abs(g[r[0]] - ideal) * 1440.0 + LOST_MIN_WEIGHT * (want - r[2]) + AIRMASS_WEIGHT * r[3]
+                    + (1000.0 if not cands else 0.0))
+
+        best = min(pool, key=lambda r: (cost(r), r[0]))
         s, L = best[0], best[1]
         p = _P(tg=t, tid=t.id, name=t.name, kind="flex", start=g[s], end=g[s] + L * MIN)
         p.fallback_flip = not cands
         if self.dew is not None and self.o.get("dew_sensitive_end") and abs(p.end - self.dew) <= 2 * MIN:
             p.dew_cut = True
-        return p
+        return (p, cost(best)) if with_cost else p
 
     # 4. finishing --------------------------------------------------------------------------------------------------
     def _finish(self):
@@ -915,7 +1087,7 @@ class _Night:
         t, o, site = p.tg, self.o, self.site
         if p.kind == "locked":
             b = p.block
-            b.cautions = [c for c in (b.cautions or []) if not c.startswith("⚠")]
+            b.cautions = [c for c in (b.cautions or []) if not c.startswith(("⚠", "✖"))]
             b.notes = []
         else:
             b = Block(target_id=t.id, name=t.name, mode=t.mode, kind=t.kind, fixed=p.kind in ("transit", "event"))
@@ -942,6 +1114,7 @@ class _Night:
         b.meridian = float(m)
 
         # the event itself
+        base_i = None
         ev = p.ev if p.kind in ("transit", "event") else None
         if p.kind == "locked" and b.t1 is not None:
             ev = {"t1": b.t1, "tc": b.tc, "t4": b.t4, "sigma_min": b.tc_sigma_min}
@@ -952,6 +1125,7 @@ class _Night:
             if b.tc_sigma_min is not None:
                 s += f" (±{max(1, int(round(b.tc_sigma_min)))} min)"
             notes.append(s)
+            base_i = len(notes)
             notes.append(f"Baseline {max(0.0, (b.t1 - b.start) * 1440):.0f} min before ingress, "
                          f"{max(0.0, (b.end - b.t4) * 1440):.0f} min after egress")
             if b.tc_sigma_min is not None and b.tc_sigma_min > float(o["tc_sigma_warn_min"]):
@@ -964,6 +1138,7 @@ class _Night:
 
         # meridian and flips
         flip = False
+        flip_in_transit = False
         if self.gem:
             margin = float(site.past_meridian_min or 0.0)
             for mm in (m - SIDEREAL_DAY, m, m + SIDEREAL_DAY):
@@ -983,14 +1158,24 @@ class _Night:
                         if before <= float(o["flip_lead_min"]) + 10.0:
                             notes.append(f"Start before the meridian and let it flip (~{self.hh(mm)}); "
                                          f"drop the pre-flip frames")
+                            if base_i is not None and mm < b.t1:
+                                kept = max(0.0, (b.t1 - mm) * 1440 - float(o["flip_settle_min"]))
+                                notes[base_i] = (f"Baseline {kept:.0f} min before ingress (after the flip), "
+                                                 f"{max(0.0, (b.end - b.t4) * 1440):.0f} min after egress")
                         else:
                             notes.append(f"Meridian flip at ~{self.hh(mm)}; drop the frames during the flip")
                         if b.t1 is not None and b.t1 < mm < b.t4:
+                            flip_in_transit = True
                             cautions.append(f"⚠ Meridian flip during the transit ({self.hh(mm)})")
                 after = (b.start - mm) * 1440.0
                 if 0.0 <= after < FLIP_AFTER_MIN and not (p.kind == "flex" and not p.fallback_flip):
                     cautions.append(f"⚠ Starts {after:.0f} min after its meridian: the mount may flip at once "
                                     f"(start before {self.hh(mm)} if you can)")
+            ha = np.abs(np.asarray(sky.target_hour_angle(t.ra, t.dec, site, jd), dtype=float)) / 15.0
+            max_ha = float(o.get("max_ha_h", 6.0) or 6.0)
+            if np.any(ha > max_ha):
+                k = int(np.argmax(ha > max_ha))
+                cautions.append(f"⚠ Counterweight up beyond HA ±{max_ha:g} h ({self.hh(jd[k])})")
         elif b.alt_max > 85.0:
             k = int(np.argmax(alt))
             cautions.append(f"⚠ Zenith keyhole: {b.alt_max:.0f}° at {self.hh(jd[k])}")
@@ -1028,12 +1213,14 @@ class _Night:
         b.exposure_s = ex["exposure_s"]
         b.exposure_is_estimate = ex["is_estimate"]
         b.peak_adu = ex["peak_adu"]
-        if ex["note"].startswith("⚠"):
+        if ex["note"].startswith(("⚠", "✖")):
             cautions.append(ex["note"])
         per = float(b.exposure_s) + float(t.cadence_overhead_s or 0.0)
         b.frames = int(usable * 60.0 / per) if per > 0 else None
         if b.t1 is not None and b.t4 is not None and per > 0:
             ov = max(0.0, (min(b.t4, b.end) - max(b.t1, b.start)) * 1440.0)
+            if flip_in_transit:
+                ov = max(0.0, ov - float(o["flip_settle_min"]))
             b.frames_in_transit = int(ov * 60.0 / per)
 
         # weather

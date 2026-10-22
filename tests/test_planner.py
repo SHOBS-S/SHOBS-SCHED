@@ -75,8 +75,8 @@ class Exposure(unittest.TestCase):
     def test_user_exposure_over_limit(self):
         ex = planner.estimate_exposure(Target(vmag=6.0, exposure_s=30), self.optics, {})
         self.assertFalse(ex["is_estimate"])
-        self.assertTrue(ex["note"].startswith("⚠"))
-        self.assertGreater(ex["peak_adu"], self.optics.linear_limit_adu)
+        self.assertTrue(ex["note"].startswith("✖"))                 # ≥ 2× the limit
+        self.assertGreater(ex["peak_adu"], 2 * self.optics.linear_limit_adu)
         too_bright = planner.estimate_exposure(Target(vmag=2.0), self.optics, {})
         self.assertEqual(too_bright["exposure_s"], 0.75)
         self.assertTrue(too_bright["note"].startswith("⚠"))
@@ -380,6 +380,212 @@ class ScheduleTests(unittest.TestCase):
         p2 = planner.build_night(d, self.site, self.optics, [rival, ngc], {}, history=hist)
         first2 = min(p2.blocks_obj(), key=lambda b: abs(b.start - (mer - 12 * MIN)))
         self.assertEqual(first2.name, "Rival")
+
+
+def _transit_at(name, ra, dec, tc, t14_h=2.0, period=3.0):
+    t0 = tc + float(sky.bjd_minus_jd_days(tc, ra, dec))
+    return Target(id=name, name=name, kind="transit", mode="T", ra=ra, dec=dec, vmag=11, exposure_s=60,
+                  planet={"name": name, "period": period, "t0": t0, "t14": t14_h / 24, "depth": 0.01,
+                          "t0_err": 0.0003, "period_err": 1e-6})
+
+
+class WeeklyGoal(unittest.TestCase):
+    """Pace-aware 'behind its weekly goal' (Mon–Sun weeks; 19 Oct 2026 is a Monday)."""
+
+    def setUp(self):
+        self.g, self.site, self.optics = golden()
+
+    def behind(self, d, goal, done_days):
+        ngc = gtarget(self.g, "NGC 7789", goal_per_week=goal, block_min=120)
+        hist = [{"date": (d - timedelta(days=k)).isoformat(), "target_id": "NGC 7789", "status": "done"}
+                for k in done_days]
+        p = planner.build_night(d, self.site, self.optics, [ngc], {}, history=hist)
+        b = p.blocks_obj()[0]
+        return any("Behind its weekly goal" in n for n in b.notes)
+
+    def test_goal_1(self):
+        mon, tue = date(2026, 10, 19), date(2026, 10, 20)
+        self.assertTrue(self.behind(mon, 1, []))
+        self.assertTrue(self.behind(date(2026, 10, 23), 1, []))
+        self.assertFalse(self.behind(tue, 1, [1]))              # done on Monday: goal met
+
+    def test_goal_2(self):
+        self.assertTrue(self.behind(date(2026, 10, 19), 2, []))          # Mon: ceil(2/7) = 1
+        self.assertFalse(self.behind(date(2026, 10, 20), 2, [1]))        # Tue with Monday done: on pace
+        self.assertFalse(self.behind(date(2026, 10, 21), 2, [2]))        # Wed: ceil(6/7) = 1
+        self.assertTrue(self.behind(date(2026, 10, 22), 2, [3]))         # Thu: ceil(8/7) = 2 > 1
+        self.assertTrue(self.behind(date(2026, 10, 24), 2, []))          # Sat: 2 nights left, 2 needed
+        self.assertFalse(self.behind(date(2026, 10, 25), 2, [1, 2]))     # met
+
+    def test_unmet_goal_before_goalless_same_priority(self):
+        d = date(2026, 10, 21)
+        ngc = gtarget(self.g, "NGC 7789", goal_per_week=1, block_min=200)
+        # a goal-less any-time variable at the same spot of the sky, same priority, would otherwise go first
+        twin = Target(id="Twin", name="AA Twin", kind="variable", mode="V", ra=ngc.ra, dec=ngc.dec, vmag=11,
+                      block_min=200, min_block_min=45, exposure_s=60,
+                      elements={"vtype": "DSCT", "period": 0.1, "epoch": 2460000.5, "any_time": True})
+        hist = [{"date": "2026-10-19", "target_id": "NGC 7789", "status": "clouded"}]
+        p = planner.build_night(d, self.site, self.optics, [twin, ngc], {}, history=hist)
+        mer = sky.target_meridian(ngc.ra, ngc.dec, self.site, sky.local_jd(d, 23, 30, self.site.tz))
+        first = min(p.blocks_obj(), key=lambda b: abs(b.start - (mer - 12 * MIN)))
+        self.assertEqual(first.name, "NGC 7789")
+
+
+class ReviewFixes(unittest.TestCase):
+    def setUp(self):
+        self.g, self.site, self.optics = golden()
+        self.d = date(2026, 10, 21)
+
+    def jd(self, hh, mm):
+        day = self.d if hh >= 12 else self.d + timedelta(days=1)
+        return sky.local_jd(day, hh, mm, self.site.tz)
+
+    def test_fixed_start_just_before_meridian_moves_earlier(self):
+        # ingress 23:00, wanted start 22:00, meridian 22:03: the start goes to 21:51 (12 min before)
+        ra = ra_on_meridian(self.site, self.jd(22, 3))
+        t = _transit_at("Close b", ra, 45.0, self.jd(0, 0))
+        b = planner.build_night(self.d, self.site, self.optics, [t], {}).blocks_obj()[0]
+        self.assertAlmostEqual((b.meridian - b.start) * 1440, 12, delta=1.5)
+        self.assertIn("(after the flip)", b.notes[1])
+
+    def test_tracking_margin_with_meridian_in_transit(self):
+        site = Site.from_dict(self.site.to_dict())
+        site.past_meridian_min = 60
+        mer = self.jd(23, 40)
+        t = _transit_at("Wide b", ra_on_meridian(site, mer), 45.0, self.jd(23, 0))   # t4 = 00:00
+        b = planner.build_night(self.d, site, self.optics, [t], {}).blocks_obj()[0]
+        self.assertFalse(b.flip_in_block)
+        self.assertLessEqual(b.end, b.meridian + 60 * MIN + 1e-6)
+        self.assertGreaterEqual(b.end, b.t4 + 20 * MIN - 1e-6)
+        self.assertTrue(any("inside your tracking margin" in n for n in b.notes), b.notes)
+
+    def test_exposure_wording(self):
+        lim = self.optics.linear_limit_adu
+        hd = gtarget(self.g, "HD 219134")
+        self.assertIn("defocus", hd.notes.lower())
+        ex = planner.estimate_exposure(hd, self.optics, {})
+        self.assertEqual(ex["note"], "Your exposure; defocused: peak estimate not valid")
+        ex = planner.estimate_exposure(Target(vmag=11.4, exposure_s=60), self.optics, {})
+        self.assertTrue(ex["note"].startswith("Your exposure; predicted peak"))
+        found = {}
+        for v10 in range(60, 120):
+            v = v10 / 10
+            ex = planner.estimate_exposure(Target(vmag=v, exposure_s=60), self.optics, {})
+            r = ex["peak_adu"] / lim
+            found.setdefault("ok" if r <= 1.5 else "warn" if r < 2 else "hard", ex["note"])
+        self.assertTrue(found["warn"].startswith("⚠ estimate: peak ~"))
+        self.assertIn("near your 32k limit — check a frame", found["warn"])
+        self.assertTrue(found["hard"].startswith("✖"))
+        # a 1.2× peak is not flagged at all
+        for v10 in range(80, 130):
+            ex = planner.estimate_exposure(Target(vmag=v10 / 10, exposure_s=60), self.optics, {})
+            if 1.0 < ex["peak_adu"] / lim < 1.5:
+                self.assertFalse(ex["note"].startswith(("⚠", "✖")))
+
+    def test_golden_hd_has_no_exposure_caution(self):
+        p = planner.build_night(self.d, self.site, self.optics, [gtarget(self.g, "HD 219134")], {})
+        b = p.blocks_obj()[0]
+        self.assertFalse([c for c in b.cautions if "limit" in c], b.cautions)
+        self.assertIn("Refocus after this block", b.notes)
+
+    def test_second_pass_shrinks_a_peer(self):
+        win = [{"kind": "window", "value": "22:00-01:00"}]
+        mer = self.jd(23, 30)
+        ra = ra_on_meridian(self.site, mer)
+        a = field_("A big", ra, 45.0, block=180, rules=win)
+        b = field_("B small", ra + 5, 45.0, block=120, rules=win)
+        p = planner.build_night(self.d, self.site, self.optics, [a, b], {})
+        names = {x.name: x for x in p.blocks_obj()}
+        self.assertEqual(set(names), {"A big", "B small"}, p.didnt_fit)
+        self.assertTrue(any("Shortened to make room for B small" in n for n in names["A big"].notes))
+        self.assertGreaterEqual(names["A big"].minutes(), 45 - 1e-6)
+        self.assertGreaterEqual(names["B small"].minutes(), 45 - 1e-6)
+
+    def test_counterweight_up(self):
+        # dec 86°: always above 30° here; on a night when it is below the pole, |HA| > 6 h all night
+        ra = ra_on_meridian(self.site, self.jd(13, 0))
+        t = field_("Polar", ra, 86.0, block=60)
+        b = planner.build_night(self.d, self.site, self.optics, [t], {}).blocks_obj()[0]
+        self.assertTrue(any(c.startswith("⚠ Counterweight up beyond HA ±6 h (") for c in b.cautions), b.cautions)
+        ok = planner.build_night(self.d, self.site, self.optics, [gtarget(self.g, "NGC 7789")], {})
+        self.assertFalse(any("Counterweight" in c for c in ok.blocks_obj()[0].cautions))
+
+    def test_bad_zone(self):
+        site = Site.from_dict(self.site.to_dict())
+        site.tz = "Mars/Olympus_Mons"
+        p = planner.build_night(self.d, site, self.optics, [gtarget(self.g, "NGC 7789")], {})
+        self.assertIn("✖ Time zone 'Mars/Olympus_Mons' not available; times shown in UTC", p.notes)
+
+    def test_clouded_block_replanned(self):
+        s = self.jd(20, 30)
+        cl = Block(target_id="NGC 7789", name="NGC 7789", mode="D", kind="campaign", start=s, end=s + 1 / 24,
+                   status="clouded")
+        p = planner.build_night(self.d, self.site, self.optics, [gtarget(self.g, "NGC 7789")], {}, locked=[cl])
+        bl = [b for b in p.blocks_obj() if b.name == "NGC 7789"]
+        self.assertEqual(len(bl), 2)
+        self.assertEqual(sorted(b.status for b in bl), ["clouded", "planned"])
+        done = Block.from_dict(dict(cl.to_dict(), status="done"))
+        p = planner.build_night(self.d, self.site, self.optics, [gtarget(self.g, "NGC 7789")], {}, locked=[done])
+        self.assertEqual(len(p.blocks), 1)
+
+    def test_reversed_user_block_and_bad_history(self):
+        s = self.jd(23, 0)
+        rev = Block(target_id="NGC 7789", name="NGC 7789", start=s, end=s - 1 / 24, set_by_user=True)
+        hist = [{"date": None, "target_id": "NGC 7789", "status": "done"}, {"target_id": "NGC 7789"}]
+        ngc = gtarget(self.g, "NGC 7789", goal_per_week=2)
+        p = planner.build_night(self.d, self.site, self.optics, [ngc], {}, locked=[rev], history=hist)
+        b = p.blocks_obj()[0]
+        self.assertTrue(any("Ends before it starts" in c for c in b.cautions), b.cautions)
+
+    def test_same_star_needs_no_slew(self):
+        site = Site.from_dict(self.site.to_dict())
+        site.mount = "altaz"
+        ra = ra_on_meridian(site, self.jd(23, 30))
+        pb = _transit_at("Star b", ra, 45.0, self.jd(22, 0), 1.5, 3.1)     # 21:15–22:45
+        pc = _transit_at("Star c", ra, 45.0, self.jd(1, 0), 1.5, 7.3)      # 00:15–01:45
+        bl = planner.build_night(self.d, site, self.optics, [pb, pc], {}).blocks_obj()
+        self.assertEqual(len(bl), 2)
+        self.assertLess((bl[1].start - bl[0].end) * 1440, 1.0)
+        self.assertGreaterEqual(bl[1].start, bl[0].end - 1e-9)
+
+    def test_moon_rule_only_while_moon_up(self):
+        # 3 Nov: the Moon rises at ~02:12. A field ~51° from it with a 60° rule is fine until moonrise.
+        d = date(2026, 11, 3)
+        info = sky.night_info(d, self.site)
+        mra, mdec, _ = sky.moon_radec(info["moonrise"])
+        t = field_("Near Moon", float(mra) - 45.0, float(mdec) + 30.0, block=120,
+                   rules=[{"kind": "min_moon_sep", "value": 60}])
+        self.assertLess(float(sky.target_moon_sep(t.ra, t.dec, info["moonrise"] + 0.05)), 60)
+        p = planner.build_night(d, self.site, self.optics, [t], {})
+        self.assertTrue(p.blocks, p.didnt_fit)
+        self.assertLessEqual(p.blocks_obj()[0].end, info["moonrise"] + 2 * MIN)
+
+    def test_polar_sunset_none(self):
+        site = Site(name="Tromsø", lat=69.65, lon=18.96, tz="Europe/Oslo")
+        info = sky.night_info(date(2026, 6, 20), site)
+        self.assertIsNone(info["sunset"])
+        self.assertIsNone(info["sunrise"])
+        info = sky.night_info(date(2026, 12, 20), site)                 # polar night
+        self.assertIsNone(info["sunset"])
+        self.assertIsNone(info["sunrise"])
+        self.assertIsNotNone(info["dusk"])
+
+    def test_limit_value_in_reason(self):
+        p = planner.build_night(self.d, self.site, self.optics, [field_("Too south", 0.0, -60.0)], {})
+        self.assertIn("limit 30°", p.didnt_fit[0]["reason"])
+
+    def test_variable_events_per_event_correction(self):
+        import events
+        from models import VarElements
+        el = VarElements(vtype="EA", period=1.37, epoch=2460000.123, epoch_kind="min", any_time=False)
+        ra, dec = 90.0, 20.0
+        j0 = 2461300.5
+        evs = events.variable_events(el, ra, dec, j0, j0 + 200)
+        self.assertTrue(evs)
+        for e in evs:
+            t_b = el.epoch + e["cycle"] * el.period
+            self.assertAlmostEqual(e["t"], t_b - float(sky.bjd_minus_jd_days(t_b, ra, dec)), places=7)
+            self.assertTrue(j0 <= e["t"] <= j0 + 200)
 
 
 if __name__ == "__main__":
