@@ -1,0 +1,2 @@
+pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,pl_ratror,ra,dec,sy_vmag,tran_flag,pl_orbper_reflink,pl_tranmid_reflink
+"HAT-P-23 b","HAT-P-23",1.21288400000,0.00000200000,2454852.26464000,0.00018000,2.1792000,1.05360000,0.11690000,306.1239076,16.7621462,11.9370000,1,"<a refstr=BAKOS_ET_AL__2010 href=https://ui.adsabs.harvard.edu/abs/2010arXiv1008.3388B/abstract target=ref> Bakos et al. 2010 </a>","<a refstr=BAKOS_ET_AL__2010 href=https://ui.adsabs.harvard.edu/abs/2010arXiv1008.3388B/abstract target=ref> Bakos et al. 2010 </a>"

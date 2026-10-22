@@ -1,0 +1,198 @@
+{
+    "manifest": {
+        "requested_name": "HD 219134",
+        "resolved_name": "HD 219134",
+        "system_name": "HD 219134",
+        "lookup_status": "OK",
+        "compilation_date": "2026-10-22 07:01:15.673352",
+        "system_snapshot": {
+            "number_of_stars": 1,
+            "number_of_planets": 6
+        }
+    },
+    "system": {
+        "system_info": {
+            "id": "HD 219134",
+            "alias_set": {
+                "item_count": 2,
+                "default_name": "HD 219134",
+                "aliases": [
+                    "HD 219134",
+                    "TOI-1469"
+                ]
+            }
+        },
+        "objects": {
+            "stellar_set": {
+                "item_count": 1,
+                "stars": {
+                    "HD 219134": {
+                        "requested_object": "True",
+                        "is_host": "True",
+                        "alias_set": {
+                            "item_count": 14,
+                            "default_name": "HD 219134",
+                            "aliases": [
+                                "Gaia DR3 2009481748875806976",
+                                "GJ 892",
+                                "HR 8832",
+                                "LHS 71",
+                                "HD 219134",
+                                "BD+56 2966",
+                                "HIP 114622",
+                                "SAO 35236",
+                                "TYC 4006-01866-1",
+                                "WDS J23133+5710 A",
+                                "2MASS J23131692+5710059",
+                                "TIC 283722336",
+                                "Gaia DR2 2009481748875806976",
+                                "TOI-1469"
+                            ]
+                        }
+                    }
+                }
+            },
+            "planet_set": {
+                "item_count": 6,
+                "planets": {
+                    "HD 219134 b": {
+                        "alias_set": {
+                            "item_count": 16,
+                            "default_name": "HD 219134 b",
+                            "aliases": [
+                                "TOI-1469 b",
+                                "Gaia DR3 2009481748875806976 b",
+                                "TIC 283722336.01",
+                                "GJ 892 b",
+                                "HR 8832 b",
+                                "LHS 71 b",
+                                "HD 219134 b",
+                                "BD+56 2966 b",
+                                "HIP 114622 b",
+                                "SAO 35236 b",
+                                "TYC 4006-01866-1 b",
+                                "WDS J23133+5710 A b",
+                                "2MASS J23131692+5710059 b",
+                                "TIC 283722336 b",
+                                "Gaia DR2 2009481748875806976 b",
+                                "TOI-1469.01"
+                            ]
+                        }
+                    },
+                    "HD 219134 c": {
+                        "alias_set": {
+                            "item_count": 16,
+                            "default_name": "HD 219134 c",
+                            "aliases": [
+                                "TOI-1469 c",
+                                "Gaia DR3 2009481748875806976 c",
+                                "TIC 283722336.02",
+                                "GJ 892 c",
+                                "HR 8832 c",
+                                "LHS 71 c",
+                                "HD 219134 c",
+                                "BD+56 2966 c",
+                                "HIP 114622 c",
+                                "SAO 35236 c",
+                                "TYC 4006-01866-1 c",
+                                "WDS J23133+5710 A c",
+                                "2MASS J23131692+5710059 c",
+                                "TIC 283722336 c",
+                                "Gaia DR2 2009481748875806976 c",
+                                "TOI-1469.02"
+                            ]
+                        }
+                    },
+                    "HD 219134 d": {
+                        "alias_set": {
+                            "item_count": 14,
+                            "default_name": "HD 219134 d",
+                            "aliases": [
+                                "Gaia DR3 2009481748875806976 d",
+                                "TOI-1469 d",
+                                "GJ 892 d",
+                                "HR 8832 d",
+                                "LHS 71 d",
+                                "HD 219134 d",
+                                "BD+56 2966 d",
+                                "HIP 114622 d",
+                                "SAO 35236 d",
+                                "TYC 4006-01866-1 d",
+                                "WDS J23133+5710 A d",
+                                "2MASS J23131692+5710059 d",
+                                "TIC 283722336 d",
+                                "Gaia DR2 2009481748875806976 d"
+                            ]
+                        }
+                    },
+                    "HD 219134 f": {
+                        "alias_set": {
+                            "item_count": 13,
+                            "default_name": "HD 219134 f",
+                            "aliases": [
+                                "Gaia DR3 2009481748875806976 f",
+                                "GJ 892 f",
+                                "HR 8832 f",
+                                "LHS 71 f",
+                                "HD 219134 f",
+                                "BD+56 2966 f",
+                                "HIP 114622 f",
+                                "SAO 35236 f",
+                                "TYC 4006-01866-1 f",
+                                "WDS J23133+5710 A f",
+                                "2MASS J23131692+5710059 f",
+                                "TIC 283722336 f",
+                                "Gaia DR2 2009481748875806976 f"
+                            ]
+                        }
+                    },
+                    "HD 219134 g": {
+                        "alias_set": {
+                            "item_count": 14,
+                            "default_name": "HD 219134 g",
+                            "aliases": [
+                                "Gaia DR3 2009481748875806976 g",
+                                "TOI-1469 g",
+                                "GJ 892 g",
+                                "HR 8832 g",
+                                "LHS 71 g",
+                                "HD 219134 g",
+                                "BD+56 2966 g",
+                                "HIP 114622 g",
+                                "SAO 35236 g",
+                                "TYC 4006-01866-1 g",
+                                "WDS J23133+5710 A g",
+                                "2MASS J23131692+5710059 g",
+                                "TIC 283722336 g",
+                                "Gaia DR2 2009481748875806976 g"
+                            ]
+                        }
+                    },
+                    "HD 219134 h": {
+                        "alias_set": {
+                            "item_count": 15,
+                            "default_name": "HD 219134 h",
+                            "aliases": [
+                                "Gaia DR3 2009481748875806976 h",
+                                "TOI-1469 h",
+                                "GJ 892 h",
+                                "HR 8832 h",
+                                "LHS 71 h",
+                                "HD 219134 e",
+                                "HD 219134 h",
+                                "BD+56 2966 h",
+                                "HIP 114622 h",
+                                "SAO 35236 h",
+                                "TYC 4006-01866-1 h",
+                                "WDS J23133+5710 A h",
+                                "2MASS J23131692+5710059 h",
+                                "TIC 283722336 h",
+                                "Gaia DR2 2009481748875806976 h"
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

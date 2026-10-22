@@ -1,0 +1,1119 @@
+"""SHOBS-SCHED target lookups, the lookup cache, Suggested transits and the Targets page's "next event" text.
+
+Where things come from
+  Planets    NASA Exoplanet Archive (TAP): the composite table `pscomppars` for position, V, depth, duration and a
+             first ephemeris; then the most precise published ephemeris for the coming weeks from table `ps`.
+             Names: the Archive's alias service first, then spelling variants ("wasp-12b" → "WASP-12 b").
+  Variables  AAVSO VSX API (JSON) first; when it does not answer, VizieR's copy of VSX (B/vsx/vsx) by name, then by
+             a 1' cone around the SIMBAD position.
+  Anything   SIMBAD (sim-script) for a name that is neither: the UI then asks which mode (NeedsMode).
+Network      urllib only, User-Agent "SHOBS-SCHED/1.0", timeouts; every call goes through `http_get` (tests replace
+             it). Failures become FetchError with a plain reason ("HTTP 503", "no network connection", "the
+             Archive's firewall (Cloudflare) blocked the query"), and then either the cached answer (with a note of
+             its age) or LookupError_ with that reason. Call these from a worker thread, never the UI thread.
+
+Lookup cache (stand-alone, in settings.cache_dir(); meant to merge with SHOBS-P's future cache, SHOBS-P #21)
+  One JSON file per lookup key:  lookup_<source>_<slug>_<hash8>.json
+    {
+      "format": "shobs-lookup-cache/1",     # bump when the layout changes; unknown formats are ignored
+      "app": "SHOBS-SCHED",                 # the app that wrote it (SHOBS-P will write "SHOBS-P")
+      "source": "NEA",                      # NEA | VSX | SIMBAD | NEA catalog
+      "key": "nea:planet:hat-p-23 b",       # <source>:<what>:<normalized name>  (lower case, single spaces)
+      "query": "HAT-P-23 b",                # what was asked, as typed
+      "fetched": "2026-10-22T14:03:11+00:00",   # UTC, ISO 8601
+      "fetched_unix": 1792677791.0,         # the same moment as Unix seconds (the age is computed from this)
+      "data": { ... }                       # the PARSED reply (not the raw text), shape per key family:
+    }
+    nea:planet:<name>   {"composite": {pscomppars row}, "ps": [ps rows]}  or  {"choice": {"system", "planets",
+                        "transiting"}}  (a star with several planets)
+    vsx:variable:<name> {"name","ra","dec","vtype","period","epoch","max","min","band","eclipse_pct",
+                        "via": "VSX" | "VizieR VSX"}
+    simbad:object:<name> {"main_id","ra","dec","vmag","otype","otype_short"}
+    nea:catalog:transiting  {"rows": [catalog dicts]}   (file lookup_nea_catalog_transiting_<hash>.json)
+  Ages: planet ephemerides and the catalog are refetched after 7 days, VSX and SIMBAD after 30. A failed refetch
+  keeps using the old copy (and says how old). Names that are not found are not cached.
+"""
+from __future__ import annotations
+
+import csv
+import hashlib
+import html
+import io
+import json
+import math
+import os
+import re
+import socket
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import date, datetime, timedelta, timezone
+
+import numpy as np
+
+import events
+import settings
+import sky
+from models import Planet, Schedule, Target, VarElements
+
+USER_AGENT = "SHOBS-SCHED/1.0"
+TIMEOUT_S = 30.0
+CACHE_FORMAT = "shobs-lookup-cache/1"
+PLANET_MAX_AGE_DAYS = 7.0
+CATALOG_MAX_AGE_DAYS = 7.0
+VSX_MAX_AGE_DAYS = 30.0
+SIMBAD_MAX_AGE_DAYS = 30.0
+
+NEA_TAP = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?"
+NEA_ALIAS = "https://exoplanetarchive.ipac.caltech.edu/cgi-bin/Lookup/nph-aliaslookup.py?"
+VSX_API = "https://www.aavso.org/vsx/index.php?"
+VIZIER_TAP = "https://tapvizier.cds.unistra.fr/TAPVizieR/tap/sync?"
+SIMBAD_SCRIPT = "https://simbad.cds.unistra.fr/simbad/sim-script?"
+
+SOURCE_WORDS = {"NEA": "the NASA Exoplanet Archive", "VSX": "AAVSO VSX", "VizieR": "VizieR",
+                "SIMBAD": "SIMBAD", "NEA catalog": "the NASA Exoplanet Archive"}
+
+# pscomppars columns for one planet (the composite table also carries the first-error columns)
+NEA_COLUMNS = ("pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,"
+               "pl_ratror,ra,dec,sy_vmag,tran_flag,pl_tranmid_reflink,pl_orbper_reflink")
+PS_COLUMNS = "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,pl_refname"
+CATALOG_COLUMNS = ("pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,"
+                   "pl_ratror,ra,dec,sy_vmag")
+
+
+# ---- exceptions ----------------------------------------------------------------------------------------------------
+
+class LookupError_(Exception):
+    """A lookup failed; str(e) / e.message is a plain sentence for the user."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+
+class NotFound(LookupError_):
+    """The service answered but does not know the name (as opposed to: the service did not answer)."""
+
+
+class NeedsMode(Exception):
+    """The name resolved (SIMBAD) but is not a known planet or VSX variable: the UI asks which mode."""
+
+    def __init__(self, name: str, ra: float, dec: float, vmag: float | None, main_id: str, otype: str = ""):
+        self.name, self.ra, self.dec, self.vmag, self.main_id, self.otype = name, ra, dec, vmag, main_id, otype
+        self.message = (f"{name} was found in SIMBAD ({main_id}{', ' + otype if otype else ''}) but is not a known "
+                        "transiting planet or VSX variable. Choose the mode to observe it in.")
+        super().__init__(self.message)
+
+
+class PlanetChoice(Exception):
+    """A star name with several planets: planets = their Archive names (transiting ones first)."""
+
+    def __init__(self, system: str, planets: list, transiting=None):
+        self.system = system
+        self.planets = list(planets)
+        self.transiting = set(transiting or [])
+        self.message = (f"{system} has {len(self.planets)} planets ({', '.join(self.planets)}). "
+                        "Choose which one to plan.")
+        super().__init__(self.message)
+
+
+class FetchError(Exception):
+    """A network call failed. reason is plain words ("HTTP 503", "no network connection")."""
+
+    def __init__(self, reason: str, status: int | None = None):
+        self.reason, self.status = reason, status
+        super().__init__(reason)
+
+
+# ---- network -------------------------------------------------------------------------------------------------------
+
+def http_get(url: str, timeout: float = TIMEOUT_S) -> bytes:
+    """GET a URL → bytes. Every failure becomes FetchError with a plain reason. Tests replace this function."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        words = {403: "refused the request", 404: "page not found", 429: "too many requests",
+                 500: "server error", 502: "server error", 503: "service unavailable", 504: "gateway timeout"}
+        w = words.get(exc.code, "error")
+        raise FetchError(f"{w}, HTTP {exc.code}", exc.code) from None
+    except urllib.error.URLError as exc:
+        r = exc.reason
+        if isinstance(r, socket.timeout) or "timed out" in str(r):
+            raise FetchError(f"no answer within {timeout:.0f} s") from None
+        if isinstance(r, socket.gaierror):
+            raise FetchError("no network connection (name lookup failed)") from None
+        if isinstance(r, ConnectionRefusedError):
+            raise FetchError("connection refused") from None
+        raise FetchError(f"network error: {r}") from None
+    except (socket.timeout, TimeoutError):
+        raise FetchError(f"no answer within {timeout:.0f} s") from None
+    except OSError as exc:
+        raise FetchError(f"network error: {exc}") from None
+
+
+def _get_text(url: str, timeout: float = TIMEOUT_S) -> str:
+    raw = http_get(url, timeout)     # looked up at call time, so tests can replace targets.http_get
+    text = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+    low = text[:3000].lower()
+    if ("cloudflare" in low or "just a moment" in low or "attention required" in low) and "<html" in low:
+        raise FetchError("the service's firewall (Cloudflare) blocked the query")
+    return text
+
+
+def _tap_csv(base: str, adql: str, nea: bool = True) -> list[dict]:
+    if nea:
+        url = base + urllib.parse.urlencode({"query": adql, "format": "csv"})
+    else:
+        url = base + urllib.parse.urlencode({"request": "doQuery", "lang": "ADQL", "format": "csv", "query": adql})
+    text = _get_text(url)
+    head = text.lstrip()[:400]
+    if head.startswith("<"):
+        if "error" in head.lower() or "<votable" in head.lower():
+            raise FetchError("the service rejected the query")
+        raise FetchError("an unexpected web page came back instead of data")
+    return list(csv.DictReader(io.StringIO(text)))
+
+
+def nea_query(adql: str) -> list[dict]:
+    return _tap_csv(NEA_TAP, adql, nea=True)
+
+
+def vizier_query(adql: str) -> list[dict]:
+    return _tap_csv(VIZIER_TAP, adql, nea=False)
+
+
+# ---- small helpers -------------------------------------------------------------------------------------------------
+
+def _f(value):
+    try:
+        v = float(value)
+        return v if math.isfinite(v) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean(name: str) -> str:
+    return " ".join(str(name or "").replace("'", "").replace("’", "").split())
+
+
+def _key_name(name: str) -> str:
+    return _clean(name).lower()
+
+
+def strip_tags(text: str) -> str:
+    """HTML link → its text. The Archive double-escapes names ("Kab&amp;aacute;th"): unescape twice."""
+    return " ".join(html.unescape(html.unescape(re.sub(r"<[^>]+>", "", text or ""))).split())
+
+
+def _adql_str(s: str) -> str:
+    return s.replace("'", "''")
+
+
+def _today_iso() -> str:
+    return date.today().isoformat()
+
+
+def _age_words(days: float) -> str:
+    if days < 1.0:
+        return "earlier today" if days * 24 >= 1 else "less than an hour ago"
+    n = int(round(days))
+    return "1 day ago" if n == 1 else f"{n} days ago"
+
+
+# ---- cache ---------------------------------------------------------------------------------------------------------
+
+def _cache_path(source: str, key: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", key.lower().split(":", 1)[-1]).strip("_")[:60]
+    h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+    src = re.sub(r"[^a-z0-9]+", "_", source.lower()).strip("_")
+    return os.path.join(settings.cache_dir(), f"lookup_{src}_{slug}_{h}.json")
+
+
+def cache_read(source: str, key: str) -> tuple[dict | list | None, float | None]:
+    """(data, age in days) of a cached lookup, or (None, None)."""
+    try:
+        with open(_cache_path(source, key), encoding="utf-8") as fh:
+            rec = json.load(fh)
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(rec, dict) or rec.get("format") != CACHE_FORMAT or rec.get("key") != key:
+        return None, None
+    t = _f(rec.get("fetched_unix"))
+    age = (time.time() - t) / 86400.0 if t is not None else None
+    return rec.get("data"), age
+
+
+def cache_write(source: str, key: str, query: str, data) -> None:
+    now = time.time()
+    rec = {"format": CACHE_FORMAT, "app": settings.APP_NAME, "source": source, "key": key, "query": query,
+           "fetched": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(timespec="seconds"),
+           "fetched_unix": now, "data": data}
+    path = _cache_path(source, key)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(rec, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError as exc:
+        settings.log(f"cache: could not write {path}: {exc}")
+
+
+def cached_lookup(source: str, key: str, query: str, max_age_days: float, fetch, refresh: bool = False):
+    """Return (data, note). A fresh cached copy is used as is (note ""). Otherwise fetch() runs: its answer is
+    cached (None = not found, not cached → NotFound from the caller). When fetch() raises FetchError, the cached
+    copy (any age) comes back with a note of its age, or LookupError_ with the reason."""
+    data, age = cache_read(source, key)
+    if data is not None and age is not None and age < max_age_days and not refresh:
+        return data, ""
+    try:
+        fresh = fetch()
+    except FetchError as exc:
+        who = SOURCE_WORDS.get(source, source)
+        if data is not None:
+            note = f"{who} did not answer ({exc.reason}); using the copy from {_age_words(age or 0.0)}"
+            settings.log(f"lookup {key}: {note}")
+            return data, note
+        settings.log(f"lookup {key}: {who} did not answer ({exc.reason}); nothing cached")
+        raise LookupError_(f"{who[0].upper() + who[1:]} did not answer ({exc.reason}) and there is no saved "
+                           f"copy for {query}. Try again later.") from None
+    if fresh is not None:
+        cache_write(source, key, query, fresh)
+    return fresh, ""
+
+
+# ---- planet names --------------------------------------------------------------------------------------------------
+
+# Survey prefixes as the Archive spells them, so "Wasp-12 b" or "tres-3b" still matches (from SHOBS-P).
+_PREFIXES = {"wasp": "WASP", "tres": "TrES", "hat-p": "HAT-P", "hats": "HATS", "kelt": "KELT", "xo": "XO",
+             "qatar": "Qatar", "kepler": "Kepler", "k2": "K2", "toi": "TOI", "corot": "CoRoT", "gj": "GJ",
+             "hd": "HD", "hip": "HIP", "tic": "TIC", "ngts": "NGTS", "wts": "WTS", "kps": "KPS", "mascara": "MASCARA",
+             "lhs": "LHS", "gl": "GL", "koi": "KOI", "lp": "LP", "kmt": "KMT", "ogle": "OGLE",
+             "trappist": "TRAPPIST", "wendelstein": "Wendelstein", "dmpp": "DMPP", "epic": "EPIC",
+             "hat": "HAT", "kelt-": "KELT", "toi-": "TOI"}
+# Surveys whose Archive names join the number with a hyphen ("TOI-2046 b", "HAT-P-23 b") rather than a space.
+_HYPHEN_SURVEYS = {"WASP", "TrES", "HAT-P", "HATS", "KELT", "XO", "Qatar", "Kepler", "K2", "TOI", "CoRoT", "NGTS",
+                   "WTS", "KPS", "MASCARA", "KOI", "TRAPPIST", "DMPP", "Wendelstein"}
+_PLANETLIKE = re.compile(r"(\d\s?[b-i]|\.\d{1,2})$", re.IGNORECASE)
+_SURVEY_RE = re.compile(r"^(wasp|tres|hat-?p|hats|kelt|xo|qatar|kepler|k2|toi|corot|ngts|wts|kps|mascara|koi|"
+                        r"trappist|wendelstein|dmpp)[- ]?\d", re.IGNORECASE)
+
+
+def name_variants(name: str) -> list[str]:
+    """Spellings the Archive might use for a typed planet name, most likely first:
+    "wasp-12b" → "WASP-12 b"; "TrES-3b" → "TrES-3 b"; "toi 2046 b" → "TOI-2046 b". Ported from SHOBS-P's
+    _name_variants, plus the hyphen/space swap for the survey names."""
+    clean = _clean(name)
+    if not clean:
+        return []
+    base = [clean]
+    if len(clean) > 2 and clean[-1].isalpha() and clean[-2].isdigit():
+        base.insert(0, clean[:-1] + " " + clean[-1])            # "TrES-3b" -> "TrES-3 b" (the likelier form)
+    if clean and not clean[-1].isalpha():
+        base.append(clean + " b")
+    known = sorted((k.rstrip("-") for k in _PREFIXES), key=len, reverse=True)
+    out = []
+    for v in base:
+        m = None
+        for k in known:                          # a known survey prefix ("K2", "HAT-P") before the generic rule
+            m = re.match(rf"^({re.escape(k)})([- ]?)(\d.*)$", v, flags=re.IGNORECASE)
+            if m:
+                break
+        if m is None:
+            m = re.match(r"^([A-Za-z]+(?:-P)?)([- ]?)(.*)$", v, flags=re.IGNORECASE)
+        if m and m.group(3):
+            prefix = _PREFIXES.get(m.group(1).lower(), m.group(1).upper())
+            rest = m.group(3)
+            if len(rest) >= 2 and rest[-1].isalpha() and rest[-2] == " ":
+                rest = rest[:-1] + rest[-1].lower()              # the planet letter is lower case
+            seps = [m.group(2)]
+            if rest[:1].isdigit():
+                seps = (["-", " "] if prefix in _HYPHEN_SURVEYS else [" ", "-"]) + seps
+            for sep in seps:
+                out.append(prefix + sep + rest)
+        out.append(v)
+    return list(dict.fromkeys(out))
+
+
+def looks_like_planet(name: str) -> bool:
+    """A planet letter or TOI decimal at the end ("WASP-12 b", "TOI-2046.01"), or a transit-survey name."""
+    c = _clean(name)
+    return bool(_PLANETLIKE.search(c) or _SURVEY_RE.match(c))
+
+
+# ---- planets: NASA Exoplanet Archive -------------------------------------------------------------------------------
+
+def _parse_alias_reply(data) -> dict | None:
+    """The Archive's alias service reply → {"resolved": planet or None, "system", "planets", "matched_planet"}."""
+    def obj(v):
+        return v if isinstance(v, dict) else {}
+    data = obj(data)
+    manifest = obj(data.get("manifest"))
+    if str(manifest.get("lookup_status", "")).upper() != "OK":
+        return None
+    planets_info = obj(obj(obj(obj(data.get("system")).get("objects")).get("planet_set")).get("planets"))
+    planets = sorted(k for k in planets_info if isinstance(k, str))
+    resolved = manifest.get("resolved_name") or None
+    matched = resolved in planets_info
+    if not matched:
+        resolved = planets[0] if len(planets) == 1 else None
+    return {"resolved": resolved, "system": manifest.get("system_name") or "", "planets": planets,
+            "matched_planet": matched}
+
+
+ALIAS_TIMEOUT_S = 8.0          # the alias service answers known names in seconds but hangs on unknown ones
+
+
+def nea_alias(name: str) -> dict | None:
+    """Alias service; None when it does not know the name. FetchError passes up (a timeout usually just means
+    "unknown name": the service hangs on those, so the timeout is short)."""
+    text = _get_text(NEA_ALIAS + urllib.parse.urlencode({"objname": _clean(name)}), ALIAS_TIMEOUT_S)
+    try:
+        return _parse_alias_reply(json.loads(text))
+    except ValueError:
+        return None
+
+
+def _transiting(system: str) -> list[str]:
+    try:
+        rows = nea_query(f"select pl_name, tran_flag from pscomppars where hostname = '{_adql_str(system)}'")
+    except FetchError:
+        return []
+    return [r.get("pl_name", "") for r in rows if str(r.get("tran_flag", "")).strip() in ("1", "1.0")]
+
+
+def _fetch_planet(name: str):
+    """Network part of lookup_planet: {"composite": row, "ps": rows} / {"choice": {...}} / None (not known)."""
+    clean = _clean(name)
+    info = None
+    alias_err = None
+    try:
+        info = nea_alias(clean)
+    except FetchError as exc:
+        alias_err = exc                      # the alias service is a nicety: try the spellings next
+    if info is not None and looks_like_planet(clean) and not info["matched_planet"] and _PLANETLIKE.search(clean):
+        info = None                          # "TOI-1234 b" matched only to its star: don't hand back another planet
+    if info is not None and info["resolved"] is None and len(info["planets"]) > 1:
+        tr = _transiting(info["system"] or clean)
+        planets = sorted(info["planets"], key=lambda n: (n not in tr, n))
+        return {"choice": {"system": info["system"] or clean, "planets": planets, "transiting": tr}}
+    row = None
+    if info is not None and info["resolved"]:
+        rows = nea_query(f"select {NEA_COLUMNS} from pscomppars where pl_name = '{_adql_str(info['resolved'])}'")
+        row = rows[0] if rows else None
+    if row is None:
+        last_err = None
+        for v in name_variants(clean)[:6]:   # one simple query per spelling (Cloudflare dislikes long OR lists)
+            try:
+                rows = nea_query(f"select {NEA_COLUMNS} from pscomppars where pl_name = '{_adql_str(v)}'")
+            except FetchError as exc:
+                last_err = exc
+                break
+            if rows:
+                row = rows[0]
+                break
+        if row is None and last_err is None and info is None:
+            # a star name the alias service did not answer for: its planets by host name
+            try:
+                rows = nea_query(f"select pl_name, tran_flag from pscomppars where hostname = '{_adql_str(clean)}'")
+            except FetchError as exc:
+                rows, last_err = [], exc
+            tr = [r["pl_name"] for r in rows if str(r.get("tran_flag", "")).strip() in ("1", "1.0")]
+            names = sorted({r["pl_name"] for r in rows}, key=lambda n: (n not in tr, n))
+            if len(names) > 1:
+                return {"choice": {"system": clean, "planets": names, "transiting": tr}}
+            if len(names) == 1:
+                rows = nea_query(f"select {NEA_COLUMNS} from pscomppars where pl_name = '{_adql_str(names[0])}'")
+                row = rows[0] if rows else None
+        if row is None and last_err is not None:
+            raise last_err                   # the Archive itself did not answer
+        if row is None and alias_err is not None:
+            settings.log(f"alias service: {alias_err.reason} for {clean}; the Archive has no such planet name")
+    if row is None:
+        return None
+    try:
+        ps = nea_query(f"select {PS_COLUMNS} from ps where pl_name = '{_adql_str(row['pl_name'])}'")
+    except FetchError as exc:
+        settings.log(f"ps table for {row['pl_name']} not available ({exc.reason}); composite ephemeris only")
+        ps = []
+    return {"composite": row, "ps": ps}
+
+
+def _predicted_sigma_days(period, period_err, t0, t0_err, when_jd) -> float:
+    if not period or not t0 or period_err is None or t0_err is None:
+        return float("inf")
+    n = round((when_jd - t0) / period)
+    return math.hypot(abs(t0_err), abs(n) * abs(period_err))
+
+
+def most_precise_ephemeris(ps_rows: list[dict], when_jd: float, composite=None) -> dict | None:
+    """Of the published ephemerides (Archive table `ps` rows for one planet with period, t0 and both errors), the
+    one whose predicted mid-transit time at when_jd has the smallest uncertainty. composite = (period, period_err,
+    t0, t0_err) from the composite table, kept (→ None) unless a row beats it by more than 5 %. Returns
+    {"period","period_err","t0","t0_err","reference","sigma_min","n"} or None. Ported from SHOBS-P."""
+    cands = []
+    for row in ps_rows or []:
+        period, t0 = _f(row.get("pl_orbper")), _f(row.get("pl_tranmid"))
+        if not period or not t0 or t0 < 2.4e6:
+            continue
+        perrs = [abs(v) for v in (_f(row.get("pl_orbpererr1")), _f(row.get("pl_orbpererr2"))) if v is not None]
+        terrs = [abs(v) for v in (_f(row.get("pl_tranmiderr1")), _f(row.get("pl_tranmiderr2"))) if v is not None]
+        if not perrs or not terrs:
+            continue
+        perr, terr = max(perrs), max(terrs)
+        if perr <= 0 or terr <= 0:
+            continue
+        sigma = _predicted_sigma_days(period, perr, t0, terr, when_jd)
+        cands.append((sigma, {"period": period, "period_err": perr, "t0": t0, "t0_err": terr,
+                              "reference": strip_tags(row.get("pl_refname", ""))}))
+    if not cands:
+        return None
+    cands.sort(key=lambda c: c[0])
+    sigma, best = cands[0]
+    if composite is not None:
+        base = _predicted_sigma_days(*composite[:4], when_jd)
+        if base <= sigma * 1.05:
+            return None
+    best["sigma_min"] = sigma * 1440.0
+    best["n"] = len(cands)
+    return best
+
+
+def planet_target(data: dict, when_jd: float | None = None) -> Target:
+    """Build the transit Target from cached Archive data ({"composite": row, "ps": rows})."""
+    row = data["composite"]
+    when = sky.now_jd() if when_jd is None else when_jd
+    name = row.get("pl_name") or ""
+    period, period_err = _f(row.get("pl_orbper")), _f(row.get("pl_orbpererr1"))
+    t0, t0_err = _f(row.get("pl_tranmid")), _f(row.get("pl_tranmiderr1"))
+    ref = strip_tags(row.get("pl_tranmid_reflink", "")) or strip_tags(row.get("pl_orbper_reflink", ""))
+    source = "NEA"
+    best = most_precise_ephemeris(data.get("ps") or [], when, (period, period_err, t0, t0_err))
+    if best is not None:
+        period, period_err, t0, t0_err = best["period"], best["period_err"], best["t0"], best["t0_err"]
+        ref = best["reference"] or ref
+        source = "NEA (most precise)"
+    k = _f(row.get("pl_ratror"))
+    dep = _f(row.get("pl_trandep"))
+    depth = k * k if k else (dep / 100.0 if dep else None)
+    dur = _f(row.get("pl_trandur"))
+    pl = Planet(name=name, period=period, period_err=period_err, t0=t0, t0_err=t0_err,
+                t14=dur / 24.0 if dur else None, depth=depth, reference=ref, source=source)
+    return Target(name=name, kind="transit", mode="T", ra=_f(row.get("ra")), dec=_f(row.get("dec")),
+                  vmag=_f(row.get("sy_vmag")), source=source, planet=pl.__dict__.copy(), added=_today_iso())
+
+
+def lookup_planet(name: str, when_jd: float | None = None, refresh: bool = False) -> Target:
+    """A transiting planet from the NASA Exoplanet Archive (see the module docstring). Raises PlanetChoice for a
+    star with several planets, NotFound when the Archive does not know the name, LookupError_ when it cannot be
+    reached and nothing is cached. The returned Target carries .lookup_note (cache age note or "")."""
+    clean = _clean(name)
+    if not clean:
+        raise NotFound("Type a planet name first.")
+    data, note = cached_lookup("NEA", f"nea:planet:{_key_name(clean)}", clean, PLANET_MAX_AGE_DAYS,
+                               lambda: _fetch_planet(clean), refresh)
+    if not data:
+        raise NotFound(f"The NASA Exoplanet Archive has no planet called {clean}. Check the spelling "
+                       "(for example WASP-12 b, TOI-2046 b), or type the planet's values by hand.")
+    if "choice" in data:
+        c = data["choice"]
+        raise PlanetChoice(c["system"], c["planets"], c.get("transiting"))
+    t = planet_target(data, when_jd)
+    t.lookup_note = note
+    if not t.planet or not t.planet.get("t14") or not t.planet.get("t0"):
+        t.lookup_note = ((note + "; ") if note else "") + "the Archive has no full transit ephemeris for it"
+    return t
+
+
+# ---- variables: AAVSO VSX, VizieR B/vsx ---------------------------------------------------------------------------
+
+PULSATOR_PREFIXES = ("DSCT", "HADS", "SXPHE", "RR", "CEP", "DCEP", "CW", "BCEP", "ROA", "GDOR", "SPB", "ACYG",
+                     "BLAP", "ZZ", "V361HYA", "V1093HER", "BLBOO", "ACEP", "PPN", "PVTEL", "RV", "LPB", "SDOR")
+ECLIPSING_PREFIXES = ("EA", "EB", "EW", "EP", "ELL", "E")
+LONG_PERIOD_PREFIXES = ("M", "SR", "L", "I", "UV", "GCAS", "BE", "RCB", "YSO", "INS", "FU")
+
+
+def classify_vtype(vtype: str) -> str:
+    """'pulsator', 'eclipsing', 'long' (long-period/irregular) or 'other' from a VSX type such as "EA/SD",
+    "EA+GDOR", "HADS:", "RRAB". A combined type with an eclipsing part counts as eclipsing (timed minima)."""
+    parts = [p.strip().rstrip(":").upper() for p in re.split(r"[+|,]", vtype or "") if p.strip()]
+    kinds = []
+    for p in parts:
+        head = p.split("/")[0].strip("()")
+        if head.startswith(("EA", "EB", "EW", "EP", "ELL")) or head == "E":
+            kinds.append("eclipsing")
+        elif head.startswith(PULSATOR_PREFIXES):
+            kinds.append("pulsator")
+        elif head.startswith(LONG_PERIOD_PREFIXES):
+            kinds.append("long")
+        else:
+            kinds.append("other")
+    for k in ("eclipsing", "pulsator", "long"):
+        if k in kinds:
+            return k
+    return "other"
+
+
+def _parse_mag(text) -> tuple[float | None, str, bool]:
+    """'10.56 V' → (10.56, 'V', False); '(0.56) V' → (0.56, 'V', True = an amplitude); '<15.2 V' → (15.2, 'V', False)."""
+    s = str(text or "").strip()
+    if not s:
+        return None, "", False
+    amp = s.startswith("(")
+    m = re.search(r"[-+]?\d+(?:\.\d+)?", s)
+    if not m:
+        return None, "", amp
+    band = s[m.end():].replace(")", "").strip().split(" ")[0] if s[m.end():].strip() else ""
+    return float(m.group(0)), band, amp
+
+
+def parse_vsx_json(text: str) -> dict | None:
+    """AAVSO VSX api.object JSON → the common variable dict, or None when VSX does not know the name
+    ({"VSXObject": []}). Documented fields: Name, RA2000, Declination2000, VariabilityType, Period, Epoch,
+    MaxMag ("10.00 V"), MinMag ("10.56 V" or "(0.56) V" for an amplitude), EclipseDuration (% of the period, for
+    eclipsing binaries), RiseDuration (pulsators)."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise FetchError("an unexpected reply came back instead of data") from None
+    obj = data.get("VSXObject") if isinstance(data, dict) else None
+    if not isinstance(obj, dict) or not obj.get("Name"):
+        return None
+    mx, band, _ = _parse_mag(obj.get("MaxMag"))
+    mn, band2, amp = _parse_mag(obj.get("MinMag"))
+    if amp and mn is not None and mx is not None:
+        mn = mx + mn
+    return {"name": _clean(obj.get("Name")), "ra": _f(obj.get("RA2000")), "dec": _f(obj.get("Declination2000")),
+            "vtype": str(obj.get("VariabilityType") or "").strip(), "period": _f(obj.get("Period")),
+            "epoch": _f(obj.get("Epoch")), "max": mx, "min": mn, "band": band or band2,
+            "eclipse_pct": _f(obj.get("EclipseDuration")), "auid": str(obj.get("AUID") or ""), "via": "VSX"}
+
+
+def parse_vizier_vsx_row(row: dict) -> dict:
+    """One B/vsx/vsx CSV row (space-padded strings) → the common variable dict. f_min "(" = min is an amplitude."""
+    g = lambda k: str(row.get(k, "") or "").strip()
+    mx, mn = _f(g("max")), _f(g("min"))
+    if g("f_min") == "(" and mx is not None and mn is not None:
+        mn = mx + mn
+    return {"name": _clean(g("Name")), "ra": _f(g("RAJ2000")), "dec": _f(g("DEJ2000")), "vtype": g("Type"),
+            "period": _f(g("Period")), "epoch": _f(g("Epoch")), "max": mx, "min": mn, "band": g("n_max"),
+            "eclipse_pct": None, "auid": "", "via": "VizieR VSX"}
+
+
+def vsx_name_variants(name: str) -> list[str]:
+    """VSX spellings: "V404 Lyr" → "V0404 Lyr" (VSX pads V-numbers to four digits), constellation capitalized."""
+    c = _clean(name)
+    out = [c]
+    m = re.match(r"^(?i:v)\s?(\d{1,4})\s+([A-Za-z]{3})$", c)
+    if m:
+        out.append(f"V{int(m.group(1)):04d} {m.group(2).capitalize()}")
+    m = re.match(r"^([A-Za-z]{1,2})\s+([A-Za-z]{3})$", c)
+    if m and m.group(1).lower() not in ("v",):
+        out.append(f"{m.group(1).upper()} {m.group(2).capitalize()}")
+    return list(dict.fromkeys(out))
+
+
+def _vizier_by_name(name: str) -> dict | None:
+    for v in vsx_name_variants(name):
+        rows = vizier_query(f"SELECT TOP 5 * FROM \"B/vsx/vsx\" WHERE Name = '{_adql_str(v)}'")
+        for r in rows:
+            if str(r.get("Name", "")).strip().lower() == v.lower():
+                return parse_vizier_vsx_row(r)
+    return None
+
+
+def _vizier_cone(ra: float, dec: float, radius_deg: float = 1.0 / 60.0) -> dict | None:
+    rows = vizier_query("SELECT TOP 20 * FROM \"B/vsx/vsx\" WHERE 1=CONTAINS(POINT('ICRS',RAJ2000,DEJ2000),"
+                        f"CIRCLE('ICRS',{ra:.6f},{dec:.6f},{radius_deg:.6f}))")
+    best, best_sep = None, None
+    for r in rows:
+        p = parse_vizier_vsx_row(r)
+        if p["ra"] is None or p["dec"] is None:
+            continue
+        s = float(sky.sep_deg(ra, dec, p["ra"], p["dec"]))
+        if s <= radius_deg and (best_sep is None or s < best_sep):
+            best, best_sep = p, s
+    return best
+
+
+def _fetch_variable(name: str):
+    clean = _clean(name)
+    vsx_reason = None
+    for v in vsx_name_variants(clean):
+        try:
+            text = _get_text(VSX_API + urllib.parse.urlencode({"view": "api.object", "ident": v, "format": "json"}))
+            got = parse_vsx_json(text)
+        except FetchError as exc:
+            vsx_reason = exc
+            break
+        if got:
+            return got
+    if vsx_reason is None:
+        return None                          # VSX answered: not a known variable
+    settings.log(f"VSX did not answer for {clean} ({vsx_reason.reason}); trying VizieR's copy")
+    got = _vizier_by_name(clean)             # FetchError here → both down → cache / LookupError_
+    if got:
+        return got
+    try:
+        s = resolve_simbad(clean)
+    except LookupError_:
+        return None
+    short = s.get("otype_short") or ""
+    if s.get("ra") is None or (short and "*" not in short):
+        return None                          # not a star (a cluster, a galaxy): a variable nearby is not it
+    got = _vizier_cone(s["ra"], s["dec"])
+    if got:
+        got["matched_by_position"] = True
+        got["simbad_id"] = s.get("main_id", "")
+        got["sep_arcsec"] = round(float(sky.sep_deg(s["ra"], s["dec"], got["ra"], got["dec"])) * 3600.0, 1)
+    return got
+
+
+def elements_from_vsx(v: dict) -> VarElements:
+    """The common variable dict → VarElements (rules in the spec: pulsators and long-period any time from maxima;
+    eclipsing timed minima with ±60 min, or ±0.6 × the eclipse duration when VSX gives it)."""
+    kind = classify_vtype(v.get("vtype", ""))
+    el = VarElements(vtype=v.get("vtype", ""), period=v.get("period"), epoch=v.get("epoch"),
+                     mag_max=v.get("max"), mag_min=v.get("min"))
+    if kind == "eclipsing":
+        el.epoch_kind, el.any_time = "min", False
+        pct, p = v.get("eclipse_pct"), v.get("period")
+        if pct and p and 0 < pct <= 100:
+            el.event_halfwidth_min = round(max(20.0, 0.6 * pct / 100.0 * p * 1440.0), 1)
+        if not (el.period and el.epoch):
+            el.any_time = True               # no elements: nothing to time
+    else:
+        el.epoch_kind, el.any_time = "max", True
+    return el
+
+
+def lookup_variable(name: str, refresh: bool = False) -> Target:
+    """A variable star from AAVSO VSX (or VizieR's copy). NotFound when VSX does not know it; LookupError_ when
+    nothing answers and nothing is cached. The Target carries .lookup_note."""
+    clean = _clean(name)
+    if not clean:
+        raise NotFound("Type a star name first.")
+    data, note = cached_lookup("VSX", f"vsx:variable:{_key_name(clean)}", clean, VSX_MAX_AGE_DAYS,
+                               lambda: _fetch_variable(clean), refresh)
+    if not data:
+        raise NotFound(f"VSX has no variable star called {clean}. Check the spelling (for example DY Peg, "
+                       "V0404 Lyr).")
+    el = elements_from_vsx(data)
+    t = Target(name=data.get("name") or clean, kind="variable", mode="V", ra=data.get("ra"), dec=data.get("dec"),
+               vmag=data.get("max"), source=data.get("via") or "VSX", elements=el.__dict__.copy(),
+               added=_today_iso())
+    if data.get("matched_by_position"):
+        pos = (f"found by position: VSX's {t.name} is {data.get('sep_arcsec', 0):.0f}″ from SIMBAD's "
+               f"{data.get('simbad_id') or clean}")
+        note = f"{note}; {pos}" if note else pos
+    t.lookup_note = note
+    return t
+
+
+# ---- SIMBAD --------------------------------------------------------------------------------------------------------
+
+_SIMBAD_FMT = 'format object "%IDLIST(1)|%COO(d;A D)|%FLUXLIST(V;F)|%OTYPE(S)|%OTYPE(3)"'
+
+
+def parse_simbad_script(text: str) -> dict | None:
+    """sim-script output "V* DY Peg|347.21327 +17.21555|10.26|SXPheV*|SX*" → dict; None for '::error::'."""
+    if "::error::" in text:
+        return None
+    for line in text.splitlines():
+        parts = line.split("|")
+        if len(parts) < 3:
+            continue
+        coo = parts[1].split()
+        if len(coo) != 2:
+            continue
+        ra, dec = _f(coo[0]), _f(coo[1])
+        if ra is None or dec is None:
+            continue
+        return {"main_id": " ".join(parts[0].split()), "ra": ra, "dec": dec, "vmag": _f(parts[2].strip()),
+                "otype": parts[3].strip() if len(parts) > 3 else "",
+                "otype_short": parts[4].strip() if len(parts) > 4 else ""}
+    return None
+
+
+def _fetch_simbad(name: str):
+    script = f"output console=off script=off\n{_SIMBAD_FMT}\nquery id {_clean(name)}\n"
+    return parse_simbad_script(_get_text(SIMBAD_SCRIPT + urllib.parse.urlencode({"script": script})))
+
+
+def resolve_simbad(name: str, refresh: bool = False) -> dict:
+    """{main_id, ra, dec (J2000 degrees), vmag (None if SIMBAD has no V), otype}. NotFound / LookupError_."""
+    clean = _clean(name)
+    if not clean:
+        raise NotFound("Type a name first.")
+    data, note = cached_lookup("SIMBAD", f"simbad:object:{_key_name(clean)}", clean, SIMBAD_MAX_AGE_DAYS,
+                               lambda: _fetch_simbad(clean), refresh)
+    if not data:
+        raise NotFound(f"SIMBAD does not know {clean}. Check the spelling, or type the coordinates by hand.")
+    out = dict(data)
+    out["note"] = note
+    return out
+
+
+# ---- add a target --------------------------------------------------------------------------------------------------
+
+def add_target(name: str, when_jd: float | None = None) -> Target:
+    """Planet first (when the name looks like one, or the Archive knows it), else a VSX variable, else SIMBAD →
+    NeedsMode. Raises PlanetChoice (several planets), NeedsMode, NotFound or LookupError_ (nothing answered)."""
+    clean = _clean(name)
+    if not clean:
+        raise NotFound("Type a name first.")
+    problems = []
+    planetish = looks_like_planet(clean)
+
+    def try_planet():
+        try:
+            return lookup_planet(clean, when_jd)
+        except NotFound:
+            return None
+        except LookupError_ as exc:
+            problems.append(exc.message)
+            return None
+
+    if planetish:
+        t = try_planet()
+        if t:
+            return t
+    else:
+        # A star name the Archive knows (a planet host) → its planet, or the choice of planets. One quick host-name
+        # query decides, so "DY Peg" costs a single Archive call (the alias service hangs on unknown names).
+        try:
+            hosts = nea_query(f"select pl_name from pscomppars where hostname = '{_adql_str(clean)}'")
+        except FetchError:
+            hosts = []
+        if hosts:
+            t = try_planet()
+            if t:
+                return t
+    try:
+        return lookup_variable(clean)
+    except NotFound:
+        pass
+    except LookupError_ as exc:
+        problems.append(exc.message)
+    try:
+        s = resolve_simbad(clean)
+    except NotFound:
+        if problems:
+            raise LookupError_(" ".join(problems)) from None
+        raise NotFound(f"No planet, variable star or SIMBAD object is called {clean}. Check the spelling.") from None
+    except LookupError_ as exc:
+        problems.append(exc.message)
+        raise LookupError_(" ".join(problems)) from None
+    raise NeedsMode(clean, s["ra"], s["dec"], s.get("vmag"), s["main_id"], s.get("otype", ""))
+
+
+# ---- the transit catalog --------------------------------------------------------------------------------------------
+
+def parse_catalog_csv(text: str) -> list[dict]:
+    """Archive CSV (CATALOG_COLUMNS) → catalog dicts with period, t0 (BJD_TDB), t14 (days), depth, ra, dec, vmag
+    and the errors. Planets without period, t0, duration or position are left out."""
+    out = []
+    for row in csv.DictReader(io.StringIO(text)):
+        p = {"name": (row.get("pl_name") or "").strip(), "host": (row.get("hostname") or "").strip(),
+             "period": _f(row.get("pl_orbper")), "period_err": _f(row.get("pl_orbpererr1")),
+             "t0": _f(row.get("pl_tranmid")), "t0_err": _f(row.get("pl_tranmiderr1")),
+             "t14": (_f(row.get("pl_trandur")) or 0) / 24.0 or None,
+             "depth": (_f(row.get("pl_trandep")) or 0) / 100.0 or None, "k": _f(row.get("pl_ratror")),
+             "ra": _f(row.get("ra")), "dec": _f(row.get("dec")), "vmag": _f(row.get("sy_vmag"))}
+        if p["k"]:
+            p["depth"] = p["k"] ** 2           # (Rp/R*)², as SHOBS-P does
+        if p["period"] and p["t0"] and p["t14"] and p["ra"] is not None and p["dec"] is not None:
+            out.append(p)
+    return out
+
+
+def _fetch_catalog():
+    url = NEA_TAP + urllib.parse.urlencode({"query": f"select {CATALOG_COLUMNS} from pscomppars where tran_flag = 1",
+                                            "format": "csv"})
+    text = _get_text(url, timeout=120)
+    if text.lstrip().startswith("<"):
+        raise FetchError("the Archive sent a web page instead of the planet list")
+    rows = parse_catalog_csv(text)
+    if not rows:
+        raise FetchError("the Archive sent an empty planet list")
+    return {"rows": rows}
+
+
+def load_transit_catalog(refresh: bool = False) -> tuple[list[dict], str]:
+    """Every transiting planet with period, t0 and duration (Archive composite table), cached in cache_dir and
+    refreshed weekly; a failed refresh uses the saved copy. Returns (planets, note). LookupError_ if there is
+    neither an answer nor a saved copy."""
+    data, note = cached_lookup("NEA catalog", "nea:catalog:transiting", "the transiting-planet list",
+                               CATALOG_MAX_AGE_DAYS, _fetch_catalog, refresh)
+    rows = list((data or {}).get("rows") or [])
+    if not note:
+        _d, age = cache_read("NEA catalog", "nea:catalog:transiting")
+        note = ("downloaded today from the NASA Exoplanet Archive" if (age or 0) < 1
+                else f"saved copy from {_age_words(age)}")
+    return rows, note
+
+
+# ---- Suggested transits ---------------------------------------------------------------------------------------------
+
+V_ZERO_PHOTONS = 8.8e5        # photons s⁻¹ cm⁻² from a V = 0 star in the V band (≈1000 ph/s/cm²/Å × 880 Å)
+SYSTEM_EFFICIENCY = 0.4       # optics × filter/Bayer × atmosphere, on top of the camera QE (a rough proxy)
+
+
+def noise_per_minute(vmag: float, sky_v: float, optics, airmass: float = 1.3, fwhm_arcsec: float = 3.0,
+                     elevation_m: float = 0.0) -> float:
+    """Relative flux noise of one minute of data (a documented proxy, not an exposure calculator):
+    photon noise of star + sky in an aperture of radius 2 × FWHM, plus Young's scintillation
+    0.09 D^(-2/3) X^1.75 e^(-h/8000) / sqrt(2 t) (D in cm, t = 60 s). Aperture area allows a 30 % obstruction."""
+    d_cm = (float(getattr(optics, "aperture_mm", None) or 200.0)) / 10.0
+    area = math.pi * (d_cm / 2) ** 2 * (1 - 0.3 ** 2)
+    eff = float(getattr(optics, "qe", None) or 0.8) * SYSTEM_EFFICIENCY
+    t = 60.0
+    star = V_ZERO_PHOTONS * area * eff * 10 ** (-0.4 * vmag) * t
+    ap_area = math.pi * (2.0 * fwhm_arcsec) ** 2
+    skyc = V_ZERO_PHOTONS * area * eff * 10 ** (-0.4 * sky_v) * ap_area * t
+    phot = math.sqrt(star + skyc) / star if star > 0 else 1.0
+    scint = 0.09 * d_cm ** (-2.0 / 3.0) * airmass ** 1.75 * math.exp(-elevation_m / 8000.0) / math.sqrt(2 * t)
+    return math.hypot(phot, scint)
+
+
+def tc_sigma_minutes(planet, when_jd: float) -> float | None:
+    """Predicted mid-transit uncertainty (minutes) at when_jd from the ephemeris errors; None when the ephemeris
+    has no errors (a missing one of the two counts as 0, as events.transit_events does)."""
+    if planet is None:
+        return None
+    p = planet if isinstance(planet, Planet) else Planet.from_dict(planet if isinstance(planet, dict) else {})
+    if not p.period or not p.t0 or (p.t0_err is None and p.period_err is None):
+        return None
+    n = round((when_jd - float(p.t0)) / float(p.period))
+    return math.hypot(abs(p.t0_err or 0.0), abs(n) * abs(p.period_err or 0.0)) * 1440.0
+
+
+def _fmt_day(jd: float, site) -> str:
+    t = sky.to_local(jd, site.tz)
+    return f"{t.strftime('%a')} {t.day} {t.strftime('%b')}"
+
+
+def _night_label(d: date, site) -> str:
+    return f"{d.strftime('%a')} {d.day} {d.strftime('%b')}"
+
+
+def suggest_transits(site, optics, options, nights: list, exclude_names=frozenset(), catalog: list | None = None,
+                     progress=None) -> list[Target]:
+    """Other good transits in the given nights, in John's order (thresholds from options):
+      1. FULL transit: ingress − suggest_baseline_min … egress + suggest_baseline_min above every limit (sky.up_mask);
+         the transit itself (ingress…egress) inside the planning darkness (site.sun_alt); the baselines may run
+         into nautical twilight (Sun ≤ −12°, or the planning darkness if that is brighter) — as the planner allows;
+      2. host V in [suggest_vmin, suggest_vmax];  3. depth ≥ suggest_min_depth;
+      4. mean sky.moon_sky_penalty over the window ≤ suggest_moon_penalty_max;
+      5. ranked by S/N = depth × sqrt(minutes in transit) / noise_per_minute(V, Moon-brightened sky, airmass),
+         × (1 + 0.5 × min(1, Tc sigma / 30 min)) — new timings of an uncertain ephemeris add the most (no errors
+         given: the half bonus).
+    Each planet once (its best night); at most suggest_max. catalog = load_transit_catalog()'s rows (loaded when
+    None). progress(i, n) is called per planet when given."""
+    o = dict(settings.DEFAULT_OPTIONS)
+    o.update(options or {})
+    if catalog is None:
+        catalog, _note = load_transit_catalog()
+    if not site or not site.complete() or not nights:
+        return []
+    vmin, vmax = float(o["suggest_vmin"]), float(o["suggest_vmax"])
+    min_depth = float(o["suggest_min_depth"])
+    base = float(o["suggest_baseline_min"]) / 1440.0
+    moon_max = float(o["suggest_moon_penalty_max"])
+    warn = float(o["tc_sigma_warn_min"])
+    dark_v = float(o.get("dark_sky_v", sky.DARK_SKY_V))
+    fwhm = float(o.get("fwhm_arcsec", 3.0))
+    excl = {_key_name(n) for n in (exclude_names or ())}
+
+    wins = []                                   # (date, dark0, dark1, base0, base1)
+    base_level = max(float(site.sun_alt), sky.NAUTICAL)
+    for d in nights:
+        w = sky.night_window(d, site)
+        if w is None:
+            continue
+        wb = sky.night_window(d, site, base_level) or w
+        wins.append((d, w[0], w[1], min(wb[0], w[0]), max(wb[1], w[1])))
+    if not wins:
+        return []
+    jd_lo, jd_hi = min(x[3] for x in wins), max(x[4] for x in wins)
+    floor = max(float(site.min_alt or 0.0), sky.alt_for_airmass(site.max_airmass) if site.max_airmass else 0.0)
+
+    best: dict[str, tuple] = {}
+    cands = [p for p in catalog if p.get("vmag") is not None and vmin <= p["vmag"] <= vmax
+             and (p.get("depth") or 0) >= min_depth and p.get("t14") and _key_name(p.get("name")) not in excl
+             and sky.culmination_alt(p["dec"], site.lat) >= floor]
+    for i, p in enumerate(cands):
+        if progress:
+            try:
+                progress(i, len(cands))
+            except Exception:
+                pass
+        pl = Planet(name=p["name"], period=p["period"], period_err=p.get("period_err"), t0=p["t0"],
+                    t0_err=p.get("t0_err"), t14=p["t14"], depth=p["depth"])
+        for ev in events.transit_events(pl, p["ra"], p["dec"], jd_lo, jd_hi):
+            s, e = ev["t1"] - base, ev["t4"] + base
+            night = next((x for x in wins if x[1] <= ev["t1"] and ev["t4"] <= x[2] and x[3] <= s and e <= x[4]),
+                         None)
+            if night is None:
+                continue
+            grid = np.linspace(s, e, max(9, int((e - s) * 1440 / 5) + 1))
+            if not bool(np.all(sky.up_mask(p["ra"], p["dec"], site, grid))):
+                continue
+            pen = float(np.mean(sky.moon_sky_penalty(p["ra"], p["dec"], site, grid, dark_v)))
+            if pen > moon_max:
+                continue
+            x = float(np.nanmean(sky.target_airmass(p["ra"], p["dec"], site, grid)))
+            noise = noise_per_minute(p["vmag"], dark_v - pen, optics, x, fwhm, float(site.elevation_m or 0.0))
+            snr = p["depth"] * math.sqrt(p["t14"] * 1440.0) / noise
+            sig = ev["sigma_min"]
+            bonus = 1.0 + 0.5 * (min(1.0, sig / 30.0) if sig is not None else 0.5)
+            score = snr * bonus
+            k = _key_name(p["name"])
+            if k not in best or score > best[k][0]:
+                best[k] = (score, p, ev, night[0], sig, pen, snr)
+    ranked = sorted(best.values(), key=lambda b: -b[0])[: int(o["suggest_max"])]
+    out = []
+    for score, p, ev, d, sig, pen, snr in ranked:
+        note = f"{_night_label(d, site)}: ingress {sky.hhmm(ev['t1'], site.tz)}, egress {sky.hhmm(ev['t4'], site.tz)} (site clock)"
+        if sig is not None and sig > warn:
+            note += f"; ⚠ Tc uncertain ±{sig:.0f} min"
+        pl = Planet(name=p["name"], period=p["period"], period_err=p.get("period_err"), t0=p["t0"],
+                    t0_err=p.get("t0_err"), t14=p["t14"], depth=p["depth"],
+                    reference="Archive composite (planet list)", source="NEA")
+        t = Target(name=p["name"], kind="transit", mode="T", ra=p["ra"], dec=p["dec"], vmag=p["vmag"],
+                   enabled=False, suggested=True, source="NEA", planet=pl.__dict__.copy(), notes=note,
+                   added=_today_iso())
+        t.suggest_info = {"night": d.isoformat(), "t1": ev["t1"], "tc": ev["tc"], "t4": ev["t4"], "score": score,
+                          "snr": snr, "moon_penalty": pen, "tc_sigma_min": sig}
+        out.append(t)
+    return out
+
+
+# ---- next useful event (Targets page column) -----------------------------------------------------------------------
+
+def _dark_windows(site, from_jd: float, days: int) -> list[tuple[float, float]]:
+    d0 = sky.night_date_of(from_jd, site.tz)
+    out = []
+    for i in range(int(days) + 1):
+        w = sky.night_window(d0 + timedelta(days=i), site)
+        if w and w[1] > from_jd:
+            out.append((max(w[0], from_jd), w[1]))
+    return out
+
+
+def _min_alt_of(target: Target) -> float | None:
+    for r in target.rules_obj():
+        if r.kind == "min_alt" and _f(r.value) is not None:
+            return float(r.value)
+    return None
+
+
+def next_event_text(target: Target, site, from_jd: float, days: int = 30) -> str:
+    """The Targets page's "Next useful event", on the site's clock:
+    transits "Tue 20 Oct 21:32–23:56 (full)" (first transit whose ingress…egress is all in darkness and above the
+    limits; else the first partly visible one "(partial)"; else "none in 30 nights"); timed variables
+    "min Thu 22 Oct 01:14"; any-time variables "any time"; campaigns "every night" or
+    "every night; next blackout Fri 23 Oct 04:28–05:53 (HD 219134 c transits)"."""
+    if site is None or not site.complete():
+        return "set up your site first"
+    if target.ra is None or target.dec is None:
+        return "no coordinates"
+    wins = _dark_windows(site, from_jd, days)
+    end_jd = from_jd + days
+    mina = _min_alt_of(target)
+
+    def dark(jds):
+        jds = np.atleast_1d(np.asarray(jds, dtype=float))
+        in_dark = np.zeros(jds.shape, dtype=bool)
+        for a, b in wins:
+            in_dark |= (jds >= a) & (jds <= b)
+        return in_dark
+
+    def dark_up(jds):
+        jds = np.atleast_1d(np.asarray(jds, dtype=float))
+        return dark(jds) & sky.up_mask(target.ra, target.dec, site, jds, mina)
+
+    if target.kind == "transit":
+        pl = target.planet_obj()
+        if not pl or not pl.ok():
+            return "no ephemeris"
+        if not wins:
+            return "no dark time"
+        partial = None
+        for ev in events.transit_events(pl, target.ra, target.dec, from_jd, end_jd):
+            if ev["t4"] < from_jd or ev["t1"] > end_jd:
+                continue
+            grid = np.linspace(ev["t1"], ev["t4"], 25)
+            ok = dark_up(grid)
+            span = f"{_fmt_day(ev['t1'], site)} {sky.hhmm(ev['t1'], site.tz)}–{sky.hhmm(ev['t4'], site.tz)}"
+            if ok.all() and ev["t1"] >= from_jd:
+                return f"{span} (full)"
+            if ok.any() and partial is None:
+                partial = f"{span} (partial)"
+        return partial or f"none in {days} nights"
+
+    if target.kind == "variable":
+        el = target.elements_obj()
+        if not el or el.any_time or not el.period or not el.epoch:
+            return "any time"
+        if not wins:
+            return "no dark time"
+        word = "min" if (el.epoch_kind or "max") == "min" else "max"
+        for ev in events.variable_events(el, target.ra, target.dec, from_jd, end_jd):
+            if ev["t"] >= from_jd and bool(dark_up([ev["t"]])[0]):
+                return f"{word} {_fmt_day(ev['t'], site)} {sky.hhmm(ev['t'], site.tz)}"
+        return f"none in {days} nights"
+
+    # campaigns
+    if not any(r.kind == "no_transit" for r in target.rules_obj()):
+        return "every night"
+    for b in sorted(events.blackouts(target, from_jd, end_jd), key=lambda x: x["start"]):
+        if b["end"] < from_jd:
+            continue
+        grid = np.linspace(b["start"], b["end"], 13)
+        if dark(grid).any():                 # any blackout in darkness (even with the target low: it is a rule)
+            return (f"every night; next blackout {_fmt_day(b['start'], site)} {sky.hhmm(b['start'], site.tz)}–"
+                    f"{sky.hhmm(b['end'], site.tz)} ({b['reason']})")
+    return "every night"
+
+
+# ---- campaign progress ---------------------------------------------------------------------------------------------
+
+def campaign_progress(target: Target, schedule: Schedule, today: date) -> tuple[int, int]:
+    """(nights marked Done in the current Mon–Sun week, goal_per_week). Partial and Clouded out count as missed
+    (as planner.rereview does), so the Targets page and the planner agree. Counts schedule.history and the
+    schedule's own marked blocks; a night counts once however many blocks it had. today = the site's date."""
+    monday = today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    good = ("done",)
+    dates = set()
+
+    def mine(tid, name):
+        return (tid and tid == target.id) or (not tid and name and _key_name(name) == _key_name(target.name))
+
+    def in_week(iso):
+        try:
+            d = date.fromisoformat(str(iso)[:10])
+        except ValueError:
+            return None
+        return d if monday <= d <= sunday else None
+
+    sch = schedule or Schedule()
+    for h in sch.history or []:
+        if isinstance(h, dict) and str(h.get("status", "")).lower() in good and mine(h.get("target_id"), h.get("name")):
+            d = in_week(h.get("date", ""))
+            if d:
+                dates.add(d)
+    for n in sch.nights or []:
+        nd = n if isinstance(n, dict) else getattr(n, "__dict__", {})
+        d = in_week(nd.get("date", ""))
+        if not d:
+            continue
+        for b in nd.get("blocks") or []:
+            bd = b if isinstance(b, dict) else getattr(b, "__dict__", {})
+            if str(bd.get("status", "")).lower() in good and mine(bd.get("target_id"), bd.get("name")):
+                dates.add(d)
+                break
+    return len(dates), int(target.goal_per_week or 0)

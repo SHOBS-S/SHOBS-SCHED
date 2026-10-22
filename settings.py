@@ -75,7 +75,7 @@ DEFAULT_OPTIONS = {
     "suggest_min_depth": 0.005,
     "suggest_baseline_min": 30.0,
     "suggest_max": 12,
-    "suggest_moon_penalty_max": 1.5,   # magnitudes of Moon-brightened sky allowed
+    "suggest_moon_penalty_max": 3.0,   # magnitudes of Moon-brightened sky allowed
     "tc_sigma_warn_min": 10.0,         # ⚠ when a transit's predicted Tc uncertainty is over this
     # sky
     "dark_sky_v": 21.5,                # mag/arcsec², for the Moon penalty

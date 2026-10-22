@@ -1,0 +1,2 @@
+pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,pl_ratror,ra,dec,sy_vmag,tran_flag,pl_tranmid_reflink,pl_orbper_reflink
+"TrES-3 b","TrES-3",1.30618581000,,2454185.91040000,,1.4177746,2.73900000,0.16550000,268.0291106,37.5463268,12.3620000,1,"<a refstr=SOZZETTI_ET_AL__2009 href=https://ui.adsabs.harvard.edu/abs/2009ApJ...691.1145S/abstract target=ref> Sozzetti et al. 2009 </a>","<a refstr=SOZZETTI_ET_AL__2009 href=https://ui.adsabs.harvard.edu/abs/2009ApJ...691.1145S/abstract target=ref> Sozzetti et al. 2009 </a>"

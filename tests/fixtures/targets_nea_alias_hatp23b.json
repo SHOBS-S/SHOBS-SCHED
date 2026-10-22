@@ -1,0 +1,75 @@
+{
+    "manifest": {
+        "requested_name": "hat-p-23b",
+        "resolved_name": "HAT-P-23 b",
+        "system_name": "HAT-P-23",
+        "lookup_status": "OK",
+        "compilation_date": "2026-10-22 07:13:09.271137",
+        "system_snapshot": {
+            "number_of_stars": 1,
+            "number_of_planets": 1
+        }
+    },
+    "system": {
+        "system_info": {
+            "id": "HAT-P-23",
+            "alias_set": {
+                "item_count": 2,
+                "default_name": "HAT-P-23",
+                "aliases": [
+                    "HAT-P-23",
+                    "TOI-5798"
+                ]
+            }
+        },
+        "objects": {
+            "stellar_set": {
+                "item_count": 1,
+                "stars": {
+                    "HAT-P-23": {
+                        "is_host": "True",
+                        "alias_set": {
+                            "item_count": 9,
+                            "default_name": "HAT-P-23",
+                            "aliases": [
+                                "Gaia DR3 1808938730710633984",
+                                "HAT-P-23",
+                                "TYC 1632-01396-1",
+                                "2MASS J20242972+1645437",
+                                "WISE J202429.73+164543.7",
+                                "Gaia DR2 1808938730710633984",
+                                "TIC 305243225",
+                                "TOI-5798",
+                                "Moriah"
+                            ]
+                        }
+                    }
+                }
+            },
+            "planet_set": {
+                "item_count": 1,
+                "planets": {
+                    "HAT-P-23 b": {
+                        "requested_object": "True",
+                        "alias_set": {
+                            "item_count": 10,
+                            "default_name": "HAT-P-23 b",
+                            "aliases": [
+                                "Gaia DR3 1808938730710633984 b",
+                                "HAT-P-23 b",
+                                "TYC 1632-01396-1 b",
+                                "2MASS J20242972+1645437 b",
+                                "WISE J202429.73+164543.7  b",
+                                "TIC 305243225 b",
+                                "Gaia DR2 1808938730710633984 b",
+                                "TOI-5798.01",
+                                "TOI-5798 b",
+                                "Jebus"
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
