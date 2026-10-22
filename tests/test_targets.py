@@ -1041,6 +1041,98 @@ class TestReview(Base):
         self.assertTrue(all(t.added == want for t in res))
 
 
+class TestHostPlanets(Base):
+    """A star's planets for "no data while a planet transits" (targets_nea_hostrows_hd219134.csv and
+    targets_nea_ps_hd219134{b,c}.csv recorded live on 22 Oct 2026)."""
+
+    HOST = [(["from ps where pl_name = 'HD 219134 b'"], "targets_nea_ps_hd219134b.csv"),
+            (["from ps where pl_name = 'HD 219134 c'"], "targets_nea_ps_hd219134c.csv")]
+
+    def test_host_name_variants(self):
+        self.assertEqual(T.host_name_variants("HD219134")[:2], ["HD219134", "HD 219134"])
+        self.assertIn("WASP-12", T.host_name_variants("wasp 12"))
+        self.assertEqual(T.host_name_variants("* 51 Peg"), ["51 Peg"])
+        self.assertIn("HAT-P-23", T.host_name_variants("hat-p 23"))
+        self.assertEqual(T.host_name_variants("Gliese 876"), ["Gliese 876", "Gliese-876"])
+
+    def check_hd219134(self, info):
+        names = [p["name"] for p in info["planets"]]
+        self.assertEqual(names[:2], ["HD 219134 b", "HD 219134 c"], "transiting (usable) ones first")
+        self.assertEqual(set(names), {f"HD 219134 {x}" for x in "bcdfgh"})
+        by = {p["name"]: p for p in info["planets"]}
+        for x in "bc":
+            p = by[f"HD 219134 {x}"]
+            self.assertTrue(p["transits"] and p["usable"])
+            self.assertTrue(p["planet"]["period"] and p["planet"]["t0"] and p["planet"]["t14"])
+        d = by["HD 219134 d"]
+        self.assertFalse(d["usable"])
+        self.assertIsNone(d["planet"])
+        self.assertEqual(d["why"], "does not transit")
+
+    def test_by_host_name_spelling(self):
+        r = self.route([(["hostname = 'HD219134'"], EMPTY_NEA),
+                        (["hostname = 'HD 219134'"], "targets_nea_hostrows_hd219134.csv")] + self.HOST)
+        info = T.host_planets("HD219134")
+        self.assertEqual((info["host"], info["matched"], info["note"]), ("HD 219134", "name", ""))
+        self.check_hd219134(info)
+        self.assertFalse(any("ra between" in u for u in r.calls), "no position query when the name matched")
+        n = len(r.calls)
+        T.host_planets("HD219134")
+        self.assertEqual(len(r.calls), n, "a cached answer makes no calls")
+
+    def test_by_position(self):
+        r = self.route([(["hostname ="], EMPTY_NEA), (["ra between"], "targets_nea_hostrows_hd219134.csv")]
+                       + self.HOST)
+        info = T.host_planets("My Odd Name", 348.320833, 57.168333, 5.57)      # SIMBAD J2000: ~32″ from Gaia's
+        self.assertEqual((info["host"], info["matched"]), ("HD 219134", "position"))
+        self.check_hd219134(info)
+        q = next(u for u in r.calls if "ra between" in u)
+        self.assertIn("dec between 57.15", q)
+        self.assertNotIn("CONTAINS", q.upper(), "the Archive's Cloudflare front refuses CONTAINS/CIRCLE")
+
+    def test_position_needs_matching_brightness_and_distance(self):
+        self.route([(["hostname ="], EMPTY_NEA), (["ra between"], "targets_nea_hostrows_hd219134.csv")])
+        info = T.host_planets("Faint Neighbour", 348.320833, 57.168333, 12.0)
+        self.assertEqual((info["matched"], info["planets"]), ("", []))
+        clear_cache()
+        info = T.host_planets("Further Away", 348.3372, 57.19, None)           # ~74″ away
+        self.assertEqual(info["planets"], [])
+
+    def test_ra_wrap(self):
+        r = self.route([(["hostname ="], EMPTY_NEA), (["ra between"], EMPTY_NEA)])
+        T.host_planets("Near Zero", 0.001, 10.0)
+        boxes = [u for u in r.calls if "ra between" in u]
+        self.assertEqual(len(boxes), 2, "two boxes either side of RA 0")
+
+    def test_no_planets_and_offline(self):
+        self.route([(["hostname ="], EMPTY_NEA), (["ra between"], EMPTY_NEA)])
+        info = T.host_planets("DY Peg", 347.2, 17.2, 10.3)
+        self.assertEqual((info["matched"], info["planets"]), ("", []))
+        clear_cache()
+        self.route([([""], DOWN)])
+        with self.assertRaises(T.LookupError_) as cm:
+            T.host_planets("HD 219134", 348.32, 57.17)
+        self.assertIn("did not answer", cm.exception.message)
+        # an old copy is used when the Archive is down, with its age
+        self.route([(["hostname = 'HD 219134'"], "targets_nea_hostrows_hd219134.csv"), (["from ps"], DOWN)])
+        info = T.host_planets("HD 219134")
+        self.assertTrue(info["planets"][0]["usable"], "composite ephemeris when the ps table is down")
+        T.PLANET_MAX_AGE_DAYS, old = -1.0, T.PLANET_MAX_AGE_DAYS
+        try:
+            self.route([([""], DOWN)])
+            info = T.host_planets("HD 219134")
+        finally:
+            T.PLANET_MAX_AGE_DAYS = old
+        self.assertIn("using the copy from", info["note"])
+        self.assertEqual(len(info["planets"]), 6)
+
+    def test_planet_letter(self):
+        self.assertEqual(T.planet_letter(" C "), "c")
+        self.assertEqual(T.planet_letter("b"), "b")
+        self.assertEqual(T.planet_letter("a"), "")
+        self.assertEqual(T.planet_letter("bc"), "")
+
+
 def tearDownModule():
     shutil.rmtree(_TMP, ignore_errors=True)
 

@@ -1,0 +1,8 @@
+pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,pl_tsystemref,pl_refname
+6.76458000000,0.00033000000,-0.00033000000,2457474.04591000,0.00088000,-0.00088000,"BJD-TDB","<a refstr=GILLON_ET_AL__2017 href=https://ui.adsabs.harvard.edu/abs/2017NatAs...1E..56G/abstract target=ref>Gillon et al. 2017</a>"
+6.76350000000,0.00060000000,-0.00060000000,,,,,"<a refstr=VOGT_ET_AL__2015 href=https://ui.adsabs.harvard.edu/abs/2015ApJ...814...12V/abstract target=ref>Vogt et al. 2015</a>"
+6.76514900000,0.00003300000,-0.00003600000,2458766.16927000,0.00069000,-0.00066000,"BJD","<a refstr=SEAGER_ET_AL__2021 href=https://ui.adsabs.harvard.edu/abs/2021AJ....161..117S/abstract target=ref>Seager et al. 2021</a>"
+6.76700000000,0.00400000000,-0.00400000000,,,,,"<a refstr=MOTALEBI_ET_AL__2015 href=https://ui.adsabs.harvard.edu/abs/2015A&A...584A..72M/abstract target=ref>Motalebi et al. 2015</a>"
+6.76379000000,0.00059000000,-0.00057000000,2455200.97000000,0.32000000,-0.37000000,"JD","<a refstr=HARADA_ET_AL_2025 href=https://ui.adsabs.harvard.edu/abs/2025AJ....170..343H/abstract target=ref>Harada et al. 2025</a>"
+6.76406000000,0.00093000000,-0.00076000000,2455200.81000000,0.38000000,-0.43000000,"BJD","<a refstr=ROSENTHAL_ET_AL__2021 href=https://ui.adsabs.harvard.edu/abs/2021ApJS..255....8R/abstract target=ref>Rosenthal et al. 2021</a>"
+6.76503980000,0.00000740000,-0.00000740000,2460599.49725200,0.00097290,-0.00097290,"BJD","<a refstr=EXOFOP href=https://exofop.ipac.caltech.edu/tess/view_toi.php target=ref>ExoFOP</a>"

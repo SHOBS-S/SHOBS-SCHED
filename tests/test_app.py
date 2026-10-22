@@ -944,6 +944,289 @@ class TestAppWithFakes(Base):
         self.assertEqual(app.pages[0].vars["optics.telescope"].get(), "14in RC")
 
 
+def hd_info(note="", matched="name"):
+    """A host_planets answer for HD 219134 (b and c transit, d does not)."""
+    def entry(letter, usable):
+        name = f"HD 219134 {letter}"
+        return {"name": name, "transits": usable, "usable": usable, "why": "" if usable else "does not transit",
+                "planet": {"name": name, "period": 3.09 if letter == "b" else 6.76, "t0": 2460599.5, "t14": 0.05,
+                           "reference": "Archive"} if usable else None}
+    return {"host": "HD 219134", "matched": matched, "planets": [entry("b", True), entry("c", True),
+                                                                   entry("d", False)], "note": note}
+
+
+class TestPlanetHosts(Base):
+    """A star's planets at the Archive: listed in Edit, offered when the star is added, bare letters; moving a target
+    between groups in Edit; the Edit window sized to its contents."""
+
+    def setUp(self):
+        super().setUp()
+        tg = self.fakes["targets"]
+        self.host_calls = []
+        self.host_answer = hd_info()
+
+        def host_planets(name, ra=None, dec=None, vmag=None, refresh=False):
+            self.host_calls.append((name, ra, dec))
+            if isinstance(self.host_answer, Exception):
+                raise self.host_answer
+            return self.host_answer
+        tg.host_planets = host_planets
+        self.lookups = []
+        real_lookup = tg.lookup_planet
+
+        def lookup_planet(name, when_jd=None):
+            self.lookups.append(name)
+            return real_lookup(name)
+        tg.lookup_planet = lookup_planet
+        add = tg.add_target
+
+        def add_target(name, when_jd=None):
+            if name == "HD219134":
+                raise tg.NeedsMode(name, 348.3208, 57.1683, 5.57, "HD 219134")
+            if name in ("HD 219134 b", "HD 219134 c"):
+                return Target(name=name, kind="transit", mode="T", ra=348.34, dec=57.17, source="NEA",
+                              planet={"name": name, "period": 3.09, "t0": 2457126.7, "t14": 0.04})
+            return add(name, when_jd)
+        tg.add_target = add_target
+        self.asked = []
+
+    def record_questions(self, answers):
+        real = self.sa.ask_choice
+        answers = list(answers)
+
+        def ask(app, title, message, choices, ok_text="OK"):
+            self.asked.append((message, list(choices)))
+            return answers.pop(0)
+        self.sa.ask_choice = ask
+        self.addCleanup(setattr, self.sa, "ask_choice", real)
+
+    def dialog(self, t):
+        saved = []
+        dlg = self.sa.EditTargetDialog(self.app, t, on_save=saved.append, modal=False)
+        self.pump()
+        return dlg, saved
+
+    @staticmethod
+    def nt_names(rules):
+        return [r["planet"]["name"] for r in rules if r.get("kind") == "no_transit"]
+
+    def test_edit_lists_planets_ticks_and_letters(self):
+        self.golden_home()
+        app = self.open()
+        star = Target(name="HD219134", kind="campaign", mode="V", ra=348.3208, dec=57.1683, vmag=5.57)
+        dlg, saved = self.dialog(star)
+        self.assertEqual(self.host_calls, [("HD219134", 348.3208, 57.1683)], "by name and position, in a job")
+        self.assertEqual({k: v.get() for k, v in dlg.pl_vars.items()},
+                         {"HD 219134 b": True, "HD 219134 c": True, "HD 219134 d": False})
+        boxes = {str(cb.cget("text")).split("  ")[0]: cb for cb in dlg.pl_checks.winfo_children()}
+        self.assertTrue(boxes["HD 219134 d"].instate(["disabled"]), "non-transiting planets are greyed out")
+        self.assertIn("does not transit", str(boxes["HD 219134 d"].cget("text")))
+        self.assertTrue(dlg.pl_ind.var.get().startswith("✔ 3 known planets"), dlg.pl_ind.var.get())
+        self.assertEqual(self.nt_names(dlg.no_transit), ["HD 219134 b", "HD 219134 c"], "transiting: pre-ticked")
+        boxes["HD 219134 c"].invoke()                       # untick c
+        self.assertEqual(self.nt_names(dlg.no_transit), ["HD 219134 b"])
+        dlg.nt_name.set("c")                                # a bare letter = this star's planet c
+        dlg._nt_add()
+        self.assertEqual(self.nt_names(dlg.no_transit), ["HD 219134 b", "HD 219134 c"])
+        self.assertTrue(dlg.pl_vars["HD 219134 c"].get(), "the tick follows")
+        self.assertEqual(self.lookups, [], "a looked-up planet needs no second lookup")
+        dlg.nt_name.set("d")
+        dlg._nt_add()
+        self.assertTrue(dlg.nt_ind.var.get().startswith("✖ HD 219134 d: does not transit"), dlg.nt_ind.var.get())
+        dlg.nt_name.set("HD219134 b")
+        dlg._nt_add()
+        self.assertTrue(dlg.nt_ind.var.get().startswith("⚠ HD219134 b is already"), dlg.nt_ind.var.get())
+        dlg.nt_list.selection_set(0)
+        dlg._nt_remove()
+        self.assertFalse(dlg.pl_vars["HD 219134 b"].get())
+        self.assertTrue(dlg.save(), dlg.msg_var.get())
+        self.assertEqual(self.nt_names(saved[0].rules), ["HD 219134 c"])
+
+    def test_edit_keeps_typed_planets_no_planets_offline(self):
+        self.golden_home()
+        app = self.open()
+        hd = next(t for t in app.targets if t.name == "HD 219134")
+        dlg, saved = self.dialog(hd)
+        self.assertEqual(self.nt_names(dlg.no_transit), ["HD 219134 c", "HD 219134 b"], "nothing added twice")
+        self.assertTrue(dlg.pl_vars["HD 219134 b"].get() and dlg.pl_vars["HD 219134 c"].get())
+        self.assertTrue(dlg.save())
+        c = next(r for r in saved[0].rules if r.get("kind") == "no_transit" and r["planet"]["name"].endswith("c"))
+        self.assertEqual(c["planet"]["reference"], "ExoFOP", "the existing window keeps its own ephemeris")
+        # a star the user unticked everything for keeps it that way: windows for other planets only
+        star = Target(name="HD 1", kind="variable", mode="V", ra=10.0, dec=20.0)
+        self.host_answer = {"host": "", "matched": "", "planets": [], "note": ""}
+        dlg, saved = self.dialog(star)
+        self.assertEqual(dlg.pl_ind.var.get(), "✔ No known planets at the NASA Exoplanet Archive.")
+        dlg.nt_name.set("b")                                # no looked-up planets: the star's name + the letter
+        dlg._nt_add()
+        self.pump()
+        self.assertEqual(self.lookups, ["HD 1 b"])
+        self.assertEqual(self.nt_names(dlg.no_transit), ["HD 1 b"])
+        self.host_answer = self.fakes["targets"].LookupError_(
+            "The NASA Exoplanet Archive did not answer (HTTP 503) and there is no saved copy for HD 2. Try again later.")
+        dlg, saved = self.dialog(Target(name="HD 2", kind="campaign", mode="V", ra=1.0, dec=2.0))
+        self.assertTrue(dlg.pl_ind.var.get().startswith("✖ Couldn't reach the NASA Exoplanet Archive"),
+                        dlg.pl_ind.var.get())
+        self.assertIn("HTTP 503", dlg.pl_ind.var.get())
+        self.assertEqual(dlg.pl_vars, {})
+        self.assertTrue(dlg.save(), "a failed lookup never blocks saving")
+
+    def test_edit_moves_between_groups(self):
+        self.golden_home()
+        app = self.open()
+        page = app.pages[1]
+        app.show_page(1)
+        hd = next(t for t in app.targets if t.name == "HD 219134")
+        dlg, saved = self.dialog(hd)
+        self.assertFalse(dlg.eph_widgets[0].winfo_manager(), "no ephemeris rows for a campaign")
+        dlg.vars["mode"].set("Transits (T)")
+        self.assertEqual(dlg.vars["kind"].get(), "Transit", "the mode moves the group")
+        self.assertEqual(dlg.eph_widgets[0].winfo_manager(), "grid")
+        self.assertIn("add its planet HD 219134 b and HD 219134 c", dlg.msg_var.get())
+        self.assertFalse(dlg.save(), "never an empty transit target")
+        self.assertTrue(dlg.msg_var.get().startswith("✖ Not saved: A Transits target needs its period and Tc"))
+        dlg.vars["period"].set("3.5")
+        dlg.vars["t0"].set("2460000.5")
+        dlg.vars["t14"].set("2")
+        self.assertTrue(dlg.save(), dlg.msg_var.get())
+        t = saved[0]
+        self.assertEqual((t.kind, t.mode, t.elements), ("transit", "T", None))
+        self.assertEqual((t.planet["period"], t.planet["name"]), (3.5, "HD 219134"))
+        page._edited(t)
+        self.assertEqual(page.tree.parent(t.id), "grp:transit")
+        # and back: a transit moved to Campaigns loses its ephemeris and is offered its star's planets
+        tr = next(x for x in app.targets if x.id == t.id)
+        n = len(self.host_calls)
+        dlg, saved = self.dialog(tr)
+        self.assertEqual(len(self.host_calls), n, "transit targets look up nothing until they become stars")
+        dlg.vars["kind"].set("Campaign")
+        self.pump()
+        self.assertEqual(dlg.vars["mode"].get(), "Variables (V)", "the group moves the mode")
+        self.assertEqual(self.host_calls[n:], [("HD 219134", tr.ra, tr.dec)], "a star now: its planets offered")
+        self.assertEqual(self.nt_names(dlg.no_transit), ["HD 219134 c", "HD 219134 b"])
+        self.assertIn("out of Transits", dlg.msg_var.get())
+        self.assertTrue(dlg.save(), dlg.msg_var.get())
+        self.assertEqual((saved[0].kind, saved[0].mode, saved[0].planet), ("campaign", "V", None))
+        page._edited(saved[0])
+        self.assertEqual(page.tree.parent(t.id), "grp:campaign")
+        # a mode change alone (as if the traces had not run) still moves the group
+        dlg, saved = self.dialog(saved[0])
+        dlg._syncing = True
+        dlg.vars["mode"].set("Discovery (D)")
+        dlg.vars["kind"].set("Transit")
+        self.assertFalse(dlg.save())
+        self.assertIn("Transits (T) goes with the Transit group", dlg.msg_var.get())
+        dlg.vars["kind"].set("Campaign")
+        self.assertTrue(dlg.save())
+        self.assertEqual((saved[0].kind, saved[0].mode), ("campaign", "D"))
+
+    def test_edit_transit_planet_lookup_is_not_done_for_transits(self):
+        self.golden_home()
+        app = self.open()
+        k2 = next(t for t in app.targets if t.kind == "transit")
+        self.dialog(k2)
+        self.assertEqual(self.host_calls, [])
+
+    def test_add_star_with_planets_offers_its_transiting_planets(self):
+        self.golden_home()
+        app = self.open()
+        page = app.pages[1]
+        app.show_page(1)
+        sa = self.sa
+        self.record_questions([sa.planet_pick("HD 219134 b"), "Campaign, reduced in Variables (V)"])
+        page.add("HD219134")
+        self.pump()
+        msg, choices = self.asked[0]
+        star = [c[0] for c in sa.KIND_CHOICES[:3]]
+        self.assertEqual(choices, [sa.planet_pick("HD 219134 b"), sa.planet_pick("HD 219134 c")] + star)
+        self.assertNotIn(sa.KIND_CHOICES[3][0], choices, "no empty transit target for a planet host")
+        self.assertIn("HD 219134 b and HD 219134 c transit", msg)
+        b = next(t for t in app.targets if t.name == "HD 219134 b")
+        self.assertEqual(b.kind, "transit")
+        page.add("HD219134")
+        self.pump()
+        t = next(t for t in app.targets if t.name == "HD219134")
+        self.assertEqual((t.kind, t.mode), ("campaign", "V"))
+        self.assertEqual(self.nt_names(t.rules), ["HD 219134 b", "HD 219134 c"])
+        self.assertIn("no data while HD 219134 b and HD 219134 c transit", page.msg_var.get())
+        self.assertEqual(self.host_calls[0], ("HD 219134", 348.3208, 57.1683))
+
+    def test_add_star_when_planets_cannot_be_checked(self):
+        self.golden_home()
+        app = self.open()
+        page = app.pages[1]
+        self.host_answer = self.fakes["targets"].LookupError_("The NASA Exoplanet Archive did not answer (HTTP 503)")
+        self.record_questions(["Variable star (V)"])
+        page.add("HD219134")
+        self.pump()
+        msg, choices = self.asked[0]
+        self.assertEqual(choices, [c[0] for c in self.sa.KIND_CHOICES])
+        self.assertIn("could not be checked", msg)
+        self.assertEqual(next(t for t in app.targets if t.name == "HD219134").kind, "variable")
+
+    def test_planet_choice_offers_only_transiting_planets(self):
+        self.golden_home()
+        app = self.open()
+        app.targets = [t for t in app.targets if t.name != "HD 219134"]
+        page = app.pages[1]
+        tg = self.fakes["targets"]
+        exc = tg.PlanetChoice("HD 219134", ["HD 219134 b", "HD 219134 c", "HD 219134 d"])
+        exc.transiting = {"HD 219134 b", "HD 219134 c"}
+        self.record_questions([self.sa.STAR_ITSELF, "Discovery field (D)"])
+        page._added("HD 219134", None, exc)
+        self.pump()
+        msg, choices = self.asked[0]
+        self.assertEqual(choices, ["HD 219134 b", "HD 219134 c", self.sa.STAR_ITSELF])
+        self.assertIn("HD 219134 d does not transit", msg)
+        self.assertEqual(self.asked[1][1], [c[0] for c in self.sa.KIND_CHOICES[:3]], "the star itself: its kinds")
+        self.assertIn("No data while HD 219134 b and HD 219134 c transit", self.asked[1][0])
+        t = next(t for t in app.targets if t.name == "HD 219134")
+        self.assertEqual((t.kind, t.mode), ("campaign", "D"))
+        self.assertEqual(len(self.nt_names(t.rules)), 2)
+
+    def test_non_transiting_planet_steers_to_its_star(self):
+        self.golden_home()
+        app = self.open()
+        app.targets = [t for t in app.targets if t.name != "HD 219134"]
+        page = app.pages[1]
+        tg = self.fakes["targets"]
+        exc = tg.NeedsMode("HD 219134 d", 348.3372, 57.1696, 5.57, "HD 219134 d")
+        exc.source, exc.otype = "the NASA Exoplanet Archive", "a planet that does not transit"
+        self.record_questions(["Variable star (V)"])
+        page._added("HD 219134 d", None, exc)
+        self.pump()
+        msg, choices = self.asked[0]
+        self.assertTrue(msg.startswith("HD 219134 d is a planet that does not transit, so it cannot be a Transits"))
+        self.assertNotIn(self.sa.KIND_CHOICES[3][0], choices)
+        self.assertEqual(self.host_calls[0][0], "HD 219134")
+        t = next(t for t in app.targets if t.name == "HD 219134" and t.kind == "variable")
+        self.assertEqual(self.nt_names(t.rules), ["HD 219134 b", "HD 219134 c"])
+
+    def test_edit_window_fits_its_contents_scaled(self):
+        self.golden_home()
+        app = self.open()
+        for scaling in (1.3333 * 1.25, 1.3333 * 1.5):           # Windows 125 % and 150 % (the app is closed after)
+            app.tk.call("tk", "scaling", scaling)
+            hd = next(t for t in app.targets if t.name == "HD 219134")
+            dlg, _saved = self.dialog(hd)
+            self.settle(0.2)
+            body = dlg.sb.inner
+            self.assertGreaterEqual(dlg.sb.canvas.winfo_width(), body.winfo_reqwidth(),
+                                    f"nothing cut off on the right at scaling {scaling:.2f}")
+            self.assertGreaterEqual(body.winfo_width(), body.winfo_reqwidth())
+            self.assertGreaterEqual(int(dlg.win.minsize()[0]), body.winfo_reqwidth(), "cannot be squeezed")
+            self.assertLessEqual(dlg.win.winfo_height(), int(app.winfo_screenheight() * 0.90) + 1)
+            # wider contents later (the moved-in ephemeris, a long Archive line) widen the window
+            dlg.vars["kind"].set("Transit")
+            dlg.show_planets(hd_info(note="the NASA Exoplanet Archive did not answer (HTTP 503); using the copy "
+                                          "from 3 days ago", matched="position"))
+            self.settle(0.2)
+            self.assertGreaterEqual(dlg.sb.canvas.winfo_width(), body.winfo_reqwidth())
+            self.assertTrue(dlg.pl_ind.var.get().startswith("⚠ 3 known planets"))
+            self.assertIn("found by position as HD 219134", dlg.pl_ind.var.get())
+            dlg.win.destroy()
+
+
 class TestAppWithRealModules(Base):
     """The same flow on the real targets / planner / weather / export, network off."""
     use_fakes = False
