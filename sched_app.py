@@ -1789,7 +1789,7 @@ class TargetsPage:
                 host = re.sub(r"\s+[b-z]$", "", label) or label
                 why = str(getattr(exc, "otype", "") or "a planet that does not transit")
                 self.star_lookup(host, dict(pos, main_id=host),
-                                 f"{label} is {why}, so it cannot be a Transits target.")
+                                 f"{label} is {why}, so it cannot be a Transits target.", typed_transit=False)
                 return
             self.star_lookup(name, pos, f"{label} was found, but it is not a known transiting planet or VSX variable.")
             return
@@ -1910,6 +1910,7 @@ class TargetsPage:
                 if p.get("usable") and p.get("planet"):
                     t.rules.append(no_transit_rule(p["planet"]))
                     windows.append(p["name"])
+            t.planets_checked = bool(planets)
         self.accept(t)
         if not any(x is t for x in self.app.targets):
             return                                   # not added (already in the list)
@@ -2085,6 +2086,7 @@ class EditTargetDialog:
         self.vars: dict[str, tk.Variable] = {}
         self.loaded: dict[str, str] = {}       # field text as opened (unchanged text = unchanged value)
         self.no_transit = [r for r in self.t.rules if r.get("kind") == "no_transit"]
+        self._nt_opened = [dict(r) for r in self.no_transit]   # as opened: the user's own changes are never undone
         self.widgets: dict = {}
         self.host_info: dict | None = None          # the star's planets at the Archive (looked up on opening)
         self.pl_vars: dict[str, tk.BooleanVar] = {}
@@ -2333,7 +2335,10 @@ class EditTargetDialog:
             self._fit()
             return
         have = self._nt_names()
-        fresh = not any(planet_key(p["name"]) in have for p in planets)
+        # pre-tick only the first time this target's planets are offered, and only if the user has not changed the
+        # list while the lookup ran (a campaign whose windows were removed on purpose keeps it that way)
+        fresh = (not self.t.planets_checked and self.no_transit == self._nt_opened
+                 and not any(planet_key(p["name"]) in have for p in planets))
         added = []
         for p in planets:
             on = bool(p.get("usable")) and (fresh or planet_key(p["name"]) in have)
@@ -2550,7 +2555,11 @@ class EditTargetDialog:
                 if new_kind == "variable" and not t.elements:
                     t.elements = {"vtype": "", "any_time": True}
                 if was == "transit":
+                    host = (t.planet or {}).get("host") or ""
                     t.planet = None                  # a star now: its ephemeris is the planet's, not its own
+                    if re.search(r"[\s-][b-z]$", t.name) and v["name"] == self.loaded.get("name", v["name"]):
+                        # "HD 219134 b" moved out of Transits is the star: drop the planet letter (unless renamed)
+                        t.name = host or re.sub(r"[\s-]+[b-z]$", "", t.name)
                 if new_kind == "transit":
                     t.elements = None
                     t.planet = None                  # filled from the ephemeris rows below
@@ -2597,6 +2606,8 @@ class EditTargetDialog:
                 rules.append({"kind": "window", "value": v["window"].replace("–", "-").replace(" ", "")})
             rules.extend(self.no_transit)
             t.rules = rules
+            if self.host_info and (self.host_info.get("planets") or []):
+                t.planets_checked = True
             if t.kind == "transit" and "period" in v:
                 pl = dict(t.planet or {})
                 before = dict(pl)

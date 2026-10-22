@@ -186,6 +186,7 @@ class Target:
     cycle_s: float | None = None              # "seconds between frames" (total cycle); None = exposure + overhead
     notes: str = ""
     added: str = ""                           # ISO date added
+    planets_checked: bool = False             # its planets were offered once (Edit/Add); later Edits never re-tick
 
     def planet_obj(self) -> Planet | None:
         return Planet.from_dict(self.planet) if self.planet else None

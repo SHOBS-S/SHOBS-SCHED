@@ -167,7 +167,7 @@ def _defocus_factor(o: dict) -> float:
     try:
         f = float(o.get("defocus_fwhm_factor") or 1.5)
     except (TypeError, ValueError):
-        f = 2.0
+        f = 1.5
     return f if f >= 1.0 else 1.0
 
 

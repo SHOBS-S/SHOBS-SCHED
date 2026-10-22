@@ -1207,6 +1207,41 @@ class TestPlanetHosts(Base):
     def nt_names(rules):
         return [r["planet"]["name"] for r in rules if r.get("kind") == "no_transit"]
 
+    def test_removed_windows_stay_removed(self):
+        """Review fix: a campaign whose planet windows were all removed on purpose is not re-ticked next time."""
+        self.golden_home()
+        self.open()
+        star = Target(name="HD219134", kind="campaign", mode="V", ra=348.3208, dec=57.1683, vmag=5.57)
+        dlg, saved = self.dialog(star)
+        self.app.jobs.wait()
+        self.pump()
+        self.assertEqual(self.nt_names(dlg.no_transit), ["HD 219134 b", "HD 219134 c"], "first time: pre-ticked")
+        dlg.nt_list.selection_set(0, tk.END)
+        dlg._nt_remove()
+        self.assertTrue(dlg.save(), dlg.msg_var.get())
+        t = saved[-1]
+        self.assertTrue(t.planets_checked)
+        self.assertEqual(self.nt_names(t.rules), [])
+        dlg2, saved2 = self.dialog(t)
+        self.app.jobs.wait()
+        self.pump()
+        self.assertEqual(self.nt_names(dlg2.no_transit), [], "not re-added on the next Edit")
+        self.assertTrue(dlg2.save(), dlg2.msg_var.get())
+        self.assertEqual(self.nt_names(saved2[-1].rules), [])
+
+    def test_planet_moved_out_of_transits_becomes_the_star(self):
+        """Review fix: "HD 219134 b" moved to Campaigns is named for its star (planet letter dropped)."""
+        self.golden_home()
+        self.open()
+        t = Target(name="HD 219134 b", kind="transit", mode="T", ra=348.34, dec=57.17, vmag=5.57,
+                   planet={"name": "HD 219134 b", "period": 3.09, "t0": 2457126.7, "t14": 0.04})
+        dlg, saved = self.dialog(t)
+        dlg.vars["mode"].set(dict((v, k) for k, v in self.sa.MODE_CHOICES)["V"])
+        self.pump()
+        self.assertTrue(dlg.save(), dlg.msg_var.get())
+        self.assertEqual(saved[-1].kind, "campaign")
+        self.assertEqual(saved[-1].name, "HD 219134")
+
     def test_edit_lists_planets_ticks_and_letters(self):
         self.golden_home()
         app = self.open()
