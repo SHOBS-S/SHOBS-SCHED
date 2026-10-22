@@ -36,8 +36,24 @@ def _target(t) -> Target | None:
     return Target.from_dict(t) if isinstance(t, dict) else None
 
 
+def _jd_ok(j) -> bool:
+    """A usable JD (a real date after 1858); 0, None, NaN or a stray number is not."""
+    try:
+        return math.isfinite(float(j)) and float(j) > 2400000.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _hhmm(j, tz: str) -> str:
+    return sky.hhmm(float(j), tz) if _jd_ok(j) else "—"
+
+
+def _sort_key(b: Block) -> float:
+    return float(b.start) if _jd_ok(b.start) else math.inf
+
+
 def _blocks(night: NightPlan) -> list[Block]:
-    return sorted((_block(b) for b in (night.blocks or [])), key=lambda b: b.start)
+    return sorted((_block(b) for b in (night.blocks or [])), key=_sort_key)
 
 
 def _date_label(iso: str, site: Site, year: bool = False) -> str:
@@ -102,8 +118,8 @@ def _alt_best(b: Block) -> str:
 
 def table_rows(night, site: Site, targets_by_id: dict | None = None) -> list[dict]:
     """The nightly table in the plan-doc format, one dict per block in time order. Display keys (TABLE_KEYS, in the
-    order of TABLE_COLUMNS): time "20:15–00:30", target, radec "23:13:17 +57:10:06" (needs targets_by_id — Block has
-    no coordinates), mode "Transits", alt "52–72°" (low–high), meridian "22:44", exposure "60 s", frames
+    order of TABLE_COLUMNS): time "20:15–00:30", target, radec "23:13:17 +57:10:06" (from targets_by_id, else the
+    block's own ra/dec if it has them, else "—"), mode "Transits", alt "52–72°" (low–high), meridian "22:44", exposure "60 s", frames
     "~240 (~135 in transit)", notes (notes then cautions, joined with "; "). Extra keys for the app: alt_x
     "62° (X 1.13)" (at best), start/end (JD), mode_code (V/T/D), kind, status, status_label, locked, set_by_user,
     fixed, cautions (list), exposure_is_estimate, target_id."""
@@ -116,12 +132,12 @@ def table_rows(night, site: Site, targets_by_id: dict | None = None) -> list[dic
         notes = [str(x) for x in (b.notes or []) if str(x).strip()]
         cautions = [str(x) for x in (b.cautions or []) if str(x).strip()]
         rows.append({
-            "time": f"{sky.hhmm(b.start, tz)}–{sky.hhmm(b.end, tz)}",
+            "time": f"{_hhmm(b.start, tz)}–{_hhmm(b.end, tz)}",
             "target": b.name,
             "radec": radec,
             "mode": MODE_NAMES.get(b.mode, b.mode),
             "alt": _alt_range(b),
-            "meridian": sky.hhmm(b.meridian, tz) if b.meridian is not None else "—",
+            "meridian": _hhmm(b.meridian, tz),
             "exposure": fmt_exposure(b.exposure_s),
             "frames": fmt_frames(b.frames, b.frames_in_transit if b.kind == "transit" else None),
             "notes": "; ".join(notes + cautions),
@@ -225,7 +241,7 @@ def asiair_targets(nights, targets_by_id, site: Site | None = None) -> tuple[lis
     blocks = []
     for n in nights or []:
         blocks.extend(_blocks(_night(n)))
-    blocks.sort(key=lambda b: b.start)
+    blocks.sort(key=_sort_key)
     seen, out, skipped = set(), [], []
     for b in blocks:
         key = b.target_id or b.name
@@ -245,7 +261,9 @@ def asiair_csv(nights, targets_by_id, site: Site | None = None, *, style: str = 
                pane_names: bool = True) -> str:
     """Paste-ready coordinate list for ASIAIR's Plan import (see the comment above for the format and its sources).
     One row per target in time order (a target once even with two blocks), across the given nights. No trailing
-    newline. style="observing_list" writes Telescopius's observing-list CSV instead."""
+    newline. style="observing_list" writes Telescopius's observing-list CSV instead.
+    The text contains º (U+00BA): when it is saved to a file, write UTF-8 WITHOUT a byte-order mark (a BOM would
+    become part of the first header name); on the clipboard it is plain Unicode text."""
     rows, _skipped = asiair_targets(nights, targets_by_id, site)
     if style == "observing_list":
         buf = io.StringIO()
@@ -276,18 +294,18 @@ def _darkness_word(site: Site) -> str:
 def _night_facts(n: NightPlan, site: Site, weather_by_date: dict | None, settings_dict: dict | None) -> dict:
     """Header lines of one night, as plain strings (escaped later for HTML)."""
     tz = site.tz
-    if n.dusk is not None and n.dawn is not None:
-        dark = f"Dark {sky.hhmm(n.dusk, tz)}–{sky.hhmm(n.dawn, tz)} ({_darkness_word(site)})"
+    if _jd_ok(n.dusk) and _jd_ok(n.dawn):
+        dark = f"Dark {_hhmm(n.dusk, tz)}–{_hhmm(n.dawn, tz)} ({_darkness_word(site)})"
     else:
         dark = "✖ No dark time tonight"
     moon = "Moon —"
     if n.moon_illum is not None:
         moon = f"Moon {int(round(100 * float(n.moon_illum)))} %"
         ev = []
-        if n.moonrise is not None:
-            ev.append((n.moonrise, f"rises {sky.hhmm(n.moonrise, tz)}"))
-        if n.moonset is not None:
-            ev.append((n.moonset, f"sets {sky.hhmm(n.moonset, tz)}"))
+        if _jd_ok(n.moonrise):
+            ev.append((n.moonrise, f"rises {_hhmm(n.moonrise, tz)}"))
+        if _jd_ok(n.moonset):
+            ev.append((n.moonset, f"sets {_hhmm(n.moonset, tz)}"))
         if ev:
             moon += ", " + ", ".join(t for _j, t in sorted(ev))
     w = (weather_by_date or {}).get(n.date) or n.weather
@@ -296,16 +314,16 @@ def _night_facts(n: NightPlan, site: Site, weather_by_date: dict | None, setting
         import weather as _w
         wline = str(w.get("summary") or "").split("; dew from")[0]
         hours = [h for h in (w.get("hours") or []) if h.get("temp_c") is not None]
-        if hours:
+        if hours and w.get("ok", True):
             unit = site.temp_unit or "C"
             lo = min(h["temp_c"] for h in hours)
             hi = max(h["temp_c"] for h in hours)
             winds = [h["wind_kmh"] for h in hours if h.get("wind_kmh") is not None]
-            wline += f". {_w.fmt_temp(hi, unit)} → {_w.fmt_temp(lo, unit)}"
+            wline += f". High {_w.fmt_temp(hi, unit)}, low {_w.fmt_temp(lo, unit)}"
             if winds:
-                wline += f", wind up to {_w.fmt_wind(max(winds), 'imperial' if unit == 'F' else 'metric')}"
-        if w.get("dew_onset") is not None:
-            wline += f". ⚠ Dew from {sky.hhmm(w['dew_onset'], tz)}"
+                wline += f", wind up to {_w.fmt_wind(max(winds), site.length_unit or 'm')}"
+        if _jd_ok(w.get("dew_onset")):
+            wline += f". ⚠ Dew from {_hhmm(w['dew_onset'], tz)}"
         if w.get("note") and w.get("ok", True):
             wline += f" ({w['note']})"
         if wline:
@@ -339,7 +357,7 @@ def _items(head: str, items) -> list[str]:
 
 
 def _free_lines(n: NightPlan, site: Site) -> list[str]:
-    return [f"Free {sky.hhmm(g[0], site.tz)}–{sky.hhmm(g[1], site.tz)}" for g in (n.free or []) if len(g) >= 2]
+    return [f"Free {_hhmm(g[0], site.tz)}–{_hhmm(g[1], site.tz)}" for g in (n.free or []) if len(g) >= 2]
 
 
 def _title(nights: list[NightPlan], site: Site) -> str:
@@ -364,7 +382,10 @@ def _site_line(site: Site, settings_dict: dict | None) -> str:
 
 
 def _footer(site: Site) -> str:
-    return f"SHOBS-SCHED · site clock ({site.tz or 'UTC'})"
+    text = f"SHOBS-SCHED · site clock ({site.tz or 'UTC'})"
+    if not sky.zone_ok(site.tz):
+        text += " ⚠ unknown time zone, times in UTC"
+    return text
 
 
 _CSS = """

@@ -194,7 +194,7 @@ class TestPlanCard(unittest.TestCase):
         self.assertIn("Moon 74 %, sets 02:47", page)
         self.assertIn("Clear until 02:00, then 60–80 % cloud", page)
         self.assertIn("Dew from 04:05", page)
-        self.assertIn("54 °F" if SITE.temp_unit == "F" else "12 °C", page)
+        self.assertIn("High 12 °C, low 12 °C, wind up to 10 km/h", page)
         self.assertIn("WASP-12 b: collides with TOI-2046 b (next chance Tue 27 Oct)", page)
         self.assertIn("Free 02:10–03:00", page)
         self.assertIn("<h3>Darks to shoot</h3><ul><li>0.75 s × 20</li>", page)
@@ -230,6 +230,76 @@ class TestPlanCard(unittest.TestCase):
         text = export.plan_card_text([self.n20], SITE, {}, w, self.by_id)
         self.assertIn("No forecast (Open-Meteo did not answer (timed out))", text)
         self.assertEqual(text.count("did not answer"), 1)
+
+
+
+class TestReviewFixes(unittest.TestCase):
+    """Fixes from the independent review of 22 Oct."""
+
+    def weather(self, d):
+        return {d: {"source": "Open-Meteo", "ok": True, "note": "", "summary": "Clear all night", "dew_onset": None,
+                    "hours": [{"jd": 2461336.5, "temp_c": 12.0, "wind_kmh": 16.1},
+                              {"jd": 2461336.6, "temp_c": 5.0, "wind_kmh": 8.0}]}}
+
+    def test_temps_and_wind_units(self):
+        n = NightPlan(date="2026-10-20")
+        metric = Site.from_dict(dict(GOLD["site"], temp_unit="F", length_unit="m"))
+        text = export.plan_card_text([n], metric, {}, self.weather("2026-10-20"))
+        self.assertIn("High 54 °F, low 41 °F, wind up to 16 km/h", text)
+        imperial = Site.from_dict(dict(GOLD["site"], temp_unit="C", length_unit="ft"))
+        text = export.plan_card_text([n], imperial, {}, self.weather("2026-10-20"))
+        self.assertIn("High 12 °C, low 5 °C, wind up to 10 mph", text)
+        self.assertNotIn("→", text)
+
+    def test_bad_block_times(self):
+        n = NightPlan(date="2026-10-20", dusk=0, dawn=None, moon_illum=0.5, moonrise=float("nan"),
+                      blocks=[Block(name="Zero", start=0, end=0, meridian=12.0).to_dict(),
+                              Block(name="Small", start=1.5, end=2.5).to_dict(),
+                              Block(name="Good", start=at(date(2026, 10, 20), 21, 0),
+                                    end=at(date(2026, 10, 20), 22, 0)).to_dict()],
+                      free=[(0, 1)])
+        rows = export.table_rows(n, SITE)
+        self.assertEqual([r["target"] for r in rows], ["Good", "Zero", "Small"])
+        self.assertEqual(rows[1]["time"], "—–—")
+        self.assertEqual(rows[1]["meridian"], "—")
+        page = export.plan_card_html([n], SITE, {})
+        self.assertIn("Zero", page)
+        self.assertIn("No dark time tonight", page)
+        self.assertIn("Free —–—", page)
+        export.plan_card_text([n], SITE, {})
+        export.asiair_csv([n], {}, SITE)
+
+    def test_footer_unknown_zone(self):
+        bad = Site(lat=35.0, lon=-80.0, tz="Mars/Olympus")
+        self.assertIn("site clock (Mars/Olympus) ⚠ unknown time zone, times in UTC",
+                      export.plan_card_text([], bad, {}))
+        self.assertNotIn("unknown time zone", export.plan_card_text([], SITE, {}))
+
+    def test_southern_and_tokyo_sites(self):
+        # Run under TZ=Asia/Tokyo too: the rows must follow the SITE's clock, never the computer's.
+        for site, d, ra, dec in ((Site(name="Siding Spring", lat=-31.2733, lon=149.0617, tz="Australia/Sydney"),
+                                  date(2026, 10, 22), 83.8221, -5.3911),
+                                 (Site(name="Tokyo", lat=35.68, lon=139.69, tz="Asia/Tokyo"),
+                                  date(2026, 10, 22), 10.6847, 41.2690)):
+            t = Target(id="t", name="T", ra=ra, dec=dec)
+            b = Block(target_id="t", name="T", start=sky.local_jd(d, 21, 0, site.tz),
+                      end=sky.local_jd(date(2026, 10, 23), 0, 30, site.tz),
+                      meridian=sky.local_jd(date(2026, 10, 23), 0, 5, site.tz))
+            n = NightPlan(date=d.isoformat(), dusk=sky.local_jd(d, 20, 5, site.tz),
+                          dawn=sky.local_jd(date(2026, 10, 23), 4, 40, site.tz), blocks=[b.to_dict()])
+            r = export.table_rows(n, site, {"t": t})[0]
+            self.assertEqual(r["time"], "21:00–00:30", site.tz)
+            self.assertEqual(r["meridian"], "00:05", site.tz)
+            self.assertIn("Dark 20:05–04:40", export.plan_card_text([n], site, {}, None, {"t": t}))
+        self.assertTrue(r["radec"].startswith("00:42:44 +41:16"))
+        line = export.asiair_csv([n], {"t": t}, site).split("\n")[1]
+        self.assertIn("00hr 42' 44\", 41º 16' 08\"", line)
+
+    def test_csv_utf8_no_bom(self):
+        text = export.asiair_csv([oct20_night()], BY_ID, SITE)
+        data = text.encode("utf-8")
+        self.assertFalse(data.startswith(b"\xef\xbb\xbf"))
+        self.assertIn("º".encode("utf-8"), data)
 
 
 if __name__ == "__main__":

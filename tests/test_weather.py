@@ -130,7 +130,9 @@ class TestParse(Base):
         self.assertIn("dew from", n23["summary"])
         # local evening hours at Sydney (AEDT, UTC+11): the first hour is ~19:00 site clock
         self.assertIn(sky.hhmm(n23["hours"][0]["jd"], SIDING.tz), ("19:00", "20:00"))
-        self.assertIn("Clear until 02:00", n23["summary"])
+        # the wording follows the forecast; check the shape, not the recorded numbers
+        self.assertRegex(n23["summary"], r"^(Clear|Overcast|Changeable|About \d+ % cloud|\d+–\d+ % cloud)")
+        self.assertTrue(n23["summary"].endswith(f"; dew from {sky.hhmm(n23['dew_onset'], SIDING.tz)}"))
 
     def test_beyond_forecast_range(self):
         net = FakeNet(load("weather_openmeteo_shobs_20261022.json"))
@@ -207,6 +209,7 @@ class TestCache(Base):
         self.assertEqual(net.calls, 0)
         self.assertTrue(res["2026-10-22"]["ok"])
         self.assertAlmostEqual(res["2026-10-22"]["age_h"], 2.0, places=2)
+        self.assertEqual(res["2026-10-22"]["note"], "forecast from 2 h ago")
 
     def test_stale_cache_refetches(self):
         rep = load("weather_openmeteo_shobs_20261022.json")
@@ -243,6 +246,8 @@ class TestFormat(unittest.TestCase):
     def test_temp(self):
         self.assertEqual(weather.fmt_temp(12.4, "C"), "12 °C")
         self.assertEqual(weather.fmt_temp(12.4, "F"), "54 °F")
+        self.assertEqual(weather.fmt_temp(12.4, "°F"), "54 °F")
+        self.assertEqual(weather.fmt_temp(12.4, "°C"), "12 °C")
         self.assertEqual(weather.fmt_temp(None, "C"), "—")
 
     def test_wind(self):
@@ -266,6 +271,119 @@ class TestFormat(unittest.TestCase):
         # a lone odd hour does not split the night
         self.assertEqual(weather.summary_text(mk([0, 0, 0, 40, 0, 0]), dusk, dawn, None, JOHN.tz),
                          "Clear all night")
+
+
+
+class TestReviewFixes(Base):
+    """Fixes from the independent review of 22 Oct."""
+
+    def test_non_dict_replies(self):
+        for bad in ([], None, "x", 3, {"hourly": []}, {"hourly": {"time": "2026"}}, {"hourly": {"time": []}},
+                    {"error": True}):
+            with self.assertRaises(weather.WeatherError, msg=repr(bad)):
+                weather.parse_open_meteo(bad)
+
+    def test_bad_time_entries_skipped(self):
+        rep = synthetic_reply(datetime(2026, 10, 22, tzinfo=timezone.utc), 3, lambda i, t: (10, 5, 0, 1, 50))
+        rep["hourly"]["time"][1] = None
+        rep["hourly"]["time"][2] = 12345
+        self.assertEqual(len(weather.parse_open_meteo(rep)), 1)
+
+    def test_http_exceptions_wrapped(self):
+        import http.client
+        import urllib.request
+        orig = urllib.request.urlopen
+        try:
+            for exc, word in ((http.client.IncompleteRead(b"{"), "cut off"),
+                              (http.client.BadStatusLine("x"), "cut off"),
+                              (RuntimeError("boom"), "download failed")):
+                def fake(*a, exc=exc, **k):
+                    raise exc
+                urllib.request.urlopen = fake
+                with self.assertRaises(weather.WeatherError) as cm:
+                    weather.http_get_json("https://example.invalid/")
+                self.assertIn(word, str(cm.exception))
+            # and the fetch falls back to the saved forecast
+            self.fetch(JOHN, date(2026, 10, 22), 2, FakeNet(load("weather_openmeteo_shobs_20261022.json")))
+            weather.http_get_json = self._orig
+            urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(http.client.IncompleteRead(b""))
+            res = weather.OpenMeteo(now_jd=lambda: RECORDED + 4 / 24).fetch(JOHN, date(2026, 10, 22), 2, OPTS)
+            self.assertTrue(res["2026-10-22"]["ok"])
+            self.assertIn("cut off", res["2026-10-22"]["note"])
+            self.assertIn("4 h ago", res["2026-10-22"]["note"])
+        finally:
+            urllib.request.urlopen = orig
+
+    def test_dew_interpolated_at_dusk(self):
+        dusk, dawn = sky.night_window(date(2026, 10, 22), JOHN)
+        h = 1 / 24
+        # 3.0 °C half an hour before dusk, 1.0 half an hour after: 2.0 at dusk < 2.5 → wet at dusk
+        pts = [{"jd": dusk - h / 2, "spread_c": 3.0}, {"jd": dusk + h / 2, "spread_c": 1.0}]
+        self.assertAlmostEqual(weather.dew_onset(pts, dusk, dawn, 2.5), dusk, places=7)
+        # 4.0 → 3.0 across dusk: dry at dusk; crossing later
+        pts = [{"jd": dusk - h / 2, "spread_c": 4.0}, {"jd": dusk + h / 2, "spread_c": 3.0},
+               {"jd": dusk + 1.5 * h, "spread_c": 2.0}]
+        self.assertAlmostEqual(weather.dew_onset(pts, dusk, dawn, 2.5), dusk + h, places=7)
+
+    def test_dew_darkness_shorter_than_sampling(self):
+        h = 1 / 24
+        j0 = 2461336.0
+        pts = [{"jd": j0, "spread_c": 4.0}, {"jd": j0 + 3 * h, "spread_c": 1.0}]   # 1 °C per hour
+        # darkness 0.5 h .. 2.0 h: spread 3.5 → 2.0; crosses 2.5 at 1.5 h
+        self.assertAlmostEqual(weather.dew_onset(pts, j0 + 0.5 * h, j0 + 2 * h, 2.5), j0 + 1.5 * h, places=7)
+        self.assertIsNone(weather.dew_onset(pts, j0 + 0.2 * h, j0 + 1.0 * h, 2.5))
+
+    def test_write_cache_failure_is_harmless(self):
+        orig = weather.cache_path
+        weather.cache_path = lambda site: (_ for _ in ()).throw(OSError("read-only"))
+        try:
+            res = self.fetch(JOHN, date(2026, 10, 22), 1, FakeNet(load("weather_openmeteo_shobs_20261022.json")))
+            self.assertTrue(res["2026-10-22"]["ok"])
+        finally:
+            weather.cache_path = orig
+
+    def test_no_hour_inside_darkness(self):
+        dusk, _dawn = sky.night_window(date(2026, 10, 22), JOHN)
+        t_end = sky.to_utc(dusk - 20 / 1440).replace(minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+        rep = synthetic_reply(t_end - timedelta(hours=10), 11, lambda i, t: (10, 5, 0, 1, 50))
+        nw = weather.night_weather(weather.parse_open_meteo(rep), date(2026, 10, 22), JOHN, OPTS, source="t")
+        self.assertFalse(nw["ok"])
+        self.assertIn("beyond the forecast range", nw["summary"])
+
+    def test_cache_without_fetched_jd(self):
+        rep = load("weather_openmeteo_shobs_20261022.json")
+        self.fetch(JOHN, date(2026, 10, 22), 3, FakeNet(rep))
+        with open(weather.cache_path(JOHN), encoding="utf-8") as fh:
+            data = json.load(fh)
+        del data["fetched_jd"]
+        with open(weather.cache_path(JOHN), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        net = FakeNet(rep)
+        self.fetch(JOHN, date(2026, 10, 22), 3, net)
+        self.assertEqual(net.calls, 1)                    # not trusted as fresh
+        with open(weather.cache_path(JOHN), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        res = self.fetch(JOHN, date(2026, 10, 22), 1, FakeNet(error="timed out"))
+        note = res["2026-10-22"]["note"]
+        self.assertIn("unknown age", note)
+        self.assertNotIn("days ago", note)
+        self.assertIsNone(res["2026-10-22"]["age_h"])
+
+    def test_stale_fallback_does_not_reach_night(self):
+        self.fetch(JOHN, date(2026, 10, 22), 3, FakeNet(load("weather_openmeteo_shobs_20261022.json")))
+        res = self.fetch(JOHN, date(2026, 10, 28), 3, FakeNet(error="timed out"), now=RECORDED + 3)
+        self.assertTrue(res["2026-10-28"]["ok"])
+        self.assertFalse(res["2026-10-30"]["ok"])
+        self.assertEqual(res["2026-10-30"]["summary"],
+                         "No forecast (the saved forecast from 3 days ago does not reach this night)")
+
+    def test_no_forecast_has_same_keys(self):
+        good = self.fetch(JOHN, date(2026, 10, 22), 1, FakeNet(load("weather_openmeteo_shobs_20261022.json")))
+        bad = weather.no_forecast(JOHN, date(2026, 10, 22), 1, "Open-Meteo", "x")
+        self.assertEqual(set(good["2026-10-22"]), set(bad["2026-10-22"]))
+
+    def test_url_has_no_precipitation(self):
+        self.assertNotIn("precipitation", weather.OpenMeteo(now_jd=lambda: RECORDED).url(JOHN, date(2026, 10, 22), 1))
 
 
 if __name__ == "__main__":
