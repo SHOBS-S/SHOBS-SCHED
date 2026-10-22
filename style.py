@@ -62,8 +62,10 @@ LOCK = "#ffd54f"
 CLOUD = "#9aa7b0"
 TEMP = "#c0392b"
 DEW = "#1f6fb2"
-AIRMASS_LIGHT = "#eef4f9"   # X = 1.0
-AIRMASS_DARK = "#24384b"    # X at or over the max-airmass setting
+AIRMASS_LIGHT = "#e3f4f1"   # X = 1.0 (pale teal)
+AIRMASS_DARK = "#00574b"    # X at or over the max-airmass setting (deep teal)
+AIRMASS = "#00796b"         # the Airmass row: its label and numbers share the band's teal (John, 22 Oct)
+CLOCK = "#1f5f99"           # the Site clock row: label, zone, ticks and hour numbers in one blue (John, 22 Oct)
 
 
 def mode_color(mode: str, which: str = "light") -> str:

@@ -3898,7 +3898,7 @@ class NightTab:
         c.create_text(4, (ym0 + ym1) / 2, text="Moon" + (f" {illum * 100:.0f} %" if illum is not None else ""),
                       anchor="w", fill=style.HINT, font=self.norm)
         c.create_text(4, (yb0 + yb1) / 2, text="Blocks", anchor="w", fill=style.HINT, font=self.norm)
-        c.create_text(4, (ya0 + ya1) / 2, text="Airmass", anchor="w", fill=style.HINT, font=self.norm)
+        c.create_text(4, (ya0 + ya1) / 2, text="Airmass", anchor="w", fill=style.AIRMASS, font=self.bold)
         # sky: day / civil / nautical / astronomical twilight / night, from the Sun's altitude
         n = max(60, int((ax.x1 - ax.x0) / 2))
         jds = np.linspace(ax.j0, ax.j1, n + 1)
@@ -3982,14 +3982,14 @@ class NightTab:
                                                                              + px(app, 10) else 3)
         for k, j in enumerate(ticks):
             x = ax.x(j)
-            c.create_line(x, yb1, x, yb1 + lh * 0.2, fill=style.HINT)
+            c.create_line(x, yb1, x, yb1 + lh * 0.2, fill=style.CLOCK)
             lab = sky.hhmm(j, tz)
             if k % every == 0:
-                c.create_text(x, yh, text=lab if every == 1 else lab[:2], fill=style.TEXT, font=self.norm)
+                c.create_text(x, yh, text=lab if every == 1 else lab[:2], fill=style.CLOCK, font=self.norm)
         for x, lab, anc in dark_labels:
             c.create_text(x, ydk, text=lab, anchor=anc, fill=style.SIDE, font=self.bold)
-        c.create_text(4, yh, text="Site clock", anchor="w", fill=style.HINT, font=self.norm)
-        c.create_text(4, ydk, text=tz, anchor="w", fill=style.HINT, font=self.norm)
+        c.create_text(4, yh, text="Site clock", anchor="w", fill=style.CLOCK, font=self.bold)
+        c.create_text(4, ydk, text=tz, anchor="w", fill=style.CLOCK, font=self.norm)
 
     def _fit(self, text: str, width: float, f) -> str:
         if f.measure(text) <= width:
@@ -4035,7 +4035,7 @@ class NightTab:
         f = self.small
         inset = f.measure(" ")                   # keeps this block's numbers apart from the neighbor's
         room = xb - xa - 2 * inset
-        fill = style.WARN_FG if high else style.TEXT
+        fill = style.WARN_FG if high else style.AIRMASS
         trio = [b.airmass_start, b.airmass_best, b.airmass_end]
         gap = f.measure("    ")
         if not high and all(v is not None for v in trio):
