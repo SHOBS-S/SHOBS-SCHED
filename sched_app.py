@@ -1001,6 +1001,12 @@ class SetupPage:
             warn = ttk.Label(f, text="⚠ estimate", style="Warn.TLabel")
             var.trace_add("write", lambda *_a, v=var, w=warn: self._est_tag(v, w))
             self._est_tag(var, warn)
+        self._entry(box, 13, "Per-frame overhead", "optics.frame_overhead_s",
+                    "s (download, save); empty = 3 s", width=6, tag=False)
+        self._entry(box, 14, "Usual camera angle", "optics.camera_angle_deg",
+                    "° (rotator) for ASIAIR; empty = 0", width=6, tag=False)
+        self._entry(box, 15, "Defocus widens stars ×", "options.defocus_fwhm_factor",
+                    "(“defocus” targets)", width=6, tag=False)
         return box
 
     def _est_tag(self, var, warn):
@@ -1103,6 +1109,9 @@ class SetupPage:
         v["optics.camera"].set(op.get("camera") or "")
         v["optics.telescope"].set(op.get("telescope") or "")
         v["optics.color"].set("color" if op.get("color_camera", True) else "mono")
+        v["optics.frame_overhead_s"].set(fmt_num(op.get("frame_overhead_s")))
+        v["optics.camera_angle_deg"].set(fmt_num(op.get("camera_angle_deg")))
+        v["options.defocus_fwhm_factor"].set(fmt_num(opts.get("defocus_fwhm_factor", 2.0)))
         for key, var in self.est.items():
             var.set(key in (op.get("estimates") or []))
         v["site.mount"].set("altaz" if site.get("mount") == "altaz" else "GEM")
@@ -1238,6 +1247,12 @@ class SetupPage:
         ll = num("optics.linear_limit_adu", "Linear limit", 100, 70000, required=False, what="(raw ADU)")
         op["linear_limit_adu"] = ll if ll is not None else 32000.0
         op["estimates"] = [k for k, var in self.est.items() if var.get()]
+        op["frame_overhead_s"] = num("optics.frame_overhead_s", "Per-frame overhead", 0, 600, required=False,
+                                     what="seconds")
+        op["camera_angle_deg"] = num("optics.camera_angle_deg", "Usual camera angle", 0, 360, required=False,
+                                     what="degrees")
+        dfw = num("options.defocus_fwhm_factor", "Defocus widens stars", 1, 20, required=False, what="times")
+        opts["defocus_fwhm_factor"] = dfw if dfw is not None else 2.0
         site["mount"] = v["site.mount"].get() or "GEM"
         pm = num("site.past_meridian_min", "Tracking past the meridian", 0, 120, required=False, what="minutes")
         site["past_meridian_min"] = pm if pm is not None else 0.0
@@ -1982,6 +1997,8 @@ class EditTargetDialog:
         row("V magnitude", "vmag", fmt_num(t.vmag, 2), "", 8)
         head("Observing")
         row("Exposure", "exposure_s", fmt_num(t.exposure_s), "s (empty = SCHED estimates one)", 8)
+        row("Seconds between frames", "cycle_s", fmt_num(t.cycle_s),
+            "s, whole cycle (empty = exposure + overhead)", 8)
         row("Block length", "block_min", fmt_num(t.block_min), "min (flexible targets)", 8)
         row("Shortest useful block", "min_block_min", fmt_num(t.min_block_min), "min", 8)
         row("Goal", "goal_per_week", str(int(t.goal_per_week or 0)), "nights a week (0 = no goal)", 8)
@@ -2141,6 +2158,9 @@ class EditTargetDialog:
                     raise ValueError("RA must be 0–24 h and Dec −90 to +90°.")
             t.vmag = num("vmag", "V magnitude", -2, 25)
             t.exposure_s = num("exposure_s", "Exposure", 0.001, 3600)
+            t.cycle_s = num("cycle_s", "Seconds between frames", 0.001, 7200)
+            if t.cycle_s is not None and t.exposure_s and t.cycle_s < t.exposure_s:
+                raise ValueError("Seconds between frames cannot be shorter than the exposure.")
             bl = num("block_min", "Block length", 5, 900)
             if bl is None:
                 raise ValueError("Block length is empty: type the minutes you want per visit (e.g. 120).")
@@ -3576,6 +3596,9 @@ class ExportPage:
         style.green_button(btns, "Copy ASIAIR CSV", self.copy_csv).pack(side=tk.LEFT)
         style.green_button(btns, "Save CSV…", self.save_csv).pack(side=tk.LEFT, padx=px(app, 8))
         style.green_button(btns, "Print plan card", self.print_card).pack(side=tk.LEFT)
+        self.angle_var = tk.StringVar()
+        ttk.Label(self.frame, textvariable=self.angle_var, style="Hint.TLabel").pack(anchor="w",
+                                                                                   pady=(0, px(app, 4)))
         self.msg_var = tk.StringVar()
         self.msg = ttk.Label(self.frame, textvariable=self.msg_var, style="Card.TLabel", justify=tk.LEFT)
         self.msg.pack(anchor="w", fill=tk.X, pady=(0, px(app, 8)))
@@ -3628,8 +3651,21 @@ class ExportPage:
     def _msg(self, text):
         set_msg(self.msg_var, self.msg, text)
 
+    def angle_text(self) -> str:
+        """What the ASIAIR list writes as the position angle (Setup's usual camera angle)."""
+        ex = mod("export")
+        if ex is None or not hasattr(ex, "asiair_angle"):
+            return ""
+        a = ex.asiair_angle(self.app.optics)
+        if getattr(self.app.optics, "camera_angle_deg", None) is not None:
+            why = "Setup's usual camera angle"
+        else:
+            why = "set your usual camera angle in Setup"
+        return f"ASIAIR list: position angle {a:.2f}° ({why})."
+
     def update_preview(self):
         ex = mod("export")
+        self.angle_var.set(self.angle_text())
         nights = self.chosen()
         self.preview.configure(state="normal")
         self.preview.delete("1.0", tk.END)
@@ -3693,6 +3729,9 @@ class ExportPage:
         msg = f"✔ Copied {n} target{'s' if n != 1 else ''}. In ASIAIR's Plan: Add → Import, and paste."
         if skipped:
             msg = f"⚠ Copied {n} target{'s' if n != 1 else ''}; left out (no coordinates): {', '.join(skipped)}."
+        ang = self.angle_text()
+        if ang:
+            msg += " " + ang.replace("ASIAIR list: position", "Position")
         self._msg(msg)
         settings.log(f"ASIAIR CSV copied ({n} rows)")
 
@@ -3716,7 +3755,8 @@ class ExportPage:
         except OSError as exc:
             self._msg(f"✖ Not saved: {exc.strerror or exc}.")
             return False
-        self._msg(f"✔ Saved {os.path.basename(path)} ({self.count_rows(text)} targets).")
+        ang = self.angle_text().replace("ASIAIR list: position", "Position")
+        self._msg(f"✔ Saved {os.path.basename(path)} ({self.count_rows(text)} targets)." + (f" {ang}" if ang else ""))
         return True
 
     def print_card(self, open_browser: bool = True) -> str | None:

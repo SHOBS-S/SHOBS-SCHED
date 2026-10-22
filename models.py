@@ -81,6 +81,10 @@ class Optics:
     full_well_e: float | None = None
     linear_limit_adu: float = 32000.0         # raw ADU a star's peak should stay under
     qe: float = 0.8                           # typical peak QE, used only for the cold-start exposure estimate
+    frame_overhead_s: float | None = None     # per-frame overhead (download, save) on top of the exposure; None =
+                                              # the old 3 s default (or a target's own cadence_overhead_s)
+    camera_angle_deg: float | None = None     # usual camera (rotator) angle written as ASIAIR's position angle;
+                                              # None = 0
     estimates: list = field(default_factory=list)
 
     def pixel_scale(self) -> float | None:
@@ -177,7 +181,9 @@ class Target:
     min_block_min: float = 45.0               # shortest block worth scheduling
     goal_per_week: int = 0                    # campaigns: wanted nights per week (0 = no goal)
     exposure_s: float | None = None           # user's exposure (None = SCHED estimates one)
-    cadence_overhead_s: float = 3.0           # per-frame overhead (download etc.)
+    cadence_overhead_s: float | None = 3.0    # old per-frame overhead field (kept for old files); a value other
+                                              # than the old 3 s default still applies (planner.frame_cycle_s)
+    cycle_s: float | None = None              # "seconds between frames" (total cycle); None = exposure + overhead
     notes: str = ""
     added: str = ""                           # ISO date added
 
@@ -232,6 +238,7 @@ class Block:
     exposure_is_estimate: bool = True
     frames: int | None = None
     frames_in_transit: int | None = None
+    cycle_s: float | None = None              # seconds per frame used for the frame counts
     peak_adu: float | None = None
     notes: list = field(default_factory=list)       # plain sentences for the Notes column
     cautions: list = field(default_factory=list)    # "⚠ ..." lines

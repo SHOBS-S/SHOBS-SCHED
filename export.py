@@ -257,6 +257,20 @@ def asiair_targets(nights, targets_by_id, site: Site | None = None) -> tuple[lis
     return out, skipped
 
 
+def asiair_angle(optics) -> float:
+    """Setup's usual camera angle (°, 0 to <360) for ASIAIR's "Position Angle (East)" column; 0 when not set (ASIAIR
+    reads 0.00 as "rotate the camera to 0°", which would break flats taken at the usual angle)."""
+    try:
+        a = getattr(optics, "camera_angle_deg", None) if optics is not None else None
+        a = float(a) if a is not None else 0.0
+    except (TypeError, ValueError):
+        a = 0.0
+    if a != a:                                    # NaN
+        a = 0.0
+    a %= 360.0
+    return 0.0 if round(a, 2) >= 360.0 else a
+
+
 def asiair_csv(nights, targets_by_id, site: Site | None = None, *, style: str = "mosaic", optics=None,
                pane_names: bool = True) -> str:
     """Paste-ready coordinate list for ASIAIR's Plan import (see the comment above for the format and its sources).
@@ -276,10 +290,11 @@ def asiair_csv(nights, targets_by_id, site: Site | None = None, *, style: str = 
                         ra_telescopius(r["ra"], "h"), dec_telescopius(r["dec"]), mag, "", "", "", "", "", ""])
         return buf.getvalue().rstrip("\n")
     fw, fh = fov_arcmin(optics)
+    pa = asiair_angle(optics)
     lines = [ASIAIR_HEADER]
     for k, r in enumerate(rows, 1):
         name = ascii_name(r["name"]) if pane_names else f"Pane {k}"
-        lines.append(f"{name}, {ra_telescopius(r['ra'])}, {dec_telescopius(r['dec'])}, 0.00, {fw:.2f}, {fh:.2f}, "
+        lines.append(f"{name}, {ra_telescopius(r['ra'])}, {dec_telescopius(r['dec'])}, {pa:.2f}, {fw:.2f}, {fh:.2f}, "
                      f"0%, -, -")
     return "\n".join(lines)
 

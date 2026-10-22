@@ -464,7 +464,8 @@ class ReviewFixes(unittest.TestCase):
         hd = gtarget(self.g, "HD 219134")
         self.assertIn("defocus", hd.notes.lower())
         ex = planner.estimate_exposure(hd, self.optics, {})
-        self.assertEqual(ex["note"], "Your exposure; defocused: peak estimate not valid")
+        self.assertTrue(ex["note"].startswith("Your exposure; defocused (stars ~2× wider): predicted peak ~"),
+                        ex["note"])
         ex = planner.estimate_exposure(Target(vmag=11.4, exposure_s=60), self.optics, {})
         self.assertTrue(ex["note"].startswith("Your exposure; predicted peak"))
         found = {}
@@ -635,6 +636,79 @@ class ReviewFixes(unittest.TestCase):
             t_b = el.epoch + e["cycle"] * el.period
             self.assertAlmostEqual(e["t"], t_b - float(sky.bjd_minus_jd_days(t_b, ra, dec)), places=7)
             self.assertTrue(j0 <= e["t"] <= j0 + 200)
+
+
+
+class CadenceDefocus(unittest.TestCase):
+    """22 Oct testing: frames from the real ASIAIR cycle; defocused peaks; (camera angle is in test_export)."""
+
+    def setUp(self):
+        self.g, self.site, self.optics = golden()
+        self.d = date(2026, 10, 21)
+
+    def test_frame_cycle_precedence(self):
+        op = Optics.from_dict(self.optics.to_dict())
+        t = Target(exposure_s=0.75)                              # old default 3 s, no Setup value: as before
+        self.assertEqual(planner.frame_cycle_s(t, 0.75, op), (3.75, "default"))
+        op.frame_overhead_s = 32.0                               # Setup's overhead replaces the old default
+        self.assertEqual(planner.frame_cycle_s(t, 0.75, op), (32.75, "setup"))
+        t.cadence_overhead_s = 10.0                              # a target's own old value still applies
+        self.assertEqual(planner.frame_cycle_s(t, 0.75, op), (10.75, "target"))
+        t.cycle_s = 33.0                                         # seconds between frames wins
+        self.assertEqual(planner.frame_cycle_s(t, 0.75, op), (33.0, "cycle"))
+        self.assertEqual(planner.frame_cycle_s(t, 60.0, op)[0], 60.0, "never shorter than the exposure")
+        t2 = Target.from_dict({"name": "old", "exposure_s": 5})  # an old file without the new fields
+        self.assertIsNone(t2.cycle_s)
+        self.assertIsNone(Optics.from_dict({}).frame_overhead_s)
+
+    def test_hd219134_frames_with_cycle(self):
+        hd = gtarget(self.g, "HD 219134", cycle_s=33.0, rules=[])
+        b = planner.build_night(self.d, self.site, self.optics, [hd], {}).blocks_obj()[0]
+        mins = (b.end - b.start) * 1440
+        self.assertEqual(b.cycle_s, 33.0)
+        self.assertLessEqual(b.frames, int(mins * 60 / 33) + 1)
+        self.assertGreater(b.frames, 150)
+        self.assertLess(b.frames, 200, "about 190 frames for 105 min, not ~1,600")
+        self.assertIn("Frames every 33 s (your seconds between frames)", b.notes)
+        # Setup's overhead with no per-target cycle
+        op = Optics.from_dict(self.optics.to_dict())
+        op.frame_overhead_s = 32.0
+        hd2 = gtarget(self.g, "HD 219134", cadence_overhead_s=3.0, rules=[])
+        b2 = planner.build_night(self.d, self.site, op, [hd2], {}).blocks_obj()[0]
+        self.assertAlmostEqual(b2.cycle_s, 32.75)
+        self.assertFalse(any("Frames every" in n for n in b2.notes))
+
+    def test_frames_in_transit_use_cycle(self):
+        t = gtarget(self.g, "K2-29 b")
+        d = date(2026, 10, 22)
+        base = planner.build_night(d, self.site, self.optics, [t], {}).blocks_obj()
+        t.cycle_s = float(t.exposure_s or 60) * 4
+        slow = planner.build_night(d, self.site, self.optics, [t], {}).blocks_obj()
+        self.assertTrue(base and slow and base[0].frames_in_transit)
+        self.assertLess(slow[0].frames_in_transit, base[0].frames_in_transit)
+
+    def test_defocused_peak(self):
+        hd = gtarget(self.g, "HD 219134", exposure_s=None)
+        infocus = planner.predict_peak_adu(hd.vmag, 0.75, self.optics, {})
+        defoc = planner.predict_peak_adu(hd.vmag, 0.75, self.optics, {}, defocused=True)
+        self.assertGreater(infocus, 35000)
+        self.assertLess(defoc, infocus / 3, "2x wider stars: about a quarter of the peak")
+        wider = planner.predict_peak_adu(hd.vmag, 0.75, self.optics, {"defocus_fwhm_factor": 3.0}, defocused=True)
+        self.assertLess(wider, defoc)
+        ex = planner.estimate_exposure(hd, self.optics, {})
+        self.assertIn("defocused", ex["note"])
+        self.assertFalse(ex["note"].startswith("⚠"), ex["note"])
+        self.assertLess(ex["peak_adu"], 0.8 * self.optics.linear_limit_adu + 1)
+        # a brighter defocused star that still saturates says so, with "defocused"
+        bright = Target(vmag=1.0, notes="defocus", exposure_s=None)
+        ex = planner.estimate_exposure(bright, self.optics, {})
+        self.assertTrue(ex["note"].startswith("⚠ estimate: even 0.75 s may saturate defocused"), ex["note"])
+        # the user's exposure on a defocused target gets a peak estimate
+        ex = planner.estimate_exposure(Target(vmag=5.57, notes="Defocus +125 steps", exposure_s=0.75),
+                                       self.optics, {})
+        self.assertIsNotNone(ex["peak_adu"])
+        self.assertIn("defocused", ex["note"])
+        self.assertNotIn("not valid", ex["note"])
 
 
 if __name__ == "__main__":
