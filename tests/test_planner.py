@@ -488,18 +488,44 @@ class ReviewFixes(unittest.TestCase):
         self.assertFalse([c for c in b.cautions if "limit" in c], b.cautions)
         self.assertIn("Refocus after this block", b.notes)
 
-    def test_second_pass_shrinks_a_peer(self):
+    def _crowded(self, b_kind):
+        """Two targets that both want the 22:00–01:00 window (Wed 21 Oct); A (alphabetically first) fills it."""
         win = [{"kind": "window", "value": "22:00-01:00"}]
-        mer = self.jd(23, 30)
-        ra = ra_on_meridian(self.site, mer)
+        ra = ra_on_meridian(self.site, self.jd(23, 30))
         a = field_("A big", ra, 45.0, block=180, rules=win)
-        b = field_("B small", ra + 5, 45.0, block=120, rules=win)
-        p = planner.build_night(self.d, self.site, self.optics, [a, b], {})
+        if b_kind == "variable":
+            b = Target(id="B small", name="B small", kind="variable", mode="V", ra=ra + 5, dec=45.0, vmag=11,
+                       block_min=120, min_block_min=45, exposure_s=60, rules=win,
+                       elements={"vtype": "DSCT", "period": 0.08, "epoch": 2460000.5, "any_time": True})
+        else:
+            b = field_("B small", ra + 5, 45.0, block=120, rules=win)
+            if b_kind == "behind":
+                # both behind their goal (nothing done this week, Wednesday): same level, A goes first by name,
+                # so B gets nothing in the first pass and A shrinks for it
+                a.goal_per_week = b.goal_per_week = 1
+            elif b_kind == "on_pace":
+                b.goal_per_week = 1
+        hist = ([{"date": "2026-10-19", "target_id": "B small", "status": "done"}] if b_kind == "on_pace" else [])
+        return planner.build_night(self.d, self.site, self.optics, [a, b], {}, history=hist)
+
+    def test_second_pass_for_campaign_behind_goal(self):
+        p = self._crowded("behind")
         names = {x.name: x for x in p.blocks_obj()}
         self.assertEqual(set(names), {"A big", "B small"}, p.didnt_fit)
         self.assertTrue(any("Shortened to make room for B small" in n for n in names["A big"].notes))
         self.assertGreaterEqual(names["A big"].minutes(), 45 - 1e-6)
         self.assertGreaterEqual(names["B small"].minutes(), 45 - 1e-6)
+
+    def test_no_shrinking_for_others(self):
+        # "Shorten for goals only": an any-time variable, a goal-less campaign and a campaign on pace get no room
+        for kind in ("variable", "plain", "on_pace"):
+            p = self._crowded(kind)
+            self.assertEqual([x.name for x in p.blocks_obj()], ["A big"], kind)
+            self.assertFalse(any("Shortened" in n for n in p.blocks_obj()[0].notes), kind)
+            miss = p.didnt_fit[0]
+            self.assertEqual(miss["name"], "B small")
+            self.assertIn("no free stretch", miss["reason"])
+            self.assertIn("next chance", miss["reason"])
 
     def test_counterweight_up(self):
         # dec 86°: always above 30° here; on a night when it is below the pole, |HA| > 6 h all night

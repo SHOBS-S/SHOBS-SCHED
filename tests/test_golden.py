@@ -245,6 +245,15 @@ class GoldenWeek(unittest.TestCase):
             for a, b in zip(bl, bl[1:]):
                 self.assertLessEqual(a.end, b.start + 1e-9, n.date)
         self.assertGreaterEqual(nights["NGC 7789"], 1)
+        # "Shorten for goals only": blocks are shortened only for a campaign behind its goal, so no variable gets a
+        # squeezed-in fragment
+        kinds = {t.name: t.kind for t in targets}
+        for n in sch.nights_obj():
+            for b in n.blocks_obj():
+                for note in b.notes:
+                    if note.startswith("Shortened to make room for "):
+                        who = note[len("Shortened to make room for "):]
+                        self.assertEqual(kinds[who], "campaign", f"{n.date}: {note}")
         self.assertGreaterEqual(nights["HD 219134"], 5)
 
 

@@ -11,7 +11,9 @@ One night (build_night), in this order:
      (next feasible full event within 60 nights), then the better S/N (depth / noise by V).
   3. Flexible targets (campaigns incl. Discovery fields, any-time variables) by priority (a campaign behind its
      weekly goal moves up one level), each at most once, in free time near its ideal spot (below), never inside
-     its blackouts, inside its own rules (min_alt, min_moon_sep, window) and the site limits.
+     its blackouts, inside its own rules (min_alt, min_moon_sep, window) and the site limits. A campaign behind
+     its weekly goal that finds no room may shrink other flexible blocks toward their minimum ("shorten for goals
+     only"); nothing else does.
   4. Flip rule (GEM): never START a block within an hour after its target's meridian; the start goes to
      `flip_lead_min` before the meridian ("Start before the meridian and let it flip (~HH:MM); drop the pre-flip
      frames"), and a flip costs `flip_settle_min` of usable time. A block ending inside the mount's
@@ -900,10 +902,12 @@ class _Night:
             else:
                 self._accept_flex(p, t, bos, rank)
             self.done_ids.add(t.id)
-        # second pass: a target that got nothing may take time from same- or lower-priority flexible blocks that
-        # are longer than their minimum (they shrink toward min_block_min)
+        # second pass: a campaign behind its weekly goal that got nothing may take time from same- or
+        # lower-priority flexible blocks longer than their minimum (they shrink toward min_block_min); any-time
+        # variables and campaigns on pace never shrink others (they go to Didn't fit)
         for t, m, bos, rank in missed:
-            p = self._squeeze_for(t, m, rank)
+            # "Shorten for goals only" (John, 22 Oct): only a campaign behind its weekly goal may shrink others
+            p = self._squeeze_for(t, m, rank) if self._behind(t) else None
             if p is not None:
                 self._accept_flex(p, t, bos, rank)
                 continue
