@@ -97,7 +97,16 @@ def _read_json(path: str):
     try:
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
-    except (OSError, ValueError):
+    except OSError:
+        return None
+    except ValueError:
+        # unreadable (corrupt) file: keep a copy beside it before defaults replace it on the next save
+        try:
+            import shutil
+            shutil.copy2(path, path + ".bad")
+            log(f"{os.path.basename(path)} could not be read; copy kept as {os.path.basename(path)}.bad")
+        except Exception:
+            pass
         return None
 
 

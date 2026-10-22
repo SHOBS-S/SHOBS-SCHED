@@ -1283,6 +1283,16 @@ class SetupPage:
                 s["set_here"] = [x for x in (s.get("set_here") or []) if x != dotted]
             else:
                 settings.mark_set_here(s, dotted)
+        # a value typed here while SHOBS-P has none (or isn't installed) is the user's own: a SHOBS-P installed
+        # later must not overwrite it (only empty fields get filled from SHOBS-P)
+        shared = {f"{sec}.{fld}" for sec, fld in settings.SHOBS_P_FIELDS.values()} | {"site.mount"}
+        for dotted in shared:
+            if dotted in self.app.p_values:
+                continue
+            sec, _, key = dotted.partition(".")
+            val = new.get(sec, {}).get(key)
+            if val not in (None, "") and not (isinstance(val, str) and not val.strip()):
+                settings.mark_set_here(s, dotted)
         s["site"], s["optics"] = site, op
         s["options"] = opts
         if not settings.save_settings(s):
@@ -1930,6 +1940,7 @@ class EditTargetDialog:
         self.sb.outer.pack(fill=tk.BOTH, expand=True)
         body = self.sb.inner
         self.vars: dict[str, tk.Variable] = {}
+        self.loaded: dict[str, str] = {}       # field text as opened (unchanged text = unchanged value)
         self.no_transit = [r for r in self.t.rules if r.get("kind") == "no_transit"]
         self.widgets: dict = {}
         r = 0
@@ -1939,6 +1950,7 @@ class EditTargetDialog:
             ttk.Label(body, text=label, style="Card.TLabel").grid(row=r, column=0, sticky="w", pady=px(app, 2))
             var = tk.StringVar(value="" if value is None else str(value))
             self.vars[key] = var
+            self.loaded[key] = var.get().strip()
             f = ttk.Frame(body, style="Card.TFrame")
             f.grid(row=r, column=1, columnspan=2, sticky="w", padx=px(app, 6), pady=px(app, 2))
             if values:
@@ -2170,6 +2182,9 @@ class EditTargetDialog:
                 dep = num("depth", "Depth", 0.001, 100)
                 pl["depth"] = dep / 100.0 if dep else None
                 pl["reference"] = v.get("reference", "")
+                for k in ("period", "t0", "t14", "depth"):   # text left as opened keeps the full-precision value
+                    if v.get(k, "").strip() == self.loaded.get(k, "") and k in before:
+                        pl[k] = before[k]
                 changed = any(not _close(before.get(k), pl.get(k)) for k in ("period", "t0", "t14", "depth"))
                 if changed:
                     pl["source"] = "typed"
@@ -2304,7 +2319,8 @@ class SchedulePage:
                                             "time zone); then build.")
         elif self.setup_stale and app.schedule.nights:
             set_msg(self.msg_var, self.msg, self.STALE)
-        elif not self.msg_var.get() or self.msg_var.get() == self.STALE or \
+        elif (app.schedule.nights and app.schedule.nights[0].get("date", "") < app.tonight().isoformat()) \
+                or not self.msg_var.get() or self.msg_var.get() == self.STALE or \
                 self.msg_var.get().startswith("✖ Enter your site"):
             nights = app.schedule.nights
             if nights and nights[0].get("date", "") < app.tonight().isoformat():
@@ -2410,8 +2426,8 @@ class SchedulePage:
         n = int(n or self.n_var.get() or 1)
         site, optics, opts = app.site, app.optics, dict(app.options)
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
-        prior = Schedule.from_dict(app.schedule.to_dict())
         pl = mod("planner")
+        prior = Schedule.from_dict(app.schedule.to_dict())
         if hasattr(pl, "roll_forward") and any(nd.get("date", "") < start.isoformat() for nd in prior.nights):
             prior = pl.roll_forward(prior, start)      # nights before the new start go to the history, marks kept
 
@@ -2834,10 +2850,14 @@ class NightTab:
         lines = [str(x) for x in (night.notes or []) if str(x).strip()]
         if (not night.dusk or not night.dawn) and not any("dark" in x.lower() for x in lines):
             darkest = (info or {}).get("darkest_sun_alt")
+            nautical_helps = site.sun_alt <= -17.9 and darkest is not None and darkest < -12
             lines.append("✖ No dark time tonight: the Sun stays above " + f"{site.sun_alt:.0f}°"
                          + (f" (lowest {darkest:.1f}°)" if darkest is not None else "")
-                         + ". Choose nautical darkness on the Setup page to plan in what darkness there is.")
+                         + (". Choose nautical darkness on the Setup page to plan in what darkness there is."
+                            if nautical_helps else "."))
+        darkest = (info or {}).get("darkest_sun_alt")
         if (not night.dusk or not night.dawn) and site.sun_alt <= -17.9 and \
+                darkest is not None and darkest < -12 and \
                 not any("nautical" in x.lower() for x in lines):
             lines.append("⚠ Choose nautical darkness on the Setup page to plan in what darkness there is.")
         for line in lines:
@@ -3724,7 +3744,12 @@ class ExportPage:
             return None
         if open_browser and not self.app.testing:
             try:
-                opened = webbrowser.open("file:///" + path.replace(os.sep, "/").lstrip("/"))
+                if sys.platform == "win32":
+                    os.startfile(path)          # handles spaces and non-ASCII in the user's folder name
+                    opened = True
+                else:
+                    import pathlib
+                    opened = webbrowser.open(pathlib.Path(path).resolve().as_uri())
             except Exception as exc:
                 opened, why = False, str(exc)
             else:

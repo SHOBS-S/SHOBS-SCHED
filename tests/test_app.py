@@ -303,6 +303,58 @@ class TestAppWithFakes(Base):
         self.assertTrue(sch.ind.var.get().startswith("✖ Enter your site"))
         self.assertIn("Tick one or more", app.pages[3].preview.get("1.0", "end"))
 
+    # ---- round-2 review regressions ----
+    def test_edit_unchanged_save_keeps_ephemeris(self):
+        self.golden_home()
+        app = self.open()
+        hp = next(t for t in app.targets if t.name == "HAT-P-23 b")
+        saved = []
+        dlg = self.sa.EditTargetDialog(app, hp, on_save=saved.append, modal=False)
+        self.assertTrue(dlg.save(), dlg.msg_var.get())
+        pl = saved[0].planet
+        self.assertEqual(pl["period"], 1.212886397)
+        self.assertEqual(pl["period_err"], 7.4e-08)
+        self.assertEqual(pl["t14"], 0.0908)
+        self.assertEqual(pl["source"], "NEA (most precise)", "an unchanged Save is not 'typed'")
+        dlg = self.sa.EditTargetDialog(app, hp, on_save=saved.append, modal=False)
+        dlg.vars["period"].set("1.2128865")
+        self.assertTrue(dlg.save(), dlg.msg_var.get())
+        pl = saved[1].planet
+        self.assertEqual(pl["source"], "typed")
+        self.assertIsNone(pl["period_err"])
+        self.assertEqual(pl["t0_err"], 7.2e-05, "Tc untouched keeps its error")
+
+    def test_standalone_values_survive_shobs_p_installed_later(self):
+        app = self.open()
+        setup = app.pages[0]
+        setup.vars["site.lat"].set("35.303")
+        setup.vars["site.lon"].set("-81.9407")
+        setup.vars["site.tz"].set("America/New_York")
+        setup.vars["optics.aperture_mm"].set("356")
+        self.assertTrue(setup.save(), setup.msg_var.get())
+        app.destroy()
+        self.app = None
+        p = os.path.join(self.tmp, "shobs_p_later.json")
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump({"site_lat": 0.0, "site_lon": 0.0, "aperture_mm": 200, "focal_mm": 2900}, fh)
+        os.environ["SHOBS_P_SETTINGS"] = p
+        app = self.open()
+        self.assertEqual(app.site.lat, 35.303)
+        self.assertEqual(app.site.lon, -81.9407)
+        self.assertEqual(app.optics.aperture_mm, 356)
+        self.assertEqual(app.optics.focal_mm, 2900, "an empty field is filled from SHOBS-P")
+
+    def test_corrupt_settings_kept_as_bad(self):
+        path = settings.settings_path() if hasattr(settings, "settings_path") else None
+        if path is None:
+            self.skipTest("no settings_path()")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("{ not json")
+        settings.load_settings()
+        self.assertTrue(os.path.exists(path + ".bad"))
+
+
     def test_shobs_p_provenance_and_set_here(self):
         p = os.path.join(self.tmp, "shobs_p.json")
         with open(p, "w", encoding="utf-8") as fh:
@@ -1038,6 +1090,39 @@ class TestAppWithRealModules(Base):
         self.assertTrue(app.pages[3].msg_var.get().startswith("✔ Copied"), app.pages[3].msg_var.get())
         self.assertTrue(app.clipboard_get().startswith("Pane, RA, DEC"))
         self.assertIn("SHOBS-SCHED", app.pages[3].preview.get("1.0", "end"))
+
+    def test_clouded_mark_not_copied_to_replanned_block(self):
+        self.golden_home()
+        app = self.open()
+        page = app.pages[2]
+        page.build(date(2026, 10, 22), 1)
+        self.pump()
+        night = app.schedule.nights[0]
+        b = night["blocks"][0]
+        b["status"] = "clouded"
+        tid, start = b["target_id"], b["start"]
+        page.build(date(2026, 10, 22), 1)
+        self.pump()
+        same = [x for x in app.schedule.nights[0]["blocks"] if x["target_id"] == tid]
+        self.assertTrue(any(abs(x["start"] - start) < 1e-6 and x["status"] == "clouded" for x in same))
+        for x in same:
+            if abs(x["start"] - start) >= 1e-6:
+                self.assertEqual(x.get("status", "planned"), "planned", "the re-planned block is plannable")
+
+    def test_build_from_later_night_keeps_past_marks(self):
+        self.golden_home()
+        app = self.open()
+        page = app.pages[2]
+        page.build(date(2026, 10, 21), 2)
+        self.pump()
+        b = app.schedule.nights[0]["blocks"][0]
+        b["status"] = "done"
+        page.build(date(2026, 10, 22), 2)
+        self.pump()
+        self.assertEqual(app.schedule.nights[0]["date"], "2026-10-22")
+        self.assertTrue(any(h.get("date") == "2026-10-21" and h.get("target_id") == b["target_id"]
+                            and h.get("status") == "done" for h in app.schedule.history),
+                        "the Done mark of the dropped night went into the history")
 
 
 if __name__ == "__main__":

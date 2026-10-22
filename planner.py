@@ -450,8 +450,8 @@ class _Night:
                    f"{deg(site.sun_alt)})")
             if site.sun_alt < sky.NAUTICAL and lowest is not None and lowest < sky.NAUTICAL:
                 why += "; nautical darkness (Sun below −12°) is possible if you allow it in Setup"
-            elif lowest is not None and lowest < sky.CIVIL:
-                why += f"; a brighter darkness setting in Setup (above {deg(lowest)}) would give some time"
+            elif lowest is not None and lowest >= sky.NAUTICAL:
+                why += "; the sky never gets darker than nautical twilight tonight"
             plan.notes.append("✖ " + why[0].upper() + why[1:])
             for t in enabled:
                 self.didnt_fit(t, "no dark time tonight")
@@ -1335,3 +1335,8 @@ def rereview(schedule: Schedule, today: date, site, optics, targets, options,
     prior = roll_forward(schedule, today)
     return build_schedule(today, length, site, optics, targets, options, prior=prior,
                           weather_by_date=weather_by_date)
+
+
+def fold_past(schedule: Schedule, before: date) -> Schedule:
+    """Same as roll_forward (name kept from the parallel round-2 branch)."""
+    return roll_forward(schedule, before)

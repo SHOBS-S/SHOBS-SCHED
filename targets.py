@@ -672,9 +672,54 @@ def vsx_name_variants(name: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+# VizieR's plain (ASU) interface runs on other servers than its TAP service: when TAP is down (HTTP 503 "No server
+# is available", seen 22 Oct 2026 while ASU answered) the same B/vsx rows come from ASU at CDS, then the CfA mirror.
+VIZIER_ASU = ("https://vizier.cds.unistra.fr/viz-bin/asu-tsv?", "https://vizier.cfa.harvard.edu/viz-bin/asu-tsv?")
+
+
+def parse_asu_tsv(text: str) -> list[dict]:
+    """VizieR ASU TSV → rows keyed by column name (comment lines, the units line and the dashes line skipped)."""
+    lines = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
+    if not lines or "\t" not in lines[0]:
+        raise FetchError("an unexpected reply came back instead of data")
+    head = [h.strip() for h in lines[0].split("\t")]
+    if "Name" not in head:
+        raise FetchError("an unexpected reply came back instead of data")
+    k = head.index("Name")
+    rows = []
+    for ln in lines[1:]:
+        cells = ln.split("\t")
+        name = cells[k].strip() if k < len(cells) else ""
+        if not name or set(name) <= {"-"}:
+            continue                          # the units line and the dashes line
+        rows.append({h: (cells[i] if i < len(cells) else "") for i, h in enumerate(head)})
+    return rows
+
+
+def vizier_asu(params: dict) -> list[dict]:
+    """B/vsx/vsx rows from VizieR ASU (CDS, then the CfA mirror). FetchError only when both fail."""
+    q = {"-source": "B/vsx/vsx", "-out.all": "", "-oc.form": "d", "-out.max": "20"}
+    q.update(params)
+    last = None
+    for base in VIZIER_ASU:
+        try:
+            return parse_asu_tsv(_get_text(base + urllib.parse.urlencode(q)))
+        except FetchError as exc:
+            last = exc
+    raise last if last else FetchError("no answer")
+
+
+def _vizier_rows_by_name(v: str) -> list[dict]:
+    try:
+        return vizier_query(f"SELECT TOP 5 * FROM \"B/vsx/vsx\" WHERE Name = '{_adql_str(v)}'")
+    except FetchError as exc:
+        settings.log(f"VizieR TAP did not answer ({exc.reason}); trying VizieR ASU")
+        return vizier_asu({"Name": v})
+
+
 def _vizier_by_name(name: str) -> dict | None:
     for v in vsx_name_variants(name):
-        rows = vizier_query(f"SELECT TOP 5 * FROM \"B/vsx/vsx\" WHERE Name = '{_adql_str(v)}'")
+        rows = _vizier_rows_by_name(v)
         for r in rows:
             if str(r.get("Name", "")).strip().lower() == v.lower():
                 return parse_vizier_vsx_row(r)
@@ -682,8 +727,12 @@ def _vizier_by_name(name: str) -> dict | None:
 
 
 def _vizier_cone(ra: float, dec: float, radius_deg: float = 1.0 / 60.0) -> dict | None:
-    rows = vizier_query("SELECT TOP 20 * FROM \"B/vsx/vsx\" WHERE 1=CONTAINS(POINT('ICRS',RAJ2000,DEJ2000),"
-                        f"CIRCLE('ICRS',{ra:.6f},{dec:.6f},{radius_deg:.6f}))")
+    try:
+        rows = vizier_query("SELECT TOP 20 * FROM \"B/vsx/vsx\" WHERE 1=CONTAINS(POINT('ICRS',RAJ2000,DEJ2000),"
+                            f"CIRCLE('ICRS',{ra:.6f},{dec:.6f},{radius_deg:.6f}))")
+    except FetchError as exc:
+        settings.log(f"VizieR TAP did not answer ({exc.reason}); trying VizieR ASU")
+        rows = vizier_asu({"-c": f"{ra:.6f} {dec:+.6f}", "-c.rs": f"{radius_deg * 3600.0:.1f}"})
     best, best_sep = None, None
     for r in rows:
         p = parse_vizier_vsx_row(r)
@@ -718,7 +767,10 @@ def _fetch_variable(name: str):
     except FetchError as exc:
         vsx_reason = exc
     settings.log(f"VSX did not answer for {clean} ({vsx_reason.reason}); trying VizieR's copy")
-    got = _vizier_by_name(clean)             # FetchError here → both down → cache / LookupError_
+    try:
+        got = _vizier_by_name(clean)         # FetchError here → both down → cache / LookupError_
+    except FetchError as exc:                # name both causes, so the message doesn't pin VizieR's 503 on VSX
+        raise FetchError(f"{vsx_reason.reason}; VizieR's copy: {exc.reason}", exc.status) from None
     if got:
         return got
     not_found = NotFound(f"VSX did not answer ({vsx_reason.reason}) and VizieR's copy of VSX has no star called "
