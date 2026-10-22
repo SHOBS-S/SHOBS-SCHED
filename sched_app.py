@@ -24,6 +24,7 @@ import io
 import math
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -68,6 +69,46 @@ def kind_mode_of(label: str):
         if lab == label:
             return kind, mode
     return _KIND_LEGACY.get(label)
+
+
+def planet_pick(name: str) -> str:
+    """The "which mode?" choice for one of a star's transiting planets."""
+    return f"{name}: transiting planet, as a Transits target (T)"
+
+
+def and_list(names) -> str:
+    names = [str(n) for n in names]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1] if names else ""
+
+
+def no_transit_rule(planet: dict, pad: float = 0.0) -> dict:
+    return {"kind": "no_transit", "planet": dict(planet), "pad_min": float(pad),
+            "note": "No data while a planet transits", "value": None}
+
+
+def planet_key(name: str) -> str:
+    """"HD219134 b" and "hd 219134-b" compare equal."""
+    return re.sub(r"[\s\-_]+", "", str(name or "")).lower()
+
+
+def bare_letter(text: str) -> str:
+    """A bare planet letter ("b", " C ") → "b"; anything else → ""."""
+    s = str(text or "").strip()
+    return s.lower() if re.fullmatch(r"[b-zB-Z]", s) else ""
+
+
+def lookup_star_planets(tg, name: str, ra=None, dec=None, vmag=None):
+    """(host_planets(...) result, "") or (None, the reason in plain words); (None, "") when this copy of targets.py
+    has no planet-host lookup. Never raises (it runs in a background job whose answer is shown, not an error)."""
+    fn = getattr(tg, "host_planets", None) if tg is not None else None
+    if fn is None:
+        return None, ""
+    try:
+        return fn(name, ra, dec, vmag), ""
+    except Exception as exc:              # the Archive did not answer and nothing is cached, or no name/position
+        return None, str(exc) or exc.__class__.__name__
+
+
 STATUS_CHOICES = tuple(STATUS_LABELS.values())          # Planned / Done / Partial / Clouded out
 STATUS_KEY = {v: k for k, v in STATUS_LABELS.items()}
 
@@ -1740,20 +1781,33 @@ class TargetsPage:
         needs = getattr(tg, "NeedsMode", None)
         if needs is not None and isinstance(exc, needs):
             label = getattr(exc, "main_id", "") or name
-            self.add_star(name, {"ra": getattr(exc, "ra", None), "dec": getattr(exc, "dec", None),
-                                 "vmag": getattr(exc, "vmag", None), "main_id": label},
-                          f"{label} was found, but it is not a known transiting planet or VSX variable. "
-                          "What is it for you?", [c[0] for c in KIND_CHOICES])
+            pos = {"ra": getattr(exc, "ra", None), "dec": getattr(exc, "dec", None),
+                   "vmag": getattr(exc, "vmag", None), "main_id": label}
+            if "exoplanet" in str(getattr(exc, "source", "")).lower():
+                # a planet that does not transit (or has no transit ephemeris): never an empty transit target —
+                # offer its star instead (same position), with the star's transiting planets if it has any
+                host = re.sub(r"\s+[b-z]$", "", label) or label
+                why = str(getattr(exc, "otype", "") or "a planet that does not transit")
+                self.star_lookup(host, dict(pos, main_id=host),
+                                 f"{label} is {why}, so it cannot be a Transits target.")
+                return
+            self.star_lookup(name, pos, f"{label} was found, but it is not a known transiting planet or VSX variable.")
             return
         choices = getattr(exc, "choices", None) or getattr(exc, "planets", None) or getattr(exc, "names", None)
         if choices:
             names = [c if isinstance(c, str) else (c.get("name") if isinstance(c, dict) else getattr(c, "name", str(c)))
                      for c in choices]
             system = getattr(exc, "system", "") or name
-            pick = ask_choice(self.app, "Which planet, or the star?",
-                              f"{system} has more than one planet. Add one of them as a transit target, or the star "
-                              "itself (for example a campaign that keeps clear of the planets' transits)?",
-                              names + [STAR_ITSELF], "Add")
+            transiting = set(getattr(exc, "transiting", None) or ())
+            others = []
+            if transiting:                      # only transiting planets can be Transits targets
+                others = [n for n in names if n not in transiting]
+                names = [n for n in names if n in transiting]
+            text = (f"{system} has more than one planet. Add one of them as a transit target, or the star itself "
+                    "(for example a campaign that keeps clear of the planets' transits)?")
+            if others:
+                text += f" ({', '.join(others)} {'does' if len(others) == 1 else 'do'} not transit.)"
+            pick = ask_choice(self.app, "Which planet, or the star?", text, names + [STAR_ITSELF], "Add")
             if pick == STAR_ITSELF:
                 self.add_star_lookup(system)
             elif pick:
@@ -1764,22 +1818,83 @@ class TargetsPage:
         self.add_ind.finish(f"✖ {exc}" if str(exc) else f"✖ Could not add {name} ({exc.__class__.__name__}).")
 
     def add_star_lookup(self, system: str):
-        """The host star of a planet system as its own target: its position from SIMBAD (cached), then ask what it
-        is (a campaign, a variable or a Discovery field)."""
+        """The host star of a planet system as its own target: its position from SIMBAD (cached) and its planets
+        from the Archive, then ask what it is (a campaign, a variable or a Discovery field)."""
         tg = mod("targets")
         if tg is None or not hasattr(tg, "resolve_simbad"):
             self.add_ind.finish(missing("targets"))
             return
+        self.star_lookup(system, None, "", typed_transit=False)
+
+    def star_lookup(self, name: str, pos: dict | None, why: str, typed_transit: bool = True):
+        """In the background: the star's position from SIMBAD when pos is None, and its known planets from the NASA
+        Exoplanet Archive (by name, else by position); then the "which mode?" question."""
+        tg = mod("targets")
+        if tg is None:
+            self.add_ind.finish(missing("targets"))
+            return
+
+        def work():
+            p = pos if pos is not None else tg.resolve_simbad(name)
+            if not isinstance(p, dict):
+                return None
+            info, problem = lookup_star_planets(tg, p.get("main_id") or name, p.get("ra"), p.get("dec"),
+                                                p.get("vmag"))
+            return p, info, problem
 
         def done(res, exc):
-            if exc is not None or not isinstance(res, dict) or res.get("ra") is None:
-                self.add_ind.finish(f"✖ Could not find {system}'s position: {exc or 'SIMBAD gave none'}.")
+            if exc is not None or not res or res[0].get("ra") is None:
+                self.add_ind.finish(f"✖ Could not find {name}'s position: {exc or 'SIMBAD gave none'}.")
                 return
-            self.add_star(system, res, f"What is {system} for you?", [c[0] for c in KIND_CHOICES[:3]])
-        self.app.jobs.run(lambda: tg.resolve_simbad(system), done, self.add_ind, f"Looking up the star {system}")
+            p, info, problem = res
+            self.ask_star_mode(name, p, why, info, problem, typed_transit)
+        self.app.jobs.run(work, done, self.add_ind, f"Looking up the star {name}")
 
-    def add_star(self, name: str, pos: dict, question: str, choices: list):
-        pick = ask_choice(self.app, "What kind of target?", question, choices, "Add")
+    def ask_star_mode(self, name: str, pos: dict, why: str, info: dict | None, problem: str = "",
+                      typed_transit: bool = True):
+        """Which mode? A star with transiting planets is offered those planets (as Transits targets) and itself as a
+        campaign / variable / Discovery field; a star with known planets is never offered as an empty transit target
+        (it has no ephemeris of its own)."""
+        label = pos.get("main_id") or name
+        planets = list((info or {}).get("planets") or [])
+        usable = [p for p in planets if p.get("usable")]
+        star_choices = [c[0] for c in KIND_CHOICES[:3]]
+        lead = f"{why} " if why else ""
+        if usable and not typed_transit:          # the star itself was chosen already (not one of its planets)
+            names = [p["name"] for p in usable]
+            question = (f"{lead}What is {label} for you? (No data while {and_list(names)} "
+                        f"transit{'s' if len(names) == 1 else ''}.)")
+            choices = star_choices
+        elif usable:
+            names = [p["name"] for p in usable]
+            question = (f"{lead}{label} has known planets: {and_list(names)} transit{'s' if len(names) == 1 else ''}. "
+                        "Add a transiting planet as a Transits target, or the star itself as a campaign, variable or "
+                        "Discovery field (with no data while its planets transit)?")
+            choices = [planet_pick(n) for n in names] + star_choices
+        elif planets:
+            none = ("none of its transiting planets has a transit ephemeris at the Archive"
+                    if any(p.get("transits") for p in planets) else "none of them transits")
+            question = (f"{lead}{label} has known planets, but {none}, so it cannot be a Transits target. "
+                        f"What is {label} for you?")
+            choices = star_choices
+        else:
+            question = f"{lead}What is {label} for you?"
+            if problem:
+                question += f" (Its planets could not be checked: {problem.rstrip('.')}.)"
+            choices = [c[0] for c in KIND_CHOICES] if typed_transit else star_choices
+        pick = ask_choice(self.app, "Which mode?", question, choices, "Add")
+        for p in usable:
+            if pick == planet_pick(p["name"]):
+                self.add(p["name"])
+                return
+        self.add_star(name, pos, question, choices, pick=pick or "", planets=usable)
+
+    def add_star(self, name: str, pos: dict, question: str, choices: list, pick: str | None = None,
+                 planets: list | None = None):
+        """The star itself as a target. planets = its transiting planets (host_planets entries): a campaign or
+        variable gets "no data while … transits" for each of them straight away."""
+        if pick is None:
+            pick = ask_choice(self.app, "What kind of target?", question, choices, "Add")
         km = kind_mode_of(pick) if pick else None
         if not km:
             self.add_ind.finish("⚠ Not added.")
@@ -1789,8 +1904,21 @@ class TargetsPage:
                    source="SIMBAD")
         if kind == "variable":
             t.elements = {"vtype": "", "any_time": True}
+        windows = []
+        if kind != "transit":
+            for p in planets or []:
+                if p.get("usable") and p.get("planet"):
+                    t.rules.append(no_transit_rule(p["planet"]))
+                    windows.append(p["name"])
         self.accept(t)
-        if kind == "campaign":
+        if not any(x is t for x in self.app.targets):
+            return                                   # not added (already in the list)
+        what = {"campaign": "a Discovery field" if mode == "D" else "a campaign", "variable": "a variable star"}
+        if windows:
+            set_msg(self.msg_var, self.msg,
+                    f"✔ {name} is {what.get(kind, 'added')}, with no data while {and_list(windows)} "
+                    f"transit{'s' if len(windows) == 1 else ''} (Edit… to change).")
+        elif kind == "campaign":
             set_msg(self.msg_var, self.msg, f"✔ {name} is a campaign: Edit… sets its goal (nights a week), block "
                                             "length and rules, e.g. no data while its planets transit.")
 
@@ -1949,7 +2077,7 @@ class EditTargetDialog:
         self.t = Target.from_dict(target.to_dict())
         self.on_save = on_save
         self.win, outer = _dialog(app, f"Edit {target.name}")
-        foot = ttk.Frame(outer, style="Card.TFrame")
+        self.foot = foot = ttk.Frame(outer, style="Card.TFrame")
         foot.pack(side=tk.BOTTOM, fill=tk.X)
         self.sb = ScrollBody(outer)
         self.sb.outer.pack(fill=tk.BOTH, expand=True)
@@ -1958,11 +2086,16 @@ class EditTargetDialog:
         self.loaded: dict[str, str] = {}       # field text as opened (unchanged text = unchanged value)
         self.no_transit = [r for r in self.t.rules if r.get("kind") == "no_transit"]
         self.widgets: dict = {}
+        self.host_info: dict | None = None          # the star's planets at the Archive (looked up on opening)
+        self.pl_vars: dict[str, tk.BooleanVar] = {}
+        self._syncing = False
+        self._looked = False
         r = 0
 
         def row(label, key, value, unit="", width=12, values=None):
             nonlocal r
-            ttk.Label(body, text=label, style="Card.TLabel").grid(row=r, column=0, sticky="w", pady=px(app, 2))
+            lab = ttk.Label(body, text=label, style="Card.TLabel")
+            lab.grid(row=r, column=0, sticky="w", pady=px(app, 2))
             var = tk.StringVar(value="" if value is None else str(value))
             self.vars[key] = var
             self.loaded[key] = var.get().strip()
@@ -1977,12 +2110,14 @@ class EditTargetDialog:
                 ttk.Label(f, text=unit, style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 6), 0))
             self.widgets[key] = w
             r += 1
+            return [lab, f]
 
         def head(text):
             nonlocal r
-            ttk.Label(body, text=text, style="Section.TLabel").grid(row=r, column=0, columnspan=3, sticky="w",
-                                                                    pady=(px(app, 8), px(app, 2)))
+            lab = ttk.Label(body, text=text, style="Section.TLabel")
+            lab.grid(row=r, column=0, columnspan=3, sticky="w", pady=(px(app, 8), px(app, 2)))
             r += 1
+            return [lab]
 
         t = self.t
         head("Target")
@@ -2009,15 +2144,29 @@ class EditTargetDialog:
             "° away (empty = no limit)", 8)
         row("Only between", "window", (rules.get("window") or {}).get("value") or "",
             "HH:MM-HH:MM site clock (empty = any time)", 12)
-        if t.kind == "transit":
-            pl = t.planet or {}
-            head("Ephemeris")
-            row("Period", "period", fmt_num(pl.get("period"), 8), "days", 14)
-            row("Tc (T0)", "t0", fmt_num(pl.get("t0"), 6), "BJD_TDB", 14)
-            row("Duration", "t14", fmt_num((pl.get("t14") or 0) * 24, 3) if pl.get("t14") else "", "hours", 8)
-            row("Depth", "depth", fmt_num((pl.get("depth") or 0) * 100, 3) if pl.get("depth") else "", "%", 8)
-            row("Reference", "reference", pl.get("reference") or "", "", 30)
+        # the ephemeris (always built; shown while the group is Transit, so Edit can move a star into Transits)
+        pl = (t.planet or {}) if t.kind == "transit" else {}
+        self.eph_widgets = head("Ephemeris")
+        self.eph_widgets += row("Period", "period", fmt_num(pl.get("period"), 8), "days", 14)
+        self.eph_widgets += row("Tc (T0)", "t0", fmt_num(pl.get("t0"), 6), "BJD_TDB", 14)
+        self.eph_widgets += row("Duration", "t14", fmt_num((pl.get("t14") or 0) * 24, 3) if pl.get("t14") else "",
+                                "hours", 8)
+        self.eph_widgets += row("Depth", "depth", fmt_num((pl.get("depth") or 0) * 100, 3) if pl.get("depth") else "",
+                                "%", 8)
+        self.eph_widgets += row("Reference", "reference", pl.get("reference") or "", "", 30)
+        if t.kind != "transit":
+            for w in self.eph_widgets:
+                w.grid_remove()
         head("No data while a planet transits")
+        # the star's planets at the NASA Exoplanet Archive (looked up when the dialog opens): tick = no data then
+        self.pl_box = ttk.Frame(body, style="Card.TFrame")
+        self.pl_box.grid(row=r, column=0, columnspan=3, sticky="w")
+        self.pl_ind = JobIndicator(self.pl_box)
+        self.pl_ind.label.configure(wraplength=px(app, 440), justify=tk.LEFT)
+        self.pl_ind.pack(anchor="w")
+        self.pl_checks = ttk.Frame(self.pl_box, style="Card.TFrame")
+        self.pl_checks.pack(anchor="w", padx=(px(app, 12), 0))
+        r += 1
         self.nt_list = tk.Listbox(body, height=3, width=34, activestyle="none", relief="solid", borderwidth=1,
                                   highlightthickness=0, font=style.font(10))
         self.nt_list.grid(row=r, column=0, columnspan=2, sticky="w", pady=px(app, 2))
@@ -2027,7 +2176,7 @@ class EditTargetDialog:
         r += 1
         lf = ttk.Frame(body, style="Card.TFrame")
         lf.grid(row=r, column=0, columnspan=3, sticky="w", pady=px(app, 2))
-        ttk.Label(lf, text="Planet", style="Card.TLabel").pack(side=tk.LEFT)
+        ttk.Label(lf, text="Planet (or just b, c …)", style="Card.TLabel").pack(side=tk.LEFT)
         self.nt_name = tk.StringVar()
         self.nt_entry = ttk.Entry(lf, textvariable=self.nt_name, width=16)
         self.nt_entry.pack(side=tk.LEFT, padx=px(app, 4))
@@ -2059,14 +2208,39 @@ class EditTargetDialog:
         style.green_button(btns, "Save", self.save).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
         self._fill_nt()
         _keys(self.win, self._return)
-        # the scrolling body: as tall as its contents, at most ~70 % of the screen (buttons always on screen)
-        self.win.update_idletasks()
-        sh = app.winfo_screenheight()
-        self.sb.canvas.configure(width=body.winfo_reqwidth(),
-                                 height=min(body.winfo_reqheight(), int(sh * 0.70) - foot.winfo_reqheight()))
+        self.vars["mode"].trace_add("write", self._mode_changed)
+        self.vars["kind"].trace_add("write", self._kind_changed)
+        self._fit()
+        if t.kind != "transit":
+            self.lookup_planets()
         first = self.widgets.get("exposure_s")
         if modal and not app.testing:
             _show_modal(app, self.win, first)
+
+    # ---- size ----
+    def _fit(self):
+        """Size the dialog to its contents, measured after layout (so it is right at 125–150 % Windows scaling
+        too): the scrolling body as wide as its widest row plus room for the scrollbar, as tall as its rows up to
+        ~70 % of the screen (the buttons always on screen); never below that width, free to be made larger. Called
+        again when contents change (planets listed, ephemeris shown); it only ever grows a window on screen."""
+        try:
+            win, sb, body = self.win, self.sb, self.sb.inner
+            win.update_idletasks()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            bw, bh = body.winfo_reqwidth(), body.winfo_reqheight()
+            ch = min(bh, max(px(self.app, 160), int(sh * 0.70) - self.foot.winfo_reqheight()))
+            bar = sb.vbar.winfo_reqwidth() if bh > ch else 0
+            sb.canvas.configure(width=bw + bar, height=ch)
+            win.update_idletasks()
+            pad = 2 * px(self.app, 16)
+            w = min(max(win.winfo_reqwidth(), bw + bar * 2 + pad), int(sw * 0.95))
+            h = min(max(win.winfo_reqheight(), ch + self.foot.winfo_reqheight() + pad), int(sh * 0.90))
+            win.minsize(w, min(h, px(self.app, 320)))
+            if win.winfo_ismapped():
+                w, h = max(w, win.winfo_width()), max(h, win.winfo_height())
+            win.geometry(f"{w}x{h}")
+        except tk.TclError:
+            pass
 
     def _return(self):
         """Return saves, except in the notes box (a new line there) and the planet box (looks the planet up)."""
@@ -2090,16 +2264,153 @@ class EditTargetDialog:
         for i in reversed(sel):
             del self.no_transit[i]
         self._fill_nt()
+        self._sync_ticks()
+
+    def _nt_names(self) -> set:
+        return {planet_key((r.get("planet") or {}).get("name")) for r in self.no_transit}
+
+    def _sync_ticks(self):
+        have = self._nt_names()
+        for name, var in self.pl_vars.items():
+            var.set(planet_key(name) in have)
+
+    def _alive(self) -> bool:
+        try:
+            return bool(self.win.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def star_name(self) -> str:
+        """The star this target is (or orbits): the Archive's host name once looked up, else the target's name
+        without a planet letter."""
+        host = (self.host_info or {}).get("host")
+        if host:
+            return host
+        name = (self.vars["name"].get() if "name" in self.vars else self.t.name).strip() or self.t.name
+        return re.sub(r"\s+[b-z]$", "", name) if self.t.kind == "transit" else name
+
+    # ---- the star's planets at the Archive ----
+    def lookup_planets(self, refresh: bool = False):
+        """In the background (the dialog stays usable): the star's known planets, by host name and by position."""
+        tg = mod("targets")
+        if tg is None or not hasattr(tg, "host_planets"):
+            return
+        t, name = self.t, self.star_name()
+        self._looked = True
+
+        def work():
+            if refresh:
+                try:
+                    return tg.host_planets(name, t.ra, t.dec, t.vmag, refresh=True), ""
+                except Exception as exc:
+                    return None, str(exc) or exc.__class__.__name__
+            return lookup_star_planets(tg, name, t.ra, t.dec, t.vmag)
+
+        def done(res, exc):
+            if not self._alive():
+                return
+            info, problem = res if isinstance(res, tuple) else (None, str(exc or ""))
+            self.show_planets(info, problem)
+        self.app.jobs.run(work, done, self.pl_ind, f"Looking up {name}'s planets at the NASA Exoplanet Archive")
+
+    def show_planets(self, info: dict | None, problem: str = ""):
+        """List the looked-up planets: transiting ones as ticks (ticked = no data while it transits; pre-ticked when
+        this target has no window for any of them yet), the others greyed out with the reason."""
+        for w in self.pl_checks.winfo_children():
+            w.destroy()
+        self.pl_vars = {}
+        if info is None:
+            self.host_info = None
+            why = (problem or "no answer").strip().rstrip(".")
+            self.pl_ind.finish(f"✖ Couldn't reach the NASA Exoplanet Archive to list this star's planets ({why}). "
+                               "Type a planet below instead.", linger_ms=0)
+            self._fit()
+            return
+        self.host_info = info
+        planets = list(info.get("planets") or [])
+        if not planets:
+            self.pl_ind.finish("✔ No known planets at the NASA Exoplanet Archive.", linger_ms=0)
+            self._fit()
+            return
+        have = self._nt_names()
+        fresh = not any(planet_key(p["name"]) in have for p in planets)
+        added = []
+        for p in planets:
+            on = bool(p.get("usable")) and (fresh or planet_key(p["name"]) in have)
+            var = tk.BooleanVar(value=on)
+            if p.get("usable"):
+                text = f"{p['name']}  transits"
+            else:
+                text = f"{p['name']}  ({p.get('why') or 'no transit'}: no window needed)"
+            cb = ttk.Checkbutton(self.pl_checks, text=text, variable=var, style="Card.TCheckbutton",
+                                 command=lambda p=p, v=var: self._planet_ticked(p, v))
+            if not p.get("usable"):
+                cb.state(["disabled"])
+            cb.pack(anchor="w")
+            self.pl_vars[p["name"]] = var
+            if on and planet_key(p["name"]) not in have:
+                self.add_no_transit(p["planet"], self._pad())
+                added.append(p["name"])
+        n = len(planets)
+        by = f" (found by position as {info.get('host')})" if info.get("matched") == "position" else ""
+        text = f"{n} known planet{'s' if n != 1 else ''} at the NASA Exoplanet Archive{by}; ticked = no data while it transits."
+        if added:
+            text += f" Ticked {and_list(added)}: Save keeps {'it' if len(added) == 1 else 'them'}."
+        note = str(info.get("note") or "").strip().rstrip(".")
+        self.pl_ind.finish(f"⚠ {text} {note[:1].upper() + note[1:]}." if note else "✔ " + text, linger_ms=0)
+        self._fit()
+
+    def _pad(self) -> float:
+        try:
+            return max(0.0, float(self.nt_pad.get() or 0))
+        except ValueError:
+            return 0.0
+
+    def _planet_ticked(self, p: dict, var):
+        key = planet_key(p["name"])
+        if var.get():
+            if key not in self._nt_names() and p.get("planet"):
+                self.add_no_transit(p["planet"], self._pad())
+        else:
+            self.no_transit = [r for r in self.no_transit if planet_key((r.get("planet") or {}).get("name")) != key]
+            self._fill_nt()
+
+    def _looked_up(self, name: str) -> dict | None:
+        """The looked-up planet called name (any spacing), or None."""
+        key = planet_key(name)
+        for p in (self.host_info or {}).get("planets") or []:
+            if planet_key(p["name"]) == key:
+                return p
+        return None
 
     def _nt_add(self):
         name = self.nt_name.get().strip()
         if not name:
-            self.nt_ind.finish("✖ Type the planet's name (e.g. HD 219134 c).")
+            self.nt_ind.finish("✖ Type the planet's name (e.g. HD 219134 c), or just its letter (c).")
             return
         try:
             pad = float(self.nt_pad.get() or 0)
         except ValueError:
             self.nt_ind.finish("✖ The margin must be a number of minutes.")
+            return
+        letter = bare_letter(name)
+        if letter:                                  # "b" = this star's planet b
+            star = self.star_name()
+            hits = [p for p in (self.host_info or {}).get("planets") or []
+                    if re.search(rf"[\s\-]{letter}$", p["name"])]
+            name = hits[0]["name"] if hits else f"{star} {letter}"
+        if planet_key(name) in self._nt_names():
+            self.nt_ind.finish(f"⚠ {name} is already in the list.")
+            return
+        p = self._looked_up(name)
+        if p is not None:                           # already looked up with the star: no second lookup
+            if not p.get("usable"):
+                self.nt_ind.finish(f"✖ {p['name']}: {p.get('why') or 'no transit'}, so it needs no window.")
+                return
+            self.add_no_transit(p["planet"], pad)
+            self._sync_ticks()
+            self.nt_name.set("")
+            self.nt_ind.finish(f"✔ Added {p['name']}.")
             return
         tg = mod("targets")
         if tg is None:
@@ -2107,21 +2418,99 @@ class EditTargetDialog:
             return
 
         def done(res, exc):
+            if not self._alive():
+                return
             if exc is not None:
-                self.nt_ind.finish(f"✖ {exc}")
+                needs = getattr(tg, "NeedsMode", None)
+                choice = getattr(tg, "PlanetChoice", None)
+                if needs is not None and isinstance(exc, needs):
+                    why = str(getattr(exc, "otype", "") or "a planet without a transit ephemeris")
+                    self.nt_ind.finish(f"✖ {getattr(exc, 'main_id', '') or name} is {why}, so it needs no window.")
+                elif choice is not None and isinstance(exc, choice):
+                    some = list(getattr(exc, "transiting", None) or getattr(exc, "planets", None) or [])
+                    self.nt_ind.finish(f"✖ {name} is a star with several planets: type one of them"
+                                       + (f" (e.g. {sorted(some)[0]})." if some else "."))
+                else:
+                    self.nt_ind.finish(f"✖ {exc}")
                 return
             pl = res.planet if isinstance(res, Target) else res
             if not pl:
                 self.nt_ind.finish(f"✖ No ephemeris found for {name}.")
                 return
+            if planet_key(pl.get("name") or name) in self._nt_names():
+                self.nt_ind.finish(f"⚠ {pl.get('name') or name} is already in the list.")
+                return
             self.add_no_transit(pl, pad)
+            self._sync_ticks()
+            self.nt_name.set("")
             self.nt_ind.finish(f"✔ Added {pl.get('name') or name}.")
         self.app.jobs.run(lambda: tg.lookup_planet(name), done, self.nt_ind, f"Looking up {name}")
 
     def add_no_transit(self, planet: dict, pad: float = 0.0):
-        self.no_transit.append({"kind": "no_transit", "planet": dict(planet), "pad_min": float(pad),
-                                "note": "No data while a planet transits", "value": None})
+        self.no_transit.append(no_transit_rule(planet, pad))
         self._fill_nt()
+
+    # ---- moving between groups ----
+    def _group(self) -> tuple[str | None, str | None]:
+        return dict(MODE_CHOICES).get(self.vars["mode"].get()), dict(GROUP_CHOICES).get(self.vars["kind"].get())
+
+    def _mode_changed(self, *_a):
+        """Transits (T) goes with the Transit group, Variables / Discovery with Variable or Campaign."""
+        if self._syncing:
+            return
+        mode, kind = self._group()
+        self._syncing = True
+        try:
+            if mode == "T" and kind != "transit":
+                self.vars["kind"].set(dict((k, lab) for lab, k in GROUP_CHOICES)["transit"])
+            elif mode != "T" and kind == "transit":
+                back = self.t.kind if self.t.kind in ("variable", "campaign") else "campaign"
+                self.vars["kind"].set(dict((k, lab) for lab, k in GROUP_CHOICES)[back])
+        finally:
+            self._syncing = False
+        self._group_shown()
+
+    def _kind_changed(self, *_a):
+        if self._syncing:
+            return
+        mode, kind = self._group()
+        self._syncing = True
+        try:
+            if kind == "transit" and mode != "T":
+                self.vars["mode"].set(dict((m, c) for c, m in MODE_CHOICES)["T"])
+            elif kind != "transit" and mode == "T":
+                back = self.t.mode if self.t.mode in ("V", "D") else "V"
+                self.vars["mode"].set(dict((m, c) for c, m in MODE_CHOICES)[back])
+        finally:
+            self._syncing = False
+        self._group_shown()
+
+    def _transiting_names(self) -> list[str]:
+        return [p["name"] for p in (self.host_info or {}).get("planets") or [] if p.get("usable")]
+
+    def _group_shown(self):
+        """The ephemeris rows while the group is Transit, and a word on what moving the target does."""
+        _mode, kind = self._group()
+        transit = kind == "transit"
+        for w in self.eph_widgets:
+            if transit:
+                w.grid()
+            else:
+                w.grid_remove()
+        msg = ""
+        if transit and self.t.kind != "transit":
+            names = self._transiting_names()
+            msg = "⚠ A Transits target needs its ephemeris: type the period and Tc below."
+            if names:
+                msg = (f"⚠ {self.star_name()} is a star: to plan a transit, add its planet {and_list(names)} on the "
+                       "Targets page (type the name in Add) and keep the star a campaign. As a Transits target the "
+                       "star itself needs a typed period and Tc below.")
+        elif not transit and self.t.kind == "transit":
+            msg = f"⚠ Saving moves {self.t.name} out of Transits; its ephemeris is dropped."
+            if not self._looked:
+                self.lookup_planets()             # a star now: offer its planets' no-transit windows
+        set_msg(self.msg_var, self.msg, msg)
+        self._fit()
 
     def build(self) -> tuple[Target | None, str]:
         v = {k: str(var.get()).strip() for k, var in self.vars.items()}
@@ -2141,13 +2530,30 @@ class EditTargetDialog:
             if not v["name"]:
                 raise ValueError("The name is empty.")
             t.name = v["name"]
-            t.mode = dict(MODE_CHOICES).get(v["mode"], t.mode)
+            # the group and the SHOBS-P mode move together: Transits (T) ⟺ the Transit group
+            new_mode = dict(MODE_CHOICES).get(v["mode"], t.mode)
             new_kind = dict(GROUP_CHOICES).get(v.get("kind", ""), t.kind)
-            if new_kind != t.kind:
+            if new_kind != t.kind and new_mode == t.mode:
+                new_mode = "T" if new_kind == "transit" else ("V" if new_mode == "T" else new_mode)
+            elif new_mode != t.mode and new_kind == t.kind:
+                if new_mode == "T":
+                    new_kind = "transit"
+                elif new_kind == "transit":
+                    new_kind = "campaign"
+            elif (new_kind == "transit") != (new_mode == "T"):
+                raise ValueError("Transits (T) goes with the Transit group: choose both, or neither.")
+            was = t.kind
+            t.mode = new_mode
+            if new_kind != was:
                 t.kind = new_kind
                 t.suggested = False
                 if new_kind == "variable" and not t.elements:
                     t.elements = {"vtype": "", "any_time": True}
+                if was == "transit":
+                    t.planet = None                  # a star now: its ephemeris is the planet's, not its own
+                if new_kind == "transit":
+                    t.elements = None
+                    t.planet = None                  # filled from the ephemeris rows below
             t.priority = v["priority"] if v["priority"] in PRIORITIES else t.priority
             if v["ra"] or v["dec"]:
                 try:
@@ -2212,6 +2618,12 @@ class EditTargetDialog:
                         pl["period_err"] = None
                     if before.get("t0") != pl.get("t0"):
                         pl["t0_err"] = None
+                if was != "transit" and not (pl.get("period") and pl.get("t0")):
+                    names = self._transiting_names()
+                    raise ValueError("A Transits target needs its period and Tc (type them under Ephemeris)"
+                                     + (f"; to plan {and_list(names)}, add the planet on the Targets page and keep "
+                                        f"{self.star_name()} a campaign" if names else ", or keep it a campaign")
+                                     + ".")
                 t.planet = pl
         except ValueError as exc:
             return None, str(exc)

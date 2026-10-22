@@ -584,6 +584,122 @@ def lookup_planet(name: str, when_jd: float | None = None, refresh: bool = False
     return t
 
 
+# ---- a star's planets (for "no data while a planet transits") ------------------------------------------------------
+
+HOST_CONE_ARCSEC = 60.0        # SIMBAD's J2000 position vs the Archive's (Gaia epoch): ~30″ for a fast star
+_STAR_PREFIX = re.compile(r"^(?:\*\*|\*|V\*|NAME|EM\*)\s+", re.IGNORECASE)
+
+
+def host_name_variants(name: str) -> list[str]:
+    """Spellings the Archive might use for a host star name: "HD219134" → "HD 219134"; "wasp-12" → "WASP-12";
+    SIMBAD's "* 51 Peg" → "51 Peg". The name as typed first, at most four."""
+    clean = _STAR_PREFIX.sub("", _clean(name))
+    if not clean:
+        return []
+    out = [clean]
+    m = re.match(r"^([A-Za-z]+(?:-[Pp])?)[- ]?(\d.*)$", clean)
+    if m:
+        word, rest = m.group(1), m.group(2)
+        prefix = _PREFIXES.get(word.lower(), word.upper() if len(word) <= 3 else word)
+        seps = ["-", " "] if prefix in _HYPHEN_SURVEYS else [" ", "-"]
+        out += [prefix + sep + rest for sep in seps]
+    return list(dict.fromkeys(out))[:4]
+
+
+def _host_rows_by_name(name: str) -> tuple[str, list[dict]]:
+    for v in host_name_variants(name):
+        rows = nea_query(f"select {NEA_COLUMNS} from pscomppars where hostname = '{_adql_str(v)}'")
+        if rows:
+            return (rows[0].get("hostname") or v), rows
+    return "", []
+
+
+def _host_rows_by_position(ra: float, dec: float, vmag=None) -> tuple[str, list[dict]]:
+    """The planet host nearest to (ra, dec) within HOST_CONE_ARCSEC. A plain RA/Dec box (the Archive's Cloudflare
+    front refuses CONTAINS/POINT/CIRCLE queries), then the true separation; a host whose V differs from the star's
+    by more than 1.5 mag is another star."""
+    r = HOST_CONE_ARCSEC / 3600.0
+    dra = min(180.0, r / max(0.01, math.cos(math.radians(min(89.9, abs(dec))))))
+    lo, hi = ra - dra, ra + dra
+    spans = [(lo, hi)] if lo >= 0 and hi < 360 else [(lo % 360, 360.0), (0.0, hi % 360)]
+    rows = []
+    for a, b in spans:
+        rows += nea_query(f"select {NEA_COLUMNS} from pscomppars where ra between {a:.6f} and {b:.6f} "
+                          f"and dec between {dec - r:.6f} and {dec + r:.6f}")
+    best, best_sep = "", None
+    for row in rows:
+        pra, pdec = _f(row.get("ra")), _f(row.get("dec"))
+        if pra is None or pdec is None:
+            continue
+        sep = float(sky.sep_deg(ra, dec, pra, pdec)) * 3600.0
+        pv = _f(row.get("sy_vmag"))
+        if sep > HOST_CONE_ARCSEC or (vmag is not None and pv is not None and abs(pv - float(vmag)) > 1.5):
+            continue
+        if best_sep is None or sep < best_sep:
+            best, best_sep = row.get("hostname") or "", sep
+    return best, [row for row in rows if best and row.get("hostname") == best]
+
+
+def _fetch_host(name: str, ra, dec, vmag):
+    host, rows = _host_rows_by_name(name) if name else ("", [])
+    matched = "name" if rows else ""
+    if not rows and ra is not None and dec is not None:
+        host, rows = _host_rows_by_position(float(ra), float(dec), vmag)
+        matched = "position" if rows else ""
+    rows = [dict(r) for r in rows]
+    for row in rows:                         # the most precise published ephemeris, as lookup_planet uses
+        if _transits(row) and row.get("pl_name"):
+            try:
+                row["_ps"] = nea_query(f"select {PS_COLUMNS} from ps where pl_name = '{_adql_str(row['pl_name'])}'")
+            except FetchError as exc:
+                settings.log(f"ps table for {row['pl_name']} not available ({exc.reason}); composite ephemeris only")
+    return {"host": host, "matched": matched, "rows": rows}
+
+
+def host_planet_entry(row: dict) -> dict:
+    """One Archive row → {"name", "transits", "usable", "why", "planet"}: usable = a transiting planet with period,
+    Tc and duration (its no-transit window can be computed); planet = its Planet fields (composite ephemeris)."""
+    t = planet_target({"composite": row, "ps": row.get("_ps") or []}, sky.now_jd())
+    pl = t.planet or {}
+    transits = _transits(row)
+    usable = transits and bool(pl.get("period") and pl.get("t0") and pl.get("t14"))
+    why = "" if usable else ("does not transit" if not transits else "no transit ephemeris at the Archive")
+    return {"name": row.get("pl_name") or "", "transits": transits, "usable": usable, "why": why,
+            "planet": pl if usable else None}
+
+
+def host_planets(name: str, ra=None, dec=None, vmag=None, refresh: bool = False) -> dict:
+    """The known planets of a star at the NASA Exoplanet Archive, by host name (its spellings: "HD219134" finds
+    "HD 219134"), else by position (nearest host within HOST_CONE_ARCSEC). Returns {"host", "matched" ("name",
+    "position" or "" = no known planets), "planets": [host_planet_entry ...] transiting first, "note"} — cached a
+    week like the planet lookups; LookupError_ when the Archive does not answer and nothing is cached."""
+    clean = _clean(name)
+    if clean:
+        key = f"nea:host:{_key_name(_STAR_PREFIX.sub('', clean))}"
+    elif ra is not None and dec is not None:
+        key = f"nea:host:@{float(ra):.4f},{float(dec):+.4f}"
+    else:
+        raise NotFound("Type a star name first.")
+    data, note = cached_lookup("NEA", key, clean or "this position", PLANET_MAX_AGE_DAYS,
+                               lambda: _fetch_host(clean, ra, dec, vmag), refresh)
+    data = data or {}
+    seen, planets = set(), []
+    for row in data.get("rows") or []:
+        e = host_planet_entry(row)
+        if e["name"] and e["name"] not in seen:
+            seen.add(e["name"])
+            planets.append(e)
+    planets.sort(key=lambda e: (not e["usable"], not e["transits"], e["name"]))
+    return {"host": data.get("host") or "", "matched": data.get("matched") or "", "planets": planets,
+            "note": note}
+
+
+def planet_letter(text: str) -> str:
+    """"b" / " C " → "b": a bare planet letter typed for this star's planet; "" for anything else."""
+    s = _clean(text)
+    return s.lower() if re.fullmatch(r"[b-zB-Z]", s) else ""
+
+
 # ---- variables: AAVSO VSX, VizieR B/vsx ---------------------------------------------------------------------------
 
 PULSATOR_PREFIXES = ("DSCT", "HADS", "SXPHE", "RR", "CEP", "DCEP", "CW", "BCEP", "ROA", "GDOR", "SPB", "ACYG",
