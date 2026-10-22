@@ -623,6 +623,8 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         first = 0 if not self.site.complete() else (1 if not self.targets else 2)
         self.show_page(first)
+        if not testing:                  # kept transits still on the composite ephemeris: upgrade them (background)
+            self.after(800, lambda: self.pages[1].refine_ephemerides(quiet=True))
 
     def destroy(self):
         """Cancel pending timers first (no "invalid command name" noise after the window closes)."""
@@ -1717,6 +1719,52 @@ class TargetsPage:
         self.tree.selection_set(tid)
         set_msg(self.msg_var, self.msg, f"✔ {t.name} will {'be planned' if t.enabled else 'not be planned'}. "
                                         "Build the schedule to apply.")
+        if t.enabled:
+            self.refine_ephemerides([tid])
+
+    def refine_ephemerides(self, ids=None, quiet: bool = False):
+        """Transit targets still carrying the Archive composite table's ephemeris (from Suggested) get the most
+        precise published one, in the background (TOI-4329 b, 22 Oct: composite ±190 min vs ExoFOP ±2 min)."""
+        tg = mod("targets")
+        if tg is None or not hasattr(tg, "refine_transit_target"):
+            return
+        comp = getattr(tg, "COMPOSITE_REF", "Archive composite (planet list)")
+        todo = [Target.from_dict(t.to_dict()) for t in self.app.targets
+                if (ids is None or t.id in ids) and t.kind == "transit" and t.planet
+                and (t.planet.get("reference") or "") == comp]
+        if not todo:
+            return
+        when = sky.now_jd()
+
+        def work():
+            out = []
+            for t in todo:
+                before = dict(t.planet)
+                if tg.refine_transit_target(t, when):
+                    out.append((t.id, t.planet, before))
+            return out
+
+        def done(res, exc):
+            if exc is not None or not res:
+                return
+            names = []
+            by_id = self.app.targets_by_id()
+            for tid, planet, before in res:
+                t = by_id.get(tid)
+                if t is None or t.planet != before:
+                    continue                          # edited meanwhile: the user's version wins
+                t.planet = planet
+                names.append(t.name)
+                settings.log(f"ephemeris for {t.name}: composite → {planet.get('reference')}")
+            if not names:
+                return
+            self.app.save_targets()
+            self.app.targets_changed()
+            self.fill()
+            self._start_next_events()
+            set_msg(self.msg_var, self.msg, f"✔ Most precise ephemeris now used for {and_list(names)} (was the "
+                                            "Archive's planet-list value). Build the schedule to apply.")
+        self.app.jobs.run(work, done, None, "Checking transit ephemerides")
 
     def _edit_priority(self, iid, col):
         if self._editor is not None:
@@ -1981,6 +2029,7 @@ class TargetsPage:
         self.app.targets_changed()
         self.fill()
         set_msg(self.msg_var, self.msg, "✔ Moved to Transits: " + ", ".join(t.name for t in ts) + ".")
+        self.refine_ephemerides([t.id for t in ts])
 
     def edit_selected(self):
         ts = self.selected_targets()
@@ -2029,7 +2078,7 @@ class TargetsPage:
                 kw["catalog"] = catalog
             try:
                 found = tg.suggest_transits(site, optics, opts, nights, exclude_names=exclude, progress=progress,
-                                            **kw)
+                                            refine=True, **kw)
             except TypeError:
                 found = tg.suggest_transits(site, optics, opts, nights, exclude_names=exclude)
             return found, str(note or "")

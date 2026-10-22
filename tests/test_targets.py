@@ -1156,3 +1156,63 @@ def tearDownModule():
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPreciseEphemeris(unittest.TestCase):
+    """22 Oct (TOI-4329 b): the composite ephemeris (Grunblatt 2022, ±190 min) put a "full" transit in the wrong
+    place; suggestions and kept transits now use the most precise published ephemeris."""
+
+    def setUp(self):
+        self.real = T.lookup_planet
+
+    def tearDown(self):
+        T.lookup_planet = self.real
+
+    def test_refine_transit_target(self):
+        precise = Target(name="TOI-4329 b", kind="transit", mode="T",
+                         planet={"name": "TOI-4329 b", "period": 2.92248296605, "period_err": 2.62e-06,
+                                 "t0": 2459720.721667, "t0_err": 0.00041, "reference": "ExoFOP", "t14": 0.2315})
+        T.lookup_planet = lambda name, when_jd=None, refresh=False: precise
+        t = Target(name="TOI-4329 b", kind="transit", mode="T",
+                   planet={"name": "TOI-4329 b", "period": 2.9223, "period_err": 0.00015, "t0": 2458765.068,
+                           "t0_err": 0.002, "t14": 0.2315, "depth": 0.004, "reference": T.COMPOSITE_REF})
+        self.assertTrue(T.refine_transit_target(t))
+        self.assertEqual(t.planet["reference"], "ExoFOP")
+        self.assertAlmostEqual(t.planet["period"], 2.92248296605)
+        self.assertEqual(t.planet["depth"], 0.004, "depth kept")
+        self.assertFalse(T.refine_transit_target(t), "already precise: no change")
+
+    def test_refine_failure_keeps_composite(self):
+        def boom(name, when_jd=None, refresh=False):
+            raise T.LookupError_("down")
+        T.lookup_planet = boom
+        t = Target(name="X b", kind="transit", mode="T", planet={"name": "X b", "period": 1.0, "t0": 2460000.0,
+                                                                    "reference": T.COMPOSITE_REF})
+        self.assertFalse(T.refine_transit_target(t))
+        self.assertEqual(t.planet["reference"], T.COMPOSITE_REF)
+
+    def test_suggestions_refined(self):
+        cat = small_catalog()
+        base = T.suggest_transits(SITE, OPTICS, {}, NIGHTS, catalog=cat)
+        self.assertTrue(base)
+        first = base[0].name
+        # the precise ephemeris moves the first suggestion's transits half a period away: it must drop out or move
+        row = next(p for p in cat if p["name"] == first)
+
+        def lookup(name, when_jd=None, refresh=False):
+            if name != first:
+                raise T.LookupError_("not in this test")
+            return Target(name=name, kind="transit", mode="T",
+                          planet={"name": name, "period": row["period"], "t0": row["t0"] + row["period"] / 2,
+                                  "period_err": 1e-6, "t0_err": 1e-4, "reference": "Precise 2026"})
+        T.lookup_planet = lookup
+        res = T.suggest_transits(SITE, OPTICS, {}, NIGHTS, catalog=cat, refine=True)
+        moved = [t for t in res if t.name == first]
+        for t in moved:
+            self.assertEqual(t.planet["reference"], "Precise 2026")
+            self.assertNotAlmostEqual(t.suggest_info["tc"], base[0].suggest_info["tc"], places=2)
+        others = [t.name for t in res if t.name != first]
+        for t in res:
+            if t.name != first:
+                self.assertEqual(t.planet["reference"], T.COMPOSITE_REF, "lookups that fail keep the composite")
+        self.assertTrue(others)

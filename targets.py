@@ -1146,8 +1146,42 @@ def _night_label(d: date, site) -> str:
     return f"{d.strftime('%a')} {d.day} {d.strftime('%b')}"
 
 
+COMPOSITE_REF = "Archive composite (planet list)"
+
+
+def precise_planet(name: str, when_jd: float | None = None) -> dict | None:
+    """The planet's most precise published ephemeris (lookup_planet: Archive `ps` rows, cached) as a Planet dict, or
+    None when the Archive cannot say. The composite table's ephemeris can be years old (TOI-4329 b: Grunblatt 2022,
+    ±190 min in 2026, vs ExoFOP ±2 min), so suggestions and kept transits use this instead (John, 22 Oct)."""
+    try:
+        t = lookup_planet(name, when_jd)
+    except Exception:
+        return None
+    return dict(t.planet) if t is not None and t.planet and t.planet.get("period") and t.planet.get("t0") else None
+
+
+def refine_transit_target(t: Target, when_jd: float | None = None) -> bool:
+    """Replace a transit target's composite-table ephemeris with the most precise one (keeps its depth/duration
+    when the lookup lacks them). True when the ephemeris changed."""
+    if t.kind != "transit" or not t.planet:
+        return False
+    pl = precise_planet(t.planet.get("name") or t.name, when_jd)
+    if not pl:
+        return False
+    new = dict(t.planet)
+    for k in ("period", "period_err", "t0", "t0_err", "reference", "source"):
+        if pl.get(k) is not None:
+            new[k] = pl[k]
+    for k in ("t14", "depth"):
+        if not new.get(k) and pl.get(k):
+            new[k] = pl[k]
+    changed = any(new.get(k) != t.planet.get(k) for k in ("period", "t0", "period_err", "t0_err", "reference"))
+    t.planet = new
+    return changed
+
+
 def suggest_transits(site, optics, options, nights: list, exclude_names=frozenset(), catalog: list | None = None,
-                     progress=None) -> list[Target]:
+                     progress=None, refine: bool = False) -> list[Target]:
     """Other good transits in the given nights, in John's order (thresholds from options):
       1. FULL transit: ingress − suggest_baseline_min … egress + suggest_baseline_min above every limit (sky.up_mask);
          the transit itself (ingress…egress) inside the planning darkness (site.sun_alt); the baselines may run
@@ -1159,7 +1193,9 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
          × (1 + 0.5 × min(1, Tc sigma / 30 min)) — new timings of an uncertain ephemeris add the most (no errors
          given: the half bonus).
     Each planet once (its best night); at most suggest_max. catalog = load_transit_catalog()'s rows (loaded when
-    None). progress(i, n) is called per planet when given."""
+    None). progress(i, n) is called per planet when given. refine=True: the shortlist (2 × suggest_max) is checked
+    again with each planet's most precise ephemeris (precise_planet) before the final ranking, so a stale composite
+    ephemeris neither offers a transit that is not there nor hides one that is."""
     o = dict(settings.DEFAULT_OPTIONS)
     o.update(options or {})
     if catalog is None:
@@ -1192,12 +1228,8 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     cands = [p for p in catalog if p.get("vmag") is not None and vmin <= p["vmag"] <= vmax
              and (p.get("depth") or 0) >= min_depth and p.get("t14") and _key_name(p.get("name")) not in excl
              and sky.culmination_alt(p["dec"], site.lat) >= floor]
-    for i, p in enumerate(cands):
-        if progress:
-            try:
-                progress(i, len(cands))
-            except Exception:
-                pass
+
+    def score_planet(p, best):
         pl = Planet(name=p["name"], period=p["period"], period_err=p.get("period_err"), t0=p["t0"],
                     t0_err=p.get("t0_err"), t14=p["t14"], depth=p["depth"])
         for ev in events.transit_events(pl, p["ra"], p["dec"], jd_lo, jd_hi):
@@ -1221,6 +1253,32 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
             k = _key_name(p["name"])
             if k not in best or score > best[k][0]:
                 best[k] = (score, p, ev, night[0], sig, pen, snr)
+
+    n_ref = 2 * int(o["suggest_max"]) if refine else 0
+    total = len(cands) + n_ref
+    for i, p in enumerate(cands):
+        if progress:
+            try:
+                progress(i, total)
+            except Exception:
+                pass
+        score_planet(p, best)
+    if refine:
+        keys = [k for k, _v in sorted(best.items(), key=lambda kv: -kv[1][0])[:n_ref]]
+        short = [best.pop(k) for k in keys]
+        mid = (jd_lo + jd_hi) / 2.0
+        for j, entry in enumerate(short):
+            if progress:
+                try:
+                    progress(len(cands) + j, total)
+                except Exception:
+                    pass
+            p = entry[1]
+            pl = precise_planet(p["name"], mid)
+            if pl:
+                p = dict(p, period=pl["period"], period_err=pl.get("period_err"), t0=pl["t0"],
+                         t0_err=pl.get("t0_err"), reference=pl.get("reference") or "")
+            score_planet(p, best)                    # a transit gone with the better ephemeris drops out here
     ranked = sorted(best.values(), key=lambda b: -b[0])[: int(o["suggest_max"])]
     out = []
     for score, p, ev, d, sig, pen, snr in ranked:
@@ -1229,7 +1287,7 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
             note += f"; ⚠ Tc uncertain ±{sig:.0f} min"
         pl = Planet(name=p["name"], period=p["period"], period_err=p.get("period_err"), t0=p["t0"],
                     t0_err=p.get("t0_err"), t14=p["t14"], depth=p["depth"],
-                    reference="Archive composite (planet list)", source="NEA")
+                    reference=p.get("reference") or COMPOSITE_REF, source="NEA")
         t = Target(name=p["name"], kind="transit", mode="T", ra=p["ra"], dec=p["dec"], vmag=p["vmag"],
                    enabled=False, suggested=True, source="NEA", planet=pl.__dict__.copy(), notes=note,
                    added=today_iso(site))
