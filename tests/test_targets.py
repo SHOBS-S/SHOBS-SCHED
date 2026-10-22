@@ -475,6 +475,23 @@ class TestLookupVariable(Base):
         self.assertFalse(t.elements["any_time"])
         self.assertEqual(t.elements["epoch_kind"], "min")
 
+    def test_vizier_tap_down_uses_asu(self):
+        r = self.route([
+            (["api.object"], TIMEOUT),
+            (["tapvizier"], DOWN),
+            (["vizier.cds.unistra.fr/viz-bin/asu-tsv", "Name=BL Cam"], "targets_vizier_asu_blcam.tsv"),
+        ])
+        t = T.lookup_variable("BL Cam")
+        self.assertEqual((t.name, t.source), ("BL Cam", "VizieR VSX"))
+        self.assertAlmostEqual(t.ra, 56.8326, places=3)
+        self.assertTrue(any("asu-tsv" in u for u in r.calls))
+
+    def test_all_vsx_sources_down_names_both_causes(self):
+        self.route([(["api.object"], TIMEOUT), (["tapvizier"], DOWN), (["asu-tsv"], DOWN)])
+        with self.assertRaises(T.LookupError_) as cm:
+            T.lookup_variable("BL Cam")
+        self.assertIn("no answer within 8 s; VizieR's copy: service unavailable, HTTP 503", str(cm.exception))
+
     def test_vizier_cone_via_simbad(self):
         self.route([
             (["api.object"], VSX403),
