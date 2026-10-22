@@ -352,6 +352,32 @@ class TestAppWithFakes(Base):
         self.assertTrue(setup.msg_var.get().startswith("✔"))
         self.assertEqual(self.sa.parse_horizon("10 x")[0], [])
 
+    def test_setup_cadence_angle_defocus(self):
+        app = self.open()
+        setup = app.pages[0]
+        setup.vars["site.lat"].set("35.3")
+        setup.vars["site.lon"].set("-81.94")
+        setup.vars["site.tz"].set("America/New_York")
+        self.assertEqual(setup.vars["options.defocus_fwhm_factor"].get(), "2")
+        setup.vars["optics.camera_angle_deg"].set("400")
+        self.assertFalse(setup.save())
+        self.assertIn("Usual camera angle", setup.msg_var.get())
+        setup.vars["optics.camera_angle_deg"].set("30")
+        setup.vars["optics.frame_overhead_s"].set("32")
+        setup.vars["options.defocus_fwhm_factor"].set("2.5")
+        self.assertTrue(setup.save(), setup.msg_var.get())
+        s = settings.load_settings()
+        self.assertEqual(s["optics"]["camera_angle_deg"], 30.0)
+        self.assertEqual(s["optics"]["frame_overhead_s"], 32.0)
+        self.assertEqual(s["options"]["defocus_fwhm_factor"], 2.5)
+        self.assertEqual(app.optics.frame_overhead_s, 32.0)
+        setup.vars["optics.camera_angle_deg"].set("")           # blank = 0 (as before)
+        setup.vars["optics.frame_overhead_s"].set("")
+        self.assertTrue(setup.save(), setup.msg_var.get())
+        s = settings.load_settings()
+        self.assertIsNone(s["optics"]["camera_angle_deg"])
+        self.assertIsNone(s["optics"]["frame_overhead_s"])
+
     def test_setup_unsaved_changes_on_leave_and_close(self):
         self.golden_home()
         app = self.open()
@@ -462,6 +488,17 @@ class TestAppWithFakes(Base):
         self.assertEqual(kinds.count("no_transit"), 3)
         self.assertIn({"kind": "min_alt", "value": 40.0}, t.rules)
         self.assertEqual(t.goal_per_week, 4)
+        dlg = self.sa.EditTargetDialog(app, hd, on_save=saved.append, modal=False)
+        self.assertEqual(dlg.vars["cycle_s"].get(), "")
+        dlg.vars["cycle_s"].set("33")
+        self.assertTrue(dlg.save() is not False, dlg.msg_var.get())
+        self.assertEqual(saved[-1].cycle_s, 33.0)
+        dlg = self.sa.EditTargetDialog(app, saved[-1], on_save=saved.append, modal=False)
+        self.assertEqual(dlg.vars["cycle_s"].get(), "33")
+        dlg.vars["cycle_s"].set("0.5")                          # shorter than the 0.75 s exposure
+        self.assertFalse(dlg.save())
+        self.assertIn("Seconds between frames", dlg.msg_var.get())
+        dlg.win.destroy()
         for key, value, start in (("window", "late", "✖ Not saved: Only between"),
                                   ("goal_per_week", "2.5", "✖ Not saved: Goal must be a whole number"),
                                   ("block_min", "", "✖ Not saved: Block length is empty")):
@@ -1038,6 +1075,13 @@ class TestAppWithRealModules(Base):
         self.assertTrue(app.pages[3].msg_var.get().startswith("✔ Copied"), app.pages[3].msg_var.get())
         self.assertTrue(app.clipboard_get().startswith("Pane, RA, DEC"))
         self.assertIn("SHOBS-SCHED", app.pages[3].preview.get("1.0", "end"))
+        # the usual camera angle goes into the list, and the page says so
+        app.settings["optics"]["camera_angle_deg"] = 30.0
+        app.pages[3].update_preview()
+        self.assertIn("position angle 30.00°", app.pages[3].angle_var.get())
+        app.pages[3].copy_csv()
+        self.assertIn("Position angle 30.00°", app.pages[3].msg_var.get())
+        self.assertEqual(app.clipboard_get().split("\n")[1].split(", ")[3], "30.00")
 
 
 if __name__ == "__main__":

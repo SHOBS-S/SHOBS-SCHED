@@ -131,6 +131,19 @@ class TestAsiairCsv(unittest.TestCase):
             self.assertEqual(len(ln.split(", ")), 9)
             self.assertRegex(ln, r"^[^,]+, \d\dhr \d\d' \d\d\", -?\d\dº \d\d' \d\d\", ")
 
+    def test_usual_camera_angle(self):
+        from models import Optics
+        op = Optics.from_dict(OPTICS.to_dict())
+        op.camera_angle_deg = 30
+        lines = export.asiair_csv([oct20_night(), oct22_night()], BY_ID, SITE, optics=op).split("\n")
+        for ln in lines[1:]:
+            self.assertEqual(ln.split(", ")[3], "30.00")
+        self.assertEqual(export.asiair_angle(op), 30.0)
+        for value, want in ((None, 0.0), (210.004, 210.0), (360, 0.0), (359.999, 0.0), ("x", 0.0)):
+            op.camera_angle_deg = value
+            self.assertAlmostEqual(export.asiair_angle(op), want, places=2)
+        self.assertEqual(export.asiair_angle(None), 0.0)
+
     def test_south_names_and_pane_names(self):
         t = Target(id="s", name="Foo, “Bär” <&>", ra=83.8221, dec=-5.3911)
         n = NightPlan(date="2026-10-20", blocks=[Block(target_id="s", name=t.name, start=2461334.6,

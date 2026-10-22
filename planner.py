@@ -163,11 +163,20 @@ def _e_per_adu(optics) -> tuple[float, bool]:
     return 1.0, False
 
 
+def _defocus_factor(o: dict) -> float:
+    try:
+        f = float(o.get("defocus_fwhm_factor") or 2.0)
+    except (TypeError, ValueError):
+        f = 2.0
+    return f if f >= 1.0 else 1.0
+
+
 def predict_peak_adu(vmag, exposure_s, optics, options=None, airmass: float = 1.2,
-                     moon_penalty: float = 0.0) -> float | None:
+                     moon_penalty: float = 0.0, defocused: bool = False) -> float | None:
     """Predicted raw peak (ADU) of a star's brightest pixel (Bayer green for a color camera), sky included.
-    Gaussian PSF of FWHM options['fwhm_arcsec'] integrated over the central pixel. None when V or the optics are
-    missing."""
+    Gaussian PSF of FWHM options['fwhm_arcsec'] integrated over the central pixel. defocused: the FWHM is widened by
+    options['defocus_fwhm_factor'] (default 2×) — a Gaussian of the wider FWHM stands in for the donut, so it is a
+    rough estimate. None when V or the optics are missing."""
     if vmag is None or not optics or not optics.aperture_mm:
         return None
     scale = optics.pixel_scale()
@@ -175,6 +184,8 @@ def predict_peak_adu(vmag, exposure_s, optics, options=None, airmass: float = 1.
         return None
     o = _opts(options)
     fwhm = float(o.get("fwhm_arcsec") or 3.0)
+    if defocused:
+        fwhm *= _defocus_factor(o)
     d_cm = float(optics.aperture_mm) / 10.0
     area = math.pi * (d_cm / 2.0) ** 2 * (1.0 - OBSTRUCTION_AREA)
     band = 1.0 if optics.color_camera else MONO_BAND_FACTOR
@@ -198,24 +209,28 @@ def estimate_exposure(target: Target, optics, options: dict | None = None, airma
     limit = float(optics.linear_limit_adu or 32000.0) if optics else 32000.0
     aim = float(o.get("target_peak_frac") or 0.8) * limit
     fwhm = float(o.get("fwhm_arcsec") or 3.0)
+    dfc = _defocused(target)
+    fac = _defocus_factor(o)
+    dword = f"defocused (stars ~{fac:g}× wider)" if dfc else ""
 
     def peak(e):
-        return predict_peak_adu(target.vmag, e, optics, o, airmass, moon_penalty)
+        return predict_peak_adu(target.vmag, e, optics, o, airmass, moon_penalty, defocused=dfc)
 
     if target.exposure_s:
         e = float(target.exposure_s)
-        if _defocused(target):
-            return {"exposure_s": e, "peak_adu": None, "is_estimate": False,
-                    "note": "Your exposure; defocused: peak estimate not valid"}
         p = peak(e)
         if p is None:
-            return {"exposure_s": e, "peak_adu": None, "is_estimate": False, "note": "Your exposure"}
+            return {"exposure_s": e, "peak_adu": None, "is_estimate": False,
+                    "note": "Your exposure; defocused" if dfc else "Your exposure"}
         # The cold-start model is rough (seeing, focus, transparency): only flag a clear excess.
         if p >= 2.0 * limit:
-            note = (f"✖ estimate: peak ~{_k(p)}, over twice your {_k(limit)} limit — shorten {fmt_exposure(e)} "
-                    f"or defocus")
+            note = (f"✖ estimate{' ' + dword if dfc else ''}: peak ~{_k(p)}, over twice your {_k(limit)} limit — "
+                    f"shorten {fmt_exposure(e)}" + (" or defocus more" if dfc else " or defocus"))
         elif p > 1.5 * limit:
-            note = f"⚠ estimate: peak ~{_k(p)}, near your {_k(limit)} limit — check a frame"
+            note = (f"⚠ estimate{' ' + dword if dfc else ''}: peak ~{_k(p)}, near your {_k(limit)} limit — "
+                    f"check a frame")
+        elif dfc:
+            note = f"Your exposure; {dword}: predicted peak ~{p:,.0f} ADU (estimate)"
         else:
             note = f"Your exposure; predicted peak ~{p:,.0f} ADU"
         return {"exposure_s": e, "peak_adu": p, "is_estimate": False, "note": note}
@@ -232,12 +247,41 @@ def estimate_exposure(target: Target, optics, options: dict | None = None, airma
     if best is None:
         best = STANDARD_EXPOSURES[0]
         p = peak(best)
-        note = (f"⚠ estimate: even {fmt_exposure(best)} may saturate (predicted peak ~{p:,.0f} ADU, limit "
-                f"{limit:,.0f}); defocus")
+        if dfc:
+            note = (f"⚠ estimate: even {fmt_exposure(best)} may saturate {dword} (predicted peak ~{p:,.0f} ADU, "
+                    f"limit {limit:,.0f}); defocus more")
+        else:
+            note = (f"⚠ estimate: even {fmt_exposure(best)} may saturate (predicted peak ~{p:,.0f} ADU, limit "
+                    f"{limit:,.0f}); defocus")
     else:
         p = peak(best)
-        note = f"estimate from V {float(target.vmag):.1f} and {fwhm:g}\" seeing: peak ~{p:,.0f} ADU"
+        if dfc:
+            note = (f"estimate from V {float(target.vmag):.1f}, {dword}, {fwhm:g}\" seeing: peak ~{p:,.0f} ADU")
+        else:
+            note = f"estimate from V {float(target.vmag):.1f} and {fwhm:g}\" seeing: peak ~{p:,.0f} ADU"
     return {"exposure_s": float(best), "peak_adu": p, "is_estimate": True, "note": note}
+
+
+# ---- frame cadence -----------------------------------------------------------------------------------------------
+
+OLD_DEFAULT_OVERHEAD_S = 3.0   # Target.cadence_overhead_s default in old files (not a choice the user made)
+
+
+def frame_cycle_s(target: Target, exposure_s, optics=None) -> tuple[float, str]:
+    """(seconds per frame, how it was found). The target's own "seconds between frames" (total cycle) wins; else
+    exposure + overhead, the overhead being a target's own old cadence_overhead_s when it differs from the old 3 s
+    default, else Setup's per-frame overhead, else 3 s.
+    TODO (later version): learn the cycle from the DATE-OBS spacing of the user's own FITS frames."""
+    e = float(exposure_s or 0.0)
+    if target is not None and target.cycle_s:
+        return max(float(target.cycle_s), e), "cycle"
+    own = getattr(target, "cadence_overhead_s", None) if target is not None else None
+    if own is not None and abs(float(own) - OLD_DEFAULT_OVERHEAD_S) > 1e-9:
+        return e + max(0.0, float(own)), "target"
+    site = getattr(optics, "frame_overhead_s", None) if optics is not None else None
+    if site is not None:
+        return e + max(0.0, float(site)), "setup"
+    return e + (float(own) if own is not None else OLD_DEFAULT_OVERHEAD_S), "default"
 
 
 # ---- darkness cache (next-chance searches look at many nights) -------------------------------------------------
@@ -1220,7 +1264,10 @@ class _Night:
         b.peak_adu = ex["peak_adu"]
         if ex["note"].startswith(("⚠", "✖")):
             cautions.append(ex["note"])
-        per = float(b.exposure_s) + float(t.cadence_overhead_s or 0.0)
+        per, how = frame_cycle_s(t, b.exposure_s, self.optics)
+        b.cycle_s = per if per > 0 else None
+        if how == "cycle":
+            notes.append(f"Frames every {per:g} s (your seconds between frames)")
         b.frames = int(usable * 60.0 / per) if per > 0 else None
         if b.t1 is not None and b.t4 is not None and per > 0:
             ov = max(0.0, (min(b.t4, b.end) - max(b.t1, b.start)) * 1440.0)
