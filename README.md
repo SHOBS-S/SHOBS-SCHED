@@ -1,0 +1,50 @@
+# SHOBS-SCHED — Shiloh Hill Observatory Scheduler
+
+SHOBS-SCHED plans each night's observing for the three
+[SHOBS-P](https://github.com/SHOBS-S/SHOBS-P) photometry modes — **Variables**, **Transits** and **Discovery** —
+for one night or a rolling seven nights, and exports the plan for ASIAIR (a paste-ready coordinate list plus a
+printable plan card).
+
+It works on its own. If SHOBS-P is installed on the same computer, SHOBS-SCHED reads its site and equipment
+settings so you type them once (it never changes SHOBS-P's files).
+
+## What it does
+
+1. **Setup** — your site (latitude, longitude, elevation, time zone), optics and camera, mount (German equatorial
+   with meridian flips, or alt-az), minimum altitude, maximum airmass, darkness, the horizon profile from a site
+   survey, and the weather source.
+2. **Targets** — one list in four groups: **Transits** (ephemerides from the NASA Exoplanet Archive, the most
+   precise published one for the coming weeks, with the predicted mid-transit uncertainty), **Variables** (light
+   elements from the AAVSO VSX, or VizieR's copy of it), **Campaigns** (long-running targets and Discovery fields
+   with priorities, weekly goals and rules such as "no data while a planet transits"), and **Suggested** (other
+   good transits for your site in the nights ahead). Add any target by name.
+3. **Schedule** — builds each night: fixed-time targets first (transits with baseline, timed minima/maxima), then
+   campaigns and any-time variables by priority at their best airmass, with twilight, the Moon, your horizon,
+   meridian flips (start 10–15 min before the meridian and let the mount flip), overheads and the dew forecast.
+   Each night shows the hourly weather, a dusk-to-dawn block bar with airmass, the nightly table, flats and darks
+   to shoot, what didn't fit and why, and free time. Mark each block Done, Partial or Clouded out; **Re-review**
+   rolls the week forward and puts missed targets back in the pool.
+4. **Export** — copy the ASIAIR coordinate list, or print the plan card.
+
+All times are shown on your **site's clock**, whatever time zone the computer is set to.
+
+## Install (Windows)
+
+1. Unzip anywhere (for example `C:\Astro\shobs_sched`).
+2. Double-click **Create shortcuts.bat**. It finds a Python 3.11 or newer with Tkinter (python.org, Anaconda, …),
+   gives SHOBS-SCHED its own environment in `%LOCALAPPDATA%\SHOBS-SCHED`, installs `numpy` and `tzdata`, and puts
+   a SHOBS-SCHED icon on the Desktop and in the Start menu.
+3. **Run self-test.bat** checks the install; `run_windows.bat` starts the app with a console window beside it.
+
+Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_targets.json` and the
+`.shobs_sched` folder (saved schedule, cache, log).
+
+## Data sources
+
+NASA Exoplanet Archive (ephemerides), AAVSO VSX and VizieR B/vsx (variable stars), SIMBAD (names and positions),
+Open-Meteo (weather). Sky brightness from the Moon: Krisciunas & Schaefer (1991, PASP 103, 1033). Sun and Moon
+positions from the Astronomical Almanac's low-precision formulas.
+
+## License
+
+GPL-3.0-or-later. © Shiloh Hill Observatory.
