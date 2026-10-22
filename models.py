@@ -206,6 +206,8 @@ class Block:
     name: str = ""
     mode: str = "V"
     kind: str = "variable"
+    ra: float | None = None                   # target's J2000 position (copied for the table and exports)
+    dec: float | None = None
     start: float = 0.0
     end: float = 0.0
     fixed: bool = False
@@ -265,7 +267,7 @@ class NightPlan:
     free: list = field(default_factory=list)         # [(start, end), ...] gaps over 15 min
     flats: list = field(default_factory=list)        # sentences ("Flats at rotator 210° (HD 219134, NGC 7789)")
     darks: list = field(default_factory=list)        # sentences ("Darks to shoot: 45 s × 20")
-    weather: dict | None = None                      # weather.NightWeather.to_dict()
+    weather: dict | None = None                      # weather.py's night dict (hours, dew_onset, summary, ...)
     built: str = ""                                  # ISO timestamp of the build
 
     def blocks_obj(self) -> list[Block]:
