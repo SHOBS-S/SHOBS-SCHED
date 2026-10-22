@@ -3146,7 +3146,7 @@ class NightTab:
         self.bar = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=hb)
         self.bar.pack(fill=tk.X, padx=pad, pady=(px(app, 4), 0))
         legend = ("Blocks take the color of the SHOBS-P mode they will be reduced in   ·   ▼ the target's meridian   ·   "
-                  "yellow line: Moon up   ·   gold outline: locked or set by you   ·   band under a block: airmass, "
+                  "gold curve: Moon altitude   ·   gold outline: locked or set by you   ·   band under a block: airmass, "
                   "light = low (start · best · end)")
         lg = ttk.Label(inner, text=legend, style="Small.TLabel", justify=tk.LEFT)
         lg.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 6), px(app, 8)))
@@ -3229,7 +3229,7 @@ class NightTab:
         return self.wx if which == "wx" else self.bar
 
     # ---- graph height ----
-    GRAPH_LINES = {"wx": (10.0, 17.0), "bar": (9.5, 13.5)}   # min, max height in text lines
+    GRAPH_LINES = {"wx": (10.0, 17.0), "bar": (13.5, 19.5)}   # min, max height in text lines
     GRAPH_SHARE = 0.8                                       # share of the spare window height the graph takes
 
     def graph_heights(self, view_h: int, other_h: int) -> tuple[int, int]:
@@ -3759,15 +3759,18 @@ class NightTab:
         """The block bar's rows for a canvas H px tall: Moon line, sky band with the blocks (yb0–yb1, takes the
         height beyond the text rows), airmass band (ya0–ya1), airmass values (yt), hour labels (yh), dark/dawn (yd)."""
         lh = self.lh
-        yb0 = lh * 1.5
-        below = lh * (0.35 + 1.1 + 0.8 + 1.35 + 1.1 + 0.65)
-        extra = max(0.0, H - yb0 - below - lh * 2.4)       # the band and the airmass strip share any extra height
-        yb1 = yb0 + lh * 2.4 + extra * 0.85
+        ym0 = lh * 1.2                                     # Moon altitude plot: 90° at ym0, 0° at ym1 (numbers above)
+        moon_min = lh * 3.0
+        below = lh * (0.6 + 0.35 + 1.1 + 0.8 + 1.35 + 1.1 + 0.65)
+        extra = max(0.0, H - ym0 - moon_min - below - lh * 2.4)   # Moon plot, band and airmass share extra height
+        ym1 = ym0 + moon_min + extra * 0.3
+        yb0 = ym1 + lh * 0.6
+        yb1 = yb0 + lh * 2.4 + extra * 0.58
         ya0 = yb1 + lh * 0.35
-        ya1 = ya0 + lh * 1.1 + extra * 0.15
+        ya1 = ya0 + lh * 1.1 + extra * 0.12
         yt = ya1 + lh * 0.8
         yh = yt + lh * 1.35
-        return {"ym": lh * 0.7, "yb0": yb0, "yb1": yb1, "ya0": ya0, "ya1": ya1, "yt": yt, "yh": yh,
+        return {"ym": (ym0 + ym1) / 2, "ym0": ym0, "ym1": ym1, "yb0": yb0, "yb1": yb1, "ya0": ya0, "ya1": ya1, "yt": yt, "yh": yh,
                 "yd": yh + lh * 1.1}
 
     def draw_weather(self):
@@ -3889,14 +3892,17 @@ class NightTab:
         app, night, site, lh = self.app, self.night(), self.app.site, self.lh
         tz = site.tz
         r = self.bar_rows(int(c.cget("height")))
-        ym0 = ym1 = r["ym"]                       # Moon line row
+        ym0, ym1 = r["ym0"], r["ym1"]             # Moon altitude plot (90° top, 0° bottom)
         yb0, yb1 = r["yb0"], r["yb1"]             # sky band with the blocks
         ya0, ya1 = r["ya0"], r["ya1"]             # airmass bands
         yt = r["yt"]                              # airmass values
         yh, ydk = r["yh"], r["yd"]                # hour labels, dark / dawn
         illum = night.moon_illum
-        c.create_text(4, (ym0 + ym1) / 2, text="Moon" + (f" {illum * 100:.0f} %" if illum is not None else ""),
-                      anchor="w", fill=style.HINT, font=self.norm)
+        c.create_text(4, (ym0 + ym1) / 2 - lh * 0.45, text="Moon" + (f" {illum * 100:.0f} %" if illum is not None
+                                                                      else ""),
+                      anchor="w", fill=style.MOON_TEXT, font=self.bold)
+        c.create_text(4, (ym0 + ym1) / 2 + lh * 0.55, text="altitude °", anchor="w", fill=style.MOON_TEXT,
+                      font=self.small)
         c.create_text(4, (yb0 + yb1) / 2, text="Blocks", anchor="w", fill=style.HINT, font=self.norm)
         c.create_text(4, (ya0 + ya1) / 2, text="Airmass", anchor="w", fill=style.AIRMASS, font=self.bold)
         # sky: day / civil / nautical / astronomical twilight / night, from the Sun's altitude
@@ -3925,25 +3931,48 @@ class NightTab:
                 x = ax.x(j)
                 c.create_line(x, yb0, x, yb1 + lh * 0.25, fill="#8aa0b2", dash=(2, 3))
                 dark_labels.append((x, lab, anc))
-        # Moon up
+        # Moon altitude: a curve from 0° (bottom) to 90° (top), shaded below, degrees at the hour ticks (John, 22 Oct)
         try:
-            moon = sky.moon_alt_at(site, jds) > sky.MOON_RISE_ALT
+            malt = np.asarray(sky.moon_alt_at(site, jds), dtype=float)
         except Exception:
-            moon = np.zeros(jds.shape, dtype=bool)
+            malt = np.full(jds.shape, -90.0)
+        c.create_line(ax.x0, ym1, ax.x1, ym1, fill=style.LINE)
+        for deg in (30, 60):                      # faint 30° / 60° guides
+            yg = ym1 - (ym1 - ym0) * deg / 90.0
+            c.create_line(ax.x0, yg, ax.x1, yg, fill=style.LINE, dash=(1, 4))
+
+        def ym(a):
+            return ym1 - (ym1 - ym0) * min(90.0, max(0.0, float(a))) / 90.0
+        up = malt > sky.MOON_RISE_ALT
         k = 0
-        first_x = None
+        any_up = False
         while k <= n:
-            if moon[k]:
+            if up[k]:
                 k0 = k
-                while k <= n and moon[k]:
+                while k <= n and up[k]:
                     k += 1
-                xa, xb = ax.x(jds[k0]), ax.x(jds[min(k, n)])
-                c.create_line(xa, (ym0 + ym1) / 2, xb, (ym0 + ym1) / 2, fill=style.MOON, width=max(3, px(app, 4)),
-                              capstyle="round")
-                if first_x is None:
-                    first_x = (xa, xb)
+                seg = [(ax.x(jds[q]), ym(malt[q])) for q in range(k0, min(k, n + 1))]
+                if len(seg) >= 2:
+                    poly = [(seg[0][0], ym1)] + seg + [(seg[-1][0], ym1)]
+                    c.create_polygon(*[v for p in poly for v in p], fill=style.MOON_FILL, outline="")
+                    c.create_line(*[v for p in seg for v in p], fill=style.MOON, width=max(2, px(app, 3)),
+                                  smooth=False, capstyle="round", tags=("moonalt",))
+                any_up = True
             k += 1
-        if not first_x:
+        if any_up:
+            ticks_m = ax.hour_ticks(tz)
+            pph_m = (ax.x1 - ax.x0) / max(1e-6, (ax.j1 - ax.j0) * 24)
+            step = 1 if pph_m > self.small.measure("88°") + px(app, 12) else 2
+            try:
+                at = np.asarray(sky.moon_alt_at(site, np.asarray(ticks_m)), dtype=float) if ticks_m else []
+            except Exception:
+                at = []
+            for q, (jt, a) in enumerate(zip(ticks_m, at)):
+                if q % step or a <= sky.MOON_RISE_ALT:
+                    continue
+                c.create_text(ax.x(jt), ym(a) - lh * 0.15, text=f"{a:.0f}°", anchor="s", fill=style.MOON_TEXT,
+                              font=self.small, tags=("moonnum",))
+        else:
             c.create_text(ax.x0 + 4, (ym0 + ym1) / 2, text="Moon down all night", anchor="w", fill=style.HINT,
                           font=self.norm)
         # blocks

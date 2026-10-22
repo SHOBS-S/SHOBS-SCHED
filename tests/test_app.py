@@ -860,9 +860,12 @@ class TestAppWithFakes(Base):
             self.assertGreaterEqual(r["yc"] - r["yb"], lh * 0.8, "cloud bars apart from the temperature numbers")
             self.assertGreaterEqual(r["ye"] - lh / 2 - r["yd"], lh * 0.8, "spread row apart from the dew numbers")
             self.assertLessEqual(r["ye"] + lh / 2, H)
-        for H in (int(lh * 9.5), int(lh * 13.5)):
+        for H in (int(lh * 13.5), int(lh * 19.5)):
             r = tab.bar_rows(H)
             self.assertLess(r["ym"], r["yb0"])
+            self.assertGreaterEqual(r["ym1"] - r["ym0"], lh * 2.0, "a Moon altitude plot with some height")
+            self.assertGreaterEqual(r["ym0"], lh, "room for the degrees above the curve")
+            self.assertGreaterEqual(r["yb0"] - r["ym1"], lh * 0.5, "Moon plot apart from the blocks")
             self.assertGreaterEqual(r["yb1"] - r["yb0"], lh * 2.4, "a tall enough block bar")
             self.assertLess(r["yb1"], r["ya0"])
             self.assertGreaterEqual(r["ya1"] - r["ya0"], lh)
