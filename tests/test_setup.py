@@ -453,5 +453,216 @@ class TestEditDialogOldFiles(Base):
             self.assertEqual((saved[0].kind, saved[0].mode), want)
 
 
+# ---- review round 2: finder limits are starting values; v1.0.0 files; tags stable; FITS edge cases -----------------
+
+def saved_file() -> dict:
+    with open(settings.settings_path(), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def v1_file(home: str, **site):
+    """A settings file shaped like v1.0.0's: set_here present, no from_fits / from_finder keys."""
+    s = settings.default_settings()
+    for k in ("from_fits", "from_finder", "asiair_dir"):
+        s.pop(k, None)
+    s["site"].update({"lat": 35.3, "lon": -81.94, "tz": "America/New_York"}, **site)
+    s["set_here"] = ["site.lat"]
+    with open(os.path.join(home, ".shobs_sched_settings.json"), "w", encoding="utf-8") as fh:
+        json.dump(s, fh)
+    return s
+
+
+class TestFinderSeedsOnce(SettingsHome):
+    def open_once(self):
+        s, taken = settings.merge_shobs_p(settings.load_settings())
+        s.pop("site_name_cleared", None)
+        settings.save_settings(s)
+        return s, taken
+
+    def test_v1_file_keeps_own_limits(self):
+        v1_file(self.tmp, min_alt=25.0, sun_alt=-12.0)
+        self.shobs_p({"site_lat": 35.3, "finder": {"min_alt": 30, "sun_alt": -18, "vmax": 13.5, "depth": 0.5}})
+        s, taken = self.open_once()
+        self.assertEqual(s["site"]["min_alt"], 25.0, "John's own minimum altitude survives")
+        self.assertEqual(s["site"]["sun_alt"], -12.0, "and his darkness")
+        self.assertIn("site.min_alt", s["set_here"])
+        self.assertIn("site.sun_alt", s["set_here"])
+        self.assertEqual(s["options"]["suggest_vmax"], 13.5, "a limit still at SCHED's default is seeded")
+        self.assertEqual(s["from_finder"], {"options.suggest_vmax": 13.5, "options.suggest_min_depth": 0.005})
+        self.assertIn("options.suggest_vmax", taken)
+        self.assertNotIn("site.min_alt", taken)
+        self.assertIn("from_fits", saved_file(),
+                      "saved in the new shape: the migration runs once")
+        # SHOBS-P's finder changes (it rewrites it on every search): nothing moves
+        self.shobs_p({"site_lat": 35.3, "finder": {"min_alt": 40, "sun_alt": -15, "vmax": 14.5, "depth": 1.0}})
+        s, taken = self.open_once()
+        self.assertEqual((s["site"]["min_alt"], s["site"]["sun_alt"]), (25.0, -12.0))
+        self.assertEqual(s["options"]["suggest_vmax"], 13.5, "seeded once, not re-applied")
+        self.assertEqual(s["options"]["suggest_min_depth"], 0.005)
+        self.assertIn("options.suggest_vmax", taken, "still tagged as SHOBS-P's (its seeded value)")
+
+    def test_defaults_seeded_once(self):
+        self.shobs_p({"finder": {"min_alt": 35, "sun_alt": -15}})
+        s, _t = self.open_once()                                    # a fresh home: SCHED's defaults
+        self.assertEqual((s["site"]["min_alt"], s["site"]["sun_alt"]), (35.0, -15.0))
+        self.shobs_p({"finder": {"min_alt": 40, "sun_alt": -18}})
+        s, taken = self.open_once()
+        self.assertEqual((s["site"]["min_alt"], s["site"]["sun_alt"]), (35.0, -15.0))
+        self.assertIn("site.min_alt", taken)
+
+    def test_v1_file_at_defaults_is_seeded(self):
+        v1_file(self.tmp)                                           # min_alt 30, sun_alt −18: SCHED's defaults
+        self.shobs_p({"finder": {"min_alt": 35}})
+        s, _t = self.open_once()
+        self.assertEqual(s["site"]["min_alt"], 35.0)
+        self.assertNotIn("site.min_alt", s["set_here"])
+
+    def test_site_name_cleared_is_reported(self):
+        self.shobs_p({"telescope_name": "iOptron 14 RC"})
+        s = settings.load_settings()
+        s["site"]["name"] = "iOptron 14 RC"
+        s, _t = settings.merge_shobs_p(s)
+        self.assertEqual(s["site_name_cleared"], "iOptron 14 RC")
+
+    def test_infinite_numbers_are_not_values(self):
+        self.assertIsNone(settings._num(float("inf")))
+        self.assertIsNone(settings._num("-inf"))
+        self.assertIsNone(settings._num("1e999"))
+        self.shobs_p({"focal_mm": "inf", "finder": {"min_alt": float("inf")}})
+        s, taken = settings.merge_shobs_p(settings.load_settings())
+        self.assertEqual(taken, [])
+
+
+class TestFitsEdgeCases(unittest.TestCase):
+    def test_bayerpat_words_for_mono(self):
+        for word in ("NONE", "mono", "N/A", " none "):
+            vals, _n, _m = fits_header.camera_values({"BAYERPAT": word})
+            self.assertIs(vals["optics.color_camera"], False, word)
+        self.assertIs(fits_header.camera_values({"BAYERPAT": "GRBG"})[0]["optics.color_camera"], True)
+
+    def test_infinite_egain_and_rotation_rounding(self):
+        vals, notes, missing = fits_header.camera_values({"EGAIN": float("inf"), "ROTATOR": 179.99999,
+                                                          "GAIN": float("-inf")})
+        self.assertNotIn("optics.e_per_adu", vals)
+        self.assertIn("EGAIN", missing)
+        self.assertIn("GAIN", missing)
+        self.assertEqual(vals["optics.camera_angle_deg"], 0.0, "179.99999° is 180° = 0°, never 180")
+        self.assertEqual(fits_header.camera_values({"ROTATOR": 359.9999})[0]["optics.camera_angle_deg"], 0.0)
+        self.assertEqual(fits_header.camera_values({"ROTATOR": 30.0})[1], [])
+
+    def test_continue_cards_joined(self):
+        def c(text):
+            return text.ljust(80)
+        data = (c("SIMPLE  =                    T") + c("OBJECT  = 'HD 219134 with a long &'")
+                + c("CONTINUE  'name over &'") + c("CONTINUE  'three cards'") + c("NOTE    = 'cut&'")
+                + c("GAIN    =                  100") + c("END")).encode("ascii")
+        h = fits_header.parse_header(data)
+        self.assertEqual(h["OBJECT"], "HD 219134 with a long name over three cards")
+        self.assertEqual(h["NOTE"], "cut", "a dangling & is dropped")
+        self.assertEqual(h["GAIN"], 100)
+
+
+@unittest.skipUnless(HAVE_TK, "needs a display (run under xvfb-run)")
+class TestSetupReviewRound2(Base):
+    def shobs_p(self, data):
+        p = os.path.join(self.tmp, "shobs_p.json")
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.environ["SHOBS_P_SETTINGS"] = p
+
+    def tags(self, setup):
+        return {k: self.tag(setup, k) for k in setup.tags}
+
+    def test_no_edit_save_changes_no_tags(self):
+        s = v1_file(self.tmp, min_alt=25.0)
+        s["optics"].update({"camera": "ZWO ASI2600MC Air", "gain": 100.0, "e_per_adu": 0.24, "full_well_e": 50000.0,
+                            "frame_overhead_s": 3.0, "camera_angle_deg": 30.0})
+        with open(settings.settings_path(), "w", encoding="utf-8") as fh:
+            json.dump(s, fh)
+        self.shobs_p({"site_lat": 35.3, "site_lon": -81.94, "aperture_mm": 356, "focal_mm": 2900,
+                      "finder": {"min_alt": 30, "vmax": 13.5}})
+        app = self.open()
+        app.show_page(0)
+        setup = app.pages[0]
+        before = self.tags(setup)
+        self.assertEqual(before["optics.camera"], "")
+        self.assertEqual(before["site.min_alt"], "set here", "v1.0.0's own limit")
+        self.assertEqual(before["optics.aperture_mm"], "from SHOBS-P")
+        set_here = sorted(settings.load_settings().get("set_here") or [])
+        self.assertTrue(setup.save(), setup.msg_var.get())
+        self.assertEqual(self.tags(setup), before, "an untouched form saves with the tags it opened with")
+        after = settings.load_settings()
+        self.assertEqual(after["site"]["min_alt"], 25.0)
+        for k in ("optics.camera", "optics.gain", "optics.e_per_adu", "optics.full_well_e",
+                  "optics.frame_overhead_s", "optics.camera_angle_deg"):
+            self.assertNotIn(k, after["set_here"], k)
+        self.assertTrue(set(set_here) <= set(after["set_here"]) | {"site.min_alt", "site.sun_alt"})
+        # typing over a seeded limit makes it the user's own (never seeded again)
+        setup.vars["options.defocus_fwhm_factor"].set("2")
+        setup.vars["site.min_alt"].set("28")
+        self.assertTrue(setup.save())
+        self.assertEqual(self.tag(setup, "site.min_alt"), "set here")
+        self.assertEqual(self.tag(setup, "options.defocus_fwhm_factor"), "set here")
+
+    def test_seeded_limit_typed_over_leaves_from_finder(self):
+        self.shobs_p({"site_lat": 35.3, "site_lon": -81.94, "site_tz": "America/New_York",
+                      "finder": {"min_alt": 35}})
+        app = self.open()
+        app.show_page(0)
+        setup = app.pages[0]
+        self.assertEqual(self.tag(setup, "site.min_alt"), "from SHOBS-P")
+        setup.vars["site.min_alt"].set("33")
+        self.assertTrue(setup.save())
+        s = settings.load_settings()
+        self.assertNotIn("site.min_alt", s["from_finder"])
+        self.assertIn("site.min_alt", s["set_here"])
+
+    def test_site_name_cleared_said_once_on_setup(self):
+        s = settings.default_settings()
+        s["site"]["name"] = "iOptron 14 RC"
+        settings.save_settings(s)
+        self.shobs_p({"telescope_name": "iOptron 14 RC", "site_lat": 35.3})
+        app = self.open()
+        app.show_page(0)
+        setup = app.pages[0]
+        text = setup.prov_var.get()
+        self.assertTrue(text.startswith("⚠ Site name cleared: it was SHOBS-P's telescope name (“iOptron 14 RC”); "
+                                        "type your observatory's name."), text)
+        self.assertNotIn("site_name_cleared", settings.load_settings())
+        setup.vars["site.name"].set("Shiloh Hill Observatory")
+        setup.vars["site.lon"].set("-81.94")
+        setup.vars["site.tz"].set("America/New_York")
+        self.assertTrue(setup.save(), setup.msg_var.get())
+        self.assertFalse(setup.prov_var.get().startswith("⚠"))
+        self.assertNotIn("site_name_cleared", saved_file())
+
+    def test_infinite_egain_does_not_break_the_button(self):
+        path = os.path.join(self.tmp, "inf.fits")
+        cards = ["SIMPLE  =                    T", "EGAIN   =                  INF", "GAIN    =                 1E999",
+                 "INSTRUME= 'Test Cam'", "END"]
+        with open(path, "wb") as fh:
+            fh.write("".join(c.ljust(80) for c in cards).ljust(2880).encode("ascii"))
+        app = self.open()
+        setup = app.pages[0]
+        vals = setup.read_fits(path)
+        self.assertNotIn("optics.e_per_adu", vals)
+        self.assertIn("EGAIN (e⁻ per ADU)", setup.fits_var.get())
+        self.assertEqual(setup.vars["optics.camera"].get(), "Test Cam")
+
+    def test_dialog_not_clamped_when_main_window_is_on_another_monitor(self):
+        class FakeApp:
+            def __init__(self, x):
+                self.x = x
+
+            def winfo_rootx(self):
+                return self.x
+
+            def winfo_rooty(self):
+                return 100
+        self.assertEqual(self.sa._clamp_to_screen(FakeApp(-1800), -1500, 200, 600, 400, 1920, 1080), (-1500, 200))
+        self.assertEqual(self.sa._clamp_to_screen(FakeApp(2400), 2600, 200, 600, 400, 1920, 1080), (2600, 200))
+        self.assertEqual(self.sa._clamp_to_screen(FakeApp(100), 1700, 900, 600, 400, 1920, 1080), (1320, 640))
+
+
 if __name__ == "__main__":
     unittest.main()
