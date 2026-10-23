@@ -490,6 +490,18 @@ def _keys(win, ok, cancel=None):
     win.bind("<Escape>", lambda _e: (cancel or win.destroy)())
 
 
+def _clamp_to_screen(app, x: int, y: int, w: int, h: int, sw: int, sh: int) -> tuple[int, int]:
+    """Keep a dialog placed over the main window on the screen. Tk only knows the PRIMARY screen's size: when the
+    main window is on another monitor (its corner outside the primary screen) the position is left as it is."""
+    try:
+        ax, ay = app.winfo_rootx(), app.winfo_rooty()
+    except tk.TclError:
+        ax, ay = 0, 0
+    if not (0 <= ax < sw and 0 <= ay < sh):
+        return x, y
+    return min(max(0, x), max(0, sw - w)), min(max(0, y), max(0, sh - h - 40))
+
+
 def _show_modal(app, win, focus=None):
     win.update_idletasks()
     try:
@@ -497,7 +509,7 @@ def _show_modal(app, win, focus=None):
         w, h = min(win.winfo_reqwidth(), int(sw * 0.9)), min(win.winfo_reqheight(), int(sh * 0.85))
         x = app.winfo_rootx() + max(0, (app.winfo_width() - w) // 2)
         y = app.winfo_rooty() + max(0, (app.winfo_height() - h) // 3)
-        x, y = min(max(0, x), max(0, sw - w)), min(max(0, y), max(0, sh - h - 40))
+        x, y = _clamp_to_screen(app, x, y, w, h, sw, sh)
         win.geometry(f"{w}x{h}+{x}+{y}")
     except tk.TclError:
         pass
@@ -694,6 +706,7 @@ class App(tk.Tk):
         s = settings.load_settings()
         self.shobs_p = settings.read_shobs_p()
         s, taken = settings.merge_shobs_p(s)
+        self.site_name_note = str(s.pop("site_name_cleared", "") or "")    # said once on Setup, never saved
         self.settings = s
         self.p_taken = list(taken)
         self.p_values = self._shobs_p_values()
@@ -1255,7 +1268,7 @@ class SetupPage:
             return "set here"
         if dotted in set(self.app.settings.get("set_here") or []):
             return "set here"
-        if dotted in set(self.app.p_taken or []):
+        if dotted in set(self.app.p_taken or []):        # SHOBS-P's values, and limits its finder seeded
             return "from SHOBS-P"
         return ""
 
@@ -1288,14 +1301,22 @@ class SetupPage:
             when = app.settings.get("shobs_p_read") or "?"
             text = (f"✔ Site, optics and camera read from SHOBS-P (settings of {when}). "
                     "Change them there, or override here.")
-            finder = [d for d in app.p_taken if d in settings.finder_values(app.shobs_p)]
+            finder = [d for d in app.p_taken if d in settings.FINDER_DOTTED]
             if finder:
-                text += (" The minimum altitude, darkness and the Suggested-transits filter start from its "
-                         "Tonight's-transits finder.")
-            set_msg(self.prov_var, self.prov, text + " Tags: from SHOBS-P, from FITS, set here.")
+                text += (" The minimum altitude, darkness and the Suggested-transits filter started from its "
+                         "Tonight's-transits finder (once; later changes there do not move them).")
+            text += " Tags: from SHOBS-P, from FITS, set here."
         else:
-            self.prov_var.set("Enter your site and equipment once (or read the camera from a FITS frame). SHOBS-P, "
-                              "if you add it later, can share these.")
+            text = ("Enter your site and equipment once (or read the camera from a FITS frame). SHOBS-P, if you add "
+                    "it later, can share these.")
+        cleared = getattr(app, "site_name_note", "")
+        if cleared:
+            text = (f"⚠ Site name cleared: it was SHOBS-P's telescope name (“{cleared}”); type your observatory's "
+                    f"name. " + text.lstrip("✔ "))
+        if text.startswith(("✔", "⚠")):
+            set_msg(self.prov_var, self.prov, text)
+        else:
+            self.prov_var.set(text)
             self.prov.configure(style="Card.TLabel")
         self._show_tags()
 
@@ -1528,37 +1549,42 @@ class SetupPage:
                 settings.mark_set_here(s, dotted)
         s["from_fits"] = fits
         self.fits_pending = {}
-        for dotted, theirs in self.app.p_values.items():
-            sec, _, key = dotted.partition(".")
-            if sec not in new or dotted in fits:
-                continue
-            if _same(theirs, new[sec].get(key)):      # typed back to SHOBS-P's value: follow SHOBS-P again
-                unmark(dotted)
-            else:
-                settings.mark_set_here(s, dotted)
-        # any other Setup value that is not the default is the user's own ("set here"): a SHOBS-P installed later
-        # must not overwrite it (only fields still at their defaults or empty get filled from SHOBS-P)
-        shared = ({f"{sec}.{fld}" for sec, fld in settings.SHOBS_P_FIELDS.values()} | {"site.mount"}
-                  | {f"{sec}.{fld}" for sec, fld, *_r in settings.FINDER_FIELDS.values()})
-        fields = shared | {self.FORM_TO_SETTING.get(k, k) for k in self.tags}
+        # only a field whose text was changed since it was shown changes its source (an untouched form saves with
+        # the same tags it opened with)
+        loaded = getattr(self, "_loaded_text", {}) or {}
+        seeded = settings.from_finder(s)
         defaults = {"site": Site().to_dict(), "optics": Optics().to_dict(), "options": dict(settings.DEFAULT_OPTIONS)}
-        for dotted in fields:
-            if dotted in self.app.p_values or dotted in fits:
+        for key in self.tags:
+            dotted = self.FORM_TO_SETTING.get(key, key)
+            sec, _, fld = dotted.partition(".")
+            if sec not in new or dotted in fits or key not in loaded:
                 continue
-            sec, _, key = dotted.partition(".")
-            if sec not in new:
+            if str(self.vars[key].get()).strip() == loaded[key]:
                 continue
-            val = new[sec].get(key)
-            if val in (None, "") or (isinstance(val, str) and not val.strip()) or _same(val, defaults[sec].get(key)):
-                unmark(dotted)
-            else:
+            val = new[sec].get(fld)
+            if dotted in settings.FINDER_DOTTED:
+                # a limit the finder seeded (or SCHED's own) typed over: the user's own, never seeded again
+                seeded.pop(dotted, None)
                 settings.mark_set_here(s, dotted)
+            elif dotted in self.app.p_values:
+                if _same(self.app.p_values[dotted], val):   # typed back to SHOBS-P's value: follow SHOBS-P again
+                    unmark(dotted)
+                else:
+                    settings.mark_set_here(s, dotted)
+            elif val in (None, "") or (isinstance(val, str) and not val.strip()) or \
+                    _same(val, defaults[sec].get(fld)):
+                unmark(dotted)                            # back to empty / the default
+            else:
+                # the user's own value: a SHOBS-P installed later must not overwrite it
+                settings.mark_set_here(s, dotted)
+        s["from_finder"] = seeded
         s["site"], s["optics"] = site, op
         s["options"] = opts
         if not settings.save_settings(s):
             set_msg(self.msg_var, self.msg, "✖ Not saved: the settings file is not writable.")
             return False
         settings.log("settings saved")
+        self.app.site_name_note = ""                      # said; the user has seen the page and saved
         self._tz_guessed = False
         self._tz_hint()
         self._loaded_text = {k: str(var.get()).strip() for k, var in self.vars.items()}
@@ -2528,7 +2554,7 @@ class EditTargetDialog:
             app = self.app
             x = app.winfo_rootx() + max(0, (app.winfo_width() - w) // 2)
             y = app.winfo_rooty() + max(0, (app.winfo_height() - h) // 3)
-            x, y = min(max(0, x), max(0, sw - w)), min(max(0, y), max(0, sh - h - 40))
+            x, y = _clamp_to_screen(app, x, y, w, h, sw, sh)
             win.geometry(f"{w}x{h}+{x}+{y}")
         except tk.TclError:
             pass

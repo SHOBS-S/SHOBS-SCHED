@@ -8,9 +8,12 @@ ASIAIR (ZWO) frames carry: INSTRUME (camera model), BAYERPAT (one-shot-color onl
 ASIAIR writes the mount driver there ("EQMod Mount"), not the telescope."""
 from __future__ import annotations
 
+import math
+
 BLOCK = 2880
 CARD = 80
 MAX_BLOCKS = 200            # a header longer than ~7000 cards is not a camera frame
+NOT_BAYER = frozenset({"NONE", "MONO", "N/A", "NA", "-"})     # BAYERPAT values some software writes for mono
 
 # what the Setup page fills, in its order: (Setup field, label, FITS keyword(s) it comes from)
 FIELDS = (
@@ -66,15 +69,29 @@ def parse_header(data: bytes) -> dict:
     if not data[:9].startswith(b"SIMPLE  =") and not data[:9].startswith(b"SIMPLE ="):
         raise FitsError("it does not start like a FITS file (no SIMPLE card)")
     out: dict = {}
+    long_key = None                       # a string value ending in "&" continues on CONTINUE cards
     for i in range(0, len(data) - CARD + 1, CARD):
         card = data[i:i + CARD].decode("ascii", "replace")
         key = card[:8].strip().upper()
         if key == "END":
             break
+        if key == "CONTINUE":
+            more = _value(card[8:])
+            if long_key and isinstance(more, str):
+                out[long_key] = out[long_key][:-1] + more
+                if not more.endswith("&"):
+                    long_key = None
+            continue
+        long_key = None
         if not key or key in ("COMMENT", "HISTORY") or card[8:10] != "= ":
             continue
         if key not in out:
             out[key] = _value(card[10:])
+            if isinstance(out[key], str) and out[key].endswith("&"):
+                long_key = key
+    for k, v in out.items():             # an unfinished continuation keeps no dangling "&"
+        if isinstance(v, str) and v.endswith("&"):
+            out[k] = v[:-1]
     return out
 
 
@@ -103,9 +120,9 @@ def _num(v):
         return None
     try:
         f = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return f if f == f else None
+    return f if math.isfinite(f) else None           # NaN and ±inf are not values
 
 
 def camera_values(hdr: dict) -> tuple[dict, list[str], list[str]]:
@@ -122,7 +139,8 @@ def camera_values(hdr: dict) -> tuple[dict, list[str], list[str]]:
     else:
         missing.append("INSTRUME")
     bayer = hdr.get("BAYERPAT")
-    vals["optics.color_camera"] = isinstance(bayer, str) and bool(bayer.strip())
+    vals["optics.color_camera"] = (isinstance(bayer, str) and bool(bayer.strip())
+                                   and bayer.strip().upper() not in NOT_BAYER)
     gain = _num(hdr.get("GAIN"))
     if gain is not None and gain >= 0:
         vals["optics.gain"] = round(gain, 6)
@@ -154,9 +172,10 @@ def camera_values(hdr: dict) -> tuple[dict, list[str], list[str]]:
         missing.append("FOCALLEN")
     rot = _num(hdr.get("ROTATOR"))
     if rot is not None:
-        ang = round(rot % 180.0, 3)
+        r = round(rot, 3)                                # rounded first: 179.99999 → 180 → 0, never 180
+        ang = round(r % 180.0, 3)
         vals["optics.camera_angle_deg"] = ang
-        if abs((rot % 360.0) - ang) > 1e-6:
+        if abs((r % 360.0) - ang) > 1e-6:
             notes.append(f"ROTATOR {rot:g}° = {ang:g}° (the other pier side)")
     else:
         missing.append("ROTATOR")

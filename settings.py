@@ -10,6 +10,7 @@ Tests point everything elsewhere with the SHOBS_SCHED_HOME and SHOBS_P_SETTINGS 
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -93,7 +94,7 @@ DEFAULT_OPTIONS = {
 def default_settings() -> dict:
     return {"version": APP_VERSION, "site": Site().to_dict(), "optics": Optics().to_dict(),
             "options": dict(DEFAULT_OPTIONS), "observer_code": "", "set_here": [], "shobs_p_read": "",
-            "from_fits": {}, "export_dir": "",
+            "from_fits": {}, "from_finder": {}, "export_dir": "",
             # Export page: the ASIAIR folder ("" = Downloads); night plots on the printed card
             "asiair_dir": "", "card_plots": True}
 
@@ -179,7 +180,44 @@ def load_settings() -> dict:
                 out["options"].update(v)
             else:
                 out[k] = v
+        if "from_fits" not in data:          # written by v1.0.0, which never put these limits in set_here
+            migrate_v1_limits(out)
     return out
+
+
+def _default_of(dotted: str):
+    section, _, field = dotted.partition(".")
+    if section == "site":
+        return Site().to_dict().get(field)
+    if section == "optics":
+        return Optics().to_dict().get(field)
+    if section == "options":
+        return DEFAULT_OPTIONS.get(field)
+    return None
+
+
+def same_value(a, b) -> bool:
+    """Two settings values alike: numbers within a part in a million, anything else equal."""
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool) \
+            and not isinstance(b, bool):
+        return abs(float(a) - float(b)) < 1e-6 * max(1.0, abs(float(a)))
+    return a == b
+
+
+def migrate_v1_limits(s: dict) -> list[str]:
+    """One-time step for a settings file from v1.0.0: every limit SHOBS-P's finder could seed (minimum altitude,
+    darkness, the Suggested filter) whose saved value is not SCHED's default was the user's own choice → set here,
+    so the finder never overwrites it. Returns the fields marked."""
+    marked = []
+    for section, field, *_r in FINDER_FIELDS.values():
+        dotted = f"{section}.{field}"
+        val = (s.get(section) or {}).get(field)
+        if val is not None and not same_value(val, _default_of(dotted)):
+            mark_set_here(s, dotted)
+            marked.append(dotted)
+    if marked:
+        log(f"settings from v1.0.0: own limits kept as set here ({', '.join(marked)})")
+    return marked
 
 
 def save_settings(s: dict) -> bool:
@@ -212,10 +250,11 @@ def read_shobs_p() -> dict | None:
 
 
 def _num(v):
+    """A finite number, or None (text, NaN and ±inf are not values)."""
     try:
         f = float(v)
-        return f if f == f else None
-    except (TypeError, ValueError):
+        return f if math.isfinite(f) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -293,10 +332,23 @@ def from_fits(s: dict) -> dict:
     return dict(ff) if isinstance(ff, dict) else {}
 
 
+def from_finder(s: dict) -> dict:
+    """The limits seeded from SHOBS-P's finder, {"site.min_alt": 30.0, ...} (the value seeded). Seeded once: a later
+    change of SHOBS-P's finder does not move them; a value typed over one is the user's own and leaves this record."""
+    ff = s.get("from_finder")
+    return dict(ff) if isinstance(ff, dict) else {}
+
+
+FINDER_DOTTED = frozenset(f"{sec}.{fld}" for sec, fld, *_r in FINDER_FIELDS.values())
+
+
 def merge_shobs_p(s: dict) -> tuple[dict, list[str]]:
-    """Fill site/optics/limits from SHOBS-P where SCHED has no value of its own ("set here" and "from FITS" values
-    always win). Returns (settings, the field names taken from SHOBS-P). s['shobs_p_read'] records the file's date.
-    Also undoes an older build's slip: SHOBS-P's telescope name copied into the site name is cleared (logged)."""
+    """Fill site/optics from SHOBS-P where SCHED has no value of its own ("set here" and "from FITS" values always
+    win); these follow SHOBS-P. Its finder's limits are STARTING values only: one is applied when SCHED's value is
+    still SCHED's default, once (recorded in s['from_finder']), never again. Returns (settings, the field names that
+    are SHOBS-P's, seeded limits included). s['shobs_p_read'] records the file's date.
+    Also undoes an older build's slip: SHOBS-P's telescope name copied into the site name is cleared (logged; the
+    name cleared is left in s['site_name_cleared'] for the Setup page to say once — not saved)."""
     p = read_shobs_p()
     taken: list[str] = []
     if not p:
@@ -307,16 +359,28 @@ def merge_shobs_p(s: dict) -> tuple[dict, list[str]]:
     site = s.setdefault("site", {})
     if scope and str(site.get("name") or "").strip() == scope and "site.name" not in keep:
         site["name"] = ""
+        s["site_name_cleared"] = scope
         log(f"site name “{scope}” was SHOBS-P's telescope name (copied there by an older build); cleared")
+    seeded = from_finder(s)
     for dotted, val in shobs_p_values(p).items():
         if dotted in keep:
             continue
         section, _, field = dotted.partition(".")
+        if dotted in FINDER_DOTTED:
+            cur = (s.get(section) or {}).get(field)
+            if dotted in seeded:                               # seeded before: SCHED keeps it
+                if same_value(cur, seeded[dotted]):
+                    taken.append(dotted)
+                continue
+            if cur is not None and not same_value(cur, _default_of(dotted)):
+                continue                                       # SCHED's own value
+            seeded[dotted] = val
         if not field:
             s[section] = val
         else:
             s.setdefault(section, {})[field] = val
         taken.append(dotted)
+    s["from_finder"] = seeded
     try:
         stamp = os.path.getmtime(shobs_p_settings_path())
         s["shobs_p_read"] = datetime.fromtimestamp(stamp).strftime("%Y-%m-%d")
