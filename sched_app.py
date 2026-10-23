@@ -2425,7 +2425,7 @@ class EditTargetDialog:
         t = self.t
         head("Target")
         row("Name", "name", t.name, width=24)
-        row("SHOBS-P mode", "mode", dict((m, c) for c, m in MODE_CHOICES)[t.mode if t.mode in "VTD" else "V"], "",
+        row("SHOBS-P mode", "mode", dict((m, c) for c, m in MODE_CHOICES)[t.mode if t.mode in ("V", "T", "D") else "V"], "",
             16, [c for c, _m in MODE_CHOICES])
         row("Group", "kind", dict((k, lab) for lab, k in GROUP_CHOICES).get(t.kind, "Variable"),
             "the Targets page group (and how it is planned)", 12, [lab for lab, _k in GROUP_CHOICES])
