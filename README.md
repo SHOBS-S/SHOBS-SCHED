@@ -2,8 +2,8 @@
 
 SHOBS-SCHED plans each night's observing for the three
 [SHOBS-P](https://github.com/SHOBS-S/SHOBS-P) photometry modes — **Variables**, **Transits** and **Discovery** —
-for one night or a rolling seven nights, and exports the plan for ASIAIR (a paste-ready coordinate list plus a
-printable plan card).
+for one night or a rolling seven nights, and exports each night for ASIAIR or NINA (a target file to import) plus a
+printable plan card.
 
 It works on its own. If SHOBS-P is installed on the same computer, SHOBS-SCHED reads its site and equipment
 settings so you type them once (it never changes SHOBS-P's files).
@@ -25,9 +25,15 @@ settings so you type them once (it never changes SHOBS-P's files).
    Moon, transits and meridian flips, and the hourly weather above it; click a block or a table row to pick it
    out), the nightly table, flats and darks to shoot, what didn't fit and why, and free time. Mark each block
    Done, Partial or Clouded out; **Re-review** rolls the week forward and puts missed targets back in the pool.
-4. **Export** — copy the ASIAIR coordinate list, or print the plan card.
+4. **Export** — the plan card itself, on screen: print it (with or without the night plots), or send one night at a
+   time to **ASIAIR** (a CSV for its Plan import, saved to Downloads or a folder that syncs to your tablet/phone) or
+   to **NINA** (a target list for the Sequencer's *Import targets*).
 
-All times are shown on your **site's clock**, whatever time zone the computer is set to.
+All times are shown on your **site's clock**, whatever time zone the computer is set to, and labelled
+"Local time (UTC−4)" (on a daylight-saving night "Local time (UTC−4 → UTC−5)").
+
+Setup can also **read your camera from a FITS frame** (camera, gain, e⁻/ADU, pixel size, focal length, binning,
+camera angle), and every Setup value is tagged with where it came from: *from SHOBS-P*, *from FITS* or *set here*.
 
 ## Install (Windows)
 
@@ -51,8 +57,8 @@ positions from the Astronomical Almanac's low-precision formulas.
 
 ## Credits
 
-The Schedule tab's night plot follows the design of the airmass plot in **TAPIR** (Transit and Ephemeris Prediction
-tool's `plot_airmass.cgi`) by Eric Jensen, Swarthmore College — GPL-3; Jensen, E. 2013, Astrophysics Source Code
+The Schedule tab's night plot follows the design of the airmass plot in **TAPIR**
+(`plot_airmass.cgi`) by Eric Jensen, Swarthmore College — GPL-3; Jensen, E. 2013, Astrophysics Source Code
 Library, [ascl:1306.007](https://ascl.net/1306.007); <https://github.com/elnjensen/Tapir>: airmass and elevation
 axes, twilight shading with the times across the top, the nautical-twilight ± 1.5 h time span, and the Moon's line
 growing with its phase. SCHED's plot is its own code (matplotlib); no TAPIR code is copied.
