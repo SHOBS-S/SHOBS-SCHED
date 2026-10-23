@@ -949,6 +949,67 @@ class TestAppWithFakes(Base):
         page.use_downloads()
         self.assertEqual(settings.load_settings()["asiair_dir"], "")
 
+    def test_export_status_dropped_when_night_rebuilt(self):
+        self.golden_home()
+        app = self.open()
+        self.build(n=2)
+        self._sandbox_downloads()
+        app.show_page(3)
+        page = app.pages[3]
+        for v in page.night_vars.values():
+            v.set(True)
+        a, b = "2026-10-20", "2026-10-21"
+        page.export_night(a, "asiair")
+        page.export_night(b, "nina")
+        app.show_page(3)                                       # nothing changed: both kept
+        self.assertIn((a, "asiair"), page.results)
+        self.assertIn((b, "nina"), page.results)
+        # the 20th is rebuilt differently (a block moves): its "✔ saved" goes, the 21st's stays
+        app.schedule.nights[0]["blocks"][0]["start"] += 0.01
+        app.schedule_changed()
+        app.show_page(3)
+        self.assertNotIn((a, "asiair"), page.results)
+        self.assertIn((b, "nina"), page.results)
+        self.assertNotIn("asiair", page.nights_ui[a], "no stale status line on screen")
+        self.assertIn("nina", page.nights_ui[b])
+        # NINA always to Downloads, even with a remembered Save CSV folder from v1.0.0
+        other = os.path.join(self.tmp, "old_save_csv_folder")
+        os.makedirs(other)
+        app.settings["export_dir"] = other
+        self.assertEqual(os.path.dirname(page.export_night(b, "nina")), os.path.join(self.tmp, "Downloads"))
+
+    def test_export_nights_flow_and_plots_tick(self):
+        self.golden_home()
+        app = self.open()
+        self.build(n=7)
+        app.geometry("700x900+0+0")
+        app.show_page(3)
+        self.settle()
+        page = app.pages[3]
+        self.assertGreater(len(page._check_rows_frames), 1, "seven nights wrap onto more rows when narrow")
+        fw = page.checks.winfo_width()
+        for w in page.check_widgets:
+            self.assertLessEqual(w.winfo_rootx() - page.checks.winfo_rootx() + w.winfo_width(), fw + 1,
+                                 w.cget("text"))
+        # the notes column wraps to the room left: nothing past the card's right edge
+        cw = page.body.canvas.winfo_width()
+        for iso, ui in page.nights_ui.items():
+            for w in ui["box"].winfo_children():
+                self.assertLessEqual(w.winfo_rootx() - page.body.canvas.winfo_rootx() + w.winfo_width(), cw + 1)
+        # Include night plots: remembered; off → no plots asked for
+        asked = []
+        page.card_plots = lambda nights: asked.append(len(nights)) or {n.date: b"png" for n in nights}
+        self.assertTrue(page.plots_var.get())
+        page.print_card()
+        self.assertEqual(len(asked), 1)
+        page.plots_var.set(False)
+        page._plots_changed()
+        self.assertIs(settings.load_settings()["card_plots"], False)
+        path = page.print_card()
+        self.assertEqual(len(asked), 1, "plots off: not drawn")
+        with open(path, encoding="utf-8") as fh:
+            self.assertNotIn("<img", fh.read())
+
     def test_downloads_dir_fallbacks(self):
         real = os.path.expanduser
         home = os.path.join(self.tmp, "home")

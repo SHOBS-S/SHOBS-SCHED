@@ -4193,8 +4193,8 @@ class ExportPage:
                 "their imports take the targets' positions only; times, exposures and notes stay on the card.")
     PROGRAMS = (("asiair", "ASIAIR"), ("nina", "NINA"))
     HOW = {"asiair": "In ASIAIR's Plan: Add → Import, and paste the file's text.",
-           "nina": "In NINA: Sequencer → Import targets, and pick this file (each target gets your default "
-                   "sequence template)."}
+           "nina": "In NINA: Sequencer → Import targets, and pick this file. It REPLACES the targets now in the "
+                   "sequence; each target gets your default sequence template."}
     COLUMNS = ("Time", "Target", "RA / Dec (J2000)", "SHOBS-P mode", "Alt", "Meridian", "Exposure", "Frames",
                "Notes")
 
@@ -4207,21 +4207,29 @@ class ExportPage:
         ttk.Label(top, text="Nights", style="Bold.TLabel").pack(anchor="w")
         self.checks = ttk.Frame(top, style="Card.TFrame")
         self.checks.pack(fill=tk.X, pady=(px(app, 2), px(app, 6)))
+        self.checks.bind("<Configure>", lambda e: self._flow_checks(e.width), add="+")
+        self.check_widgets: list = []
         self.night_vars: dict[str, tk.BooleanVar] = {}
         bar = ttk.Frame(self.frame, style="Card.TFrame")
         bar.pack(fill=tk.X, pady=(0, px(app, 4)))
         style.green_button(bar, "Print plan card", self.print_card).pack(side=tk.LEFT)
+        self.plots_var = tk.BooleanVar(value=bool(app.settings.get("card_plots", True)))
+        ttk.Checkbutton(bar, text="Include night plots", variable=self.plots_var, style="Card.TCheckbutton",
+                        command=self._plots_changed).pack(side=tk.LEFT, padx=(px(app, 12), 0))
         self.angle_var = tk.StringVar()
-        ttk.Label(bar, textvariable=self.angle_var, style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 12), 0))
+        angle = ttk.Label(self.frame, textvariable=self.angle_var, style="Hint.TLabel", justify=tk.LEFT)
+        angle.pack(anchor="w", fill=tk.X)
+        follow_wrap(angle, self.frame, px(app, 20))
         # where Export to ASIAIR writes: e.g. an iCloud / OneDrive folder that syncs to the phone running ASIAIR
         fold = ttk.Frame(self.frame, style="Card.TFrame")
-        fold.pack(fill=tk.X, pady=(0, px(app, 4)))
+        fold.pack(fill=tk.X, pady=(px(app, 4), px(app, 4)))
         ttk.Label(fold, text="ASIAIR export folder:", style="Bold.TLabel").pack(side=tk.LEFT)
+        ttk.Button(fold, text="Choose folder…", command=self.choose_folder).pack(side=tk.LEFT, padx=(px(app, 8), 0))
+        self.downloads_btn = ttk.Button(fold, text="Use Downloads", command=self.use_downloads)
         self.folder_var = tk.StringVar()
         self.folder_label = ttk.Label(fold, textvariable=self.folder_var, style="Card.TLabel")
-        self.folder_label.pack(side=tk.LEFT, padx=(px(app, 6), 0))
-        ttk.Button(fold, text="Choose folder…", command=self.choose_folder).pack(side=tk.LEFT, padx=(px(app, 10), 0))
-        self.downloads_btn = ttk.Button(fold, text="Use Downloads", command=self.use_downloads)
+        self.folder_label.pack(side=tk.LEFT, padx=(px(app, 8), 0))
+        self._fold = fold
         hint = ttk.Label(self.frame, text="A folder that syncs to the phone or tablet running ASIAIR (iCloud Drive, "
                                           "OneDrive) puts each night's file there. NINA files go to the Downloads "
                                           "folder.", style="Hint.TLabel", justify=tk.LEFT)
@@ -4242,12 +4250,13 @@ class ExportPage:
     def refresh(self):
         for w in self.checks.winfo_children():
             w.destroy()
+        self.check_widgets = []
         nights = self.app.schedule.nights
         old = {k: v.get() for k, v in self.night_vars.items()}
         self.night_vars = {}
         if not nights:
-            ttk.Label(self.checks, text="No schedule yet: build one on the Schedule page.", style="Hint.TLabel").pack(
-                anchor="w")
+            self.check_widgets.append(ttk.Label(self.checks, text="No schedule yet: build one on the Schedule page.",
+                                                style="Hint.TLabel"))
         tonight = self.app.tonight().isoformat()
         for n in nights:
             iso = n.get("date", "")
@@ -4255,14 +4264,57 @@ class ExportPage:
             var.trace_add("write", lambda *_: self.update_preview())
             self.night_vars[iso] = var
             nb = len(n.get("blocks", []))
-            ttk.Checkbutton(self.checks, text=f"{night_label(iso, self.app.site)} ({nb} block{'s' if nb != 1 else ''})",
-                            variable=var, style="Card.TCheckbutton").pack(side=tk.LEFT, padx=(0, px(self.app, 12)))
+            self.check_widgets.append(ttk.Checkbutton(
+                self.checks, text=f"{night_label(iso, self.app.site)} ({nb} block{'s' if nb != 1 else ''})",
+                variable=var, style="Card.TCheckbutton"))
+        self._flow_checks(self.checks.winfo_width())
         if nights and not any(v.get() for v in self.night_vars.values()):
             for v in self.night_vars.values():
                 v.set(True)
-        live = {n.get("date") for n in nights}
-        self.results = {k: v for k, v in self.results.items() if k[0] in live}
+        # a result belongs to the night as it was when the file was written: a rebuilt night drops it
+        self.results = {k: v for k, v in self.results.items() if v.get("fp") == self.fingerprint(k[0])}
         self.update_preview()
+
+    def _flow_checks(self, width: int):
+        """Lay the night ticks out left to right in as many rows as the page width needs."""
+        width = int(width or 0)
+        if width <= 1:
+            width = max(1, self.frame.winfo_width())
+        key = (width, tuple(str(w) for w in self.check_widgets))
+        if key == getattr(self, "_flow_key", None):
+            return                                  # our own re-layout changed the height only
+        self._flow_key = key
+        for f in getattr(self, "_check_rows_frames", []):
+            try:
+                f.destroy()
+            except tk.TclError:
+                pass
+        self._check_rows_frames = []
+        gap = px(self.app, 12)
+        x, row = 0, None
+        for w in self.check_widgets:
+            try:
+                need = w.winfo_reqwidth() + gap
+                if row is None or (x and x + need > width):
+                    row = ttk.Frame(self.checks, style="Card.TFrame")
+                    row.pack(fill=tk.X, anchor="w")
+                    self._check_rows_frames.append(row)
+                    x = 0
+                w.pack(in_=row, side=tk.LEFT, padx=(0, gap))
+                w.lift(row)
+                x += need
+            except tk.TclError:
+                pass
+
+    def fingerprint(self, iso: str) -> str | None:
+        """What the night's exports were made from (its blocks); None when the night is gone."""
+        import hashlib
+        import json as _json
+        for n in self.app.schedule.nights:
+            if n.get("date") == iso:
+                data = _json.dumps(n.get("blocks", []), sort_keys=True, default=str)
+                return hashlib.sha1(data.encode("utf-8")).hexdigest()
+        return None
 
     def chosen(self) -> list[NightPlan]:
         return [NightPlan.from_dict(n) for n in self.app.schedule.nights if self.night_vars.get(n.get("date"),
@@ -4312,7 +4364,7 @@ class ExportPage:
         self.folder_label.configure(style="Warn.TLabel" if "⚠" in text else "Card.TLabel")
         if self.asiair_folder():
             if not self.downloads_btn.winfo_manager():
-                self.downloads_btn.pack(side=tk.LEFT, padx=(px(self.app, 6), 0))
+                self.downloads_btn.pack(side=tk.LEFT, padx=(px(self.app, 6), 0), before=self.folder_label)
         else:
             self.downloads_btn.pack_forget()
 
@@ -4382,9 +4434,11 @@ class ExportPage:
         return "\n".join(out)
 
     def _note(self, text, st):
-        lbl = ttk.Label(self.card, text=text, style=st, justify=tk.LEFT)
-        lbl.pack(anchor="w", fill=tk.X, pady=px(self.app, 6))
-        follow_wrap(lbl, self.card, px(self.app, 20))
+        holder = ttk.Frame(self.card, style="Card.TFrame")      # destroyed with the label (no handler pile-up)
+        holder.pack(fill=tk.X, pady=px(self.app, 6))
+        lbl = ttk.Label(holder, text=text, style=st, justify=tk.LEFT)
+        lbl.pack(anchor="w", fill=tk.X)
+        follow_wrap(lbl, holder, px(self.app, 20))
 
     def _sections(self, ex, n, wbd, tbi) -> dict:
         if hasattr(ex, "card_sections"):
@@ -4478,8 +4532,11 @@ class ExportPage:
                      pady=(1, 1 if r == len(rows) else 0))
             return lbl
 
+        notes, heads_notes = [], []
         for c, h in enumerate(self.COLUMNS):
-            cell(0, c, h, style.font(9, "bold"), bg="#eef3f6", fg=style.SIDE)
+            lb = cell(0, c, h, style.font(9, "bold"), bg="#eef3f6", fg=style.SIDE)
+            if c == len(self.COLUMNS) - 1:
+                heads_notes.append(lb)
         grid.columnconfigure(len(self.COLUMNS) - 1, weight=1)
         for i, r in enumerate(rows, 1):
             lock = " (locked)" if r.get("locked") else (" (set by you)" if r.get("set_by_user") else "")
@@ -4499,7 +4556,25 @@ class ExportPage:
             cell(i, 5, r.get("meridian", "—"), style.font(11, "bold"))
             cell(i, 6, exp)
             cell(i, 7, r.get("frames", "—"), wrap=ch * 14)
-            cell(i, 8, r.get("notes", ""), wrap=ch * 46)
+            notes.append(cell(i, 8, r.get("notes", ""), wrap=ch * 46))
+
+        def fit_notes(e=None, notes=notes):
+            """Notes wrap to the room the other columns leave (ch × 46 at most, ch × 16 at least)."""
+            try:
+                width = int(e.width) if e is not None else grid.winfo_width()
+                if width <= 1:
+                    return
+                used = 0
+                for c in range(len(self.COLUMNS) - 1):
+                    used += max((w.winfo_reqwidth() for w in grid.grid_slaves(column=c)), default=0) + 1
+                room = width - used - 2 - 2 * pad[0] - 2
+                wrap = int(min(ch * 46, max(ch * 16, room)))
+                for lb in notes + heads_notes:
+                    if int(float(lb.cget("wraplength") or 0)) != wrap:
+                        lb.configure(wraplength=wrap)
+            except tk.TclError:
+                pass
+        grid.bind("<Configure>", fit_notes, add="+")
 
     # ---- per-night results (status line, Open folder, Open in Notepad, Show file contents) ----
     def _draw_status(self, iso: str):
@@ -4518,7 +4593,7 @@ class ExportPage:
             row.pack(fill=tk.X, pady=(px(app, 4), 0))
             lbl = ttk.Label(row, text=r["msg"], style=style.status_style(style.kind_of(r["msg"])), justify=tk.LEFT)
             lbl.pack(anchor="w", fill=tk.X)
-            follow_wrap(lbl, st, px(app, 10))
+            follow_wrap(lbl, row, px(app, 10))
             ui[prog] = {"label": lbl, "contents": None}
             path = r.get("path")
             if not path:
@@ -4551,7 +4626,8 @@ class ExportPage:
         return r["shown"]
 
     def _result(self, iso: str, prog: str, msg: str, path: str = "", text: str = ""):
-        self.results[(iso, prog)] = {"msg": msg, "path": path, "text": text, "shown": False}
+        self.results[(iso, prog)] = {"msg": msg, "path": path, "text": text, "shown": False,
+                                     "fp": self.fingerprint(iso)}
         self.msg_var.set(msg)
         self._draw_status(iso)
 
@@ -4590,7 +4666,7 @@ class ExportPage:
             self._result(iso, program, f"⚠ {name}: nothing to export for {when}: no target that night has "
                                        "coordinates.")
             return None
-        folder = self.asiair_folder() if program == "asiair" else settings.export_dir(app.settings)
+        folder = self.asiair_folder() if program == "asiair" else settings.downloads_dir()
         try:
             path, note = ex.write_night_file(text, ex.night_file_name(program, iso), folder, settings.downloads_dir())
         except OSError as exc:
@@ -4693,6 +4769,10 @@ class ExportPage:
         return path if self._launch(["notepad.exe", path], [path]) else None
 
     # ---- Print ----
+    def _plots_changed(self):
+        self.app.settings["card_plots"] = bool(self.plots_var.get())
+        settings.save_settings(self.app.settings)
+
     def card_plots(self, nights) -> dict | None:
         """Night plots for the printed card ({night ISO: PNG bytes}, white print style); None when matplotlib is
         missing or no night could be drawn (the card then prints exactly as before)."""
@@ -4722,7 +4802,11 @@ class ExportPage:
             return None
         try:
             kw = {"targets_by_id": self.app.targets_by_id()}
-            plots = self.card_plots(nights)
+            plots = None
+            if self.plots_var.get():
+                self._msg("Drawing the night plots…")
+                self.app.update_idletasks()
+                plots = self.card_plots(nights)
             if plots:
                 kw["plots"] = plots
             html = ex.plan_card_html(nights, self.app.site, self.app.settings, self._weather_by_date(nights), **kw)

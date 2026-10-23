@@ -215,9 +215,15 @@ def dec_telescopius(dec_deg: float) -> str:
     return f"{sign}{d:02d}{DEG} {m:02d}' {s:02d}\""
 
 
+# Letters NFKD does not split into a base letter + accent (they would vanish): Tromsø → Tromso, not Troms.
+_TRANSLIT = str.maketrans({"ø": "o", "Ø": "O", "æ": "ae", "Æ": "AE", "ß": "ss", "ð": "d", "Ð": "D", "þ": "th",
+                           "Þ": "Th", "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "œ": "oe", "Œ": "OE", "ı": "i",
+                           "ħ": "h", "Ħ": "H"})
+
+
 def ascii_name(name: str) -> str:
     """Plain ASCII, no commas or quotes (the mosaic CSV is unquoted)."""
-    t = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode("ascii")
+    t = unicodedata.normalize("NFKD", str(name or "").translate(_TRANSLIT)).encode("ascii", "ignore").decode("ascii")
     for ch in ",\"'\t\r\n;":
         t = t.replace(ch, " ")
     return " ".join(t.split()) or "Target"
@@ -366,7 +372,7 @@ def night_file_text(program: str, night, targets_by_id, site: Site | None = None
     """The file for ONE night (both programs plan one night at a time)."""
     if str(program).lower() == "nina":
         return nina_csv([night], targets_by_id, site, optics=optics)
-    return asiair_csv([night], targets_by_id, site, optics=optics) + "\n"
+    return asiair_csv([night], targets_by_id, site, optics=optics)     # byte for byte v1.0.0's Save CSV
 
 
 def folder_writable(folder: str) -> bool:
@@ -603,7 +609,7 @@ td.notes { font-size: 10pt; }
 .list ul { margin: 0; padding-left: 16pt; }
 .empty { font-style: italic; }
 .plot { margin: 4pt 0; break-inside: avoid; page-break-inside: avoid; }
-.plot img { display: block; width: 100%; height: auto; max-height: 170mm; object-fit: contain; }
+.plot img { display: block; width: 100%; height: auto; max-height: 115mm; object-fit: contain; }
 footer .zone { font-size: 8pt; color: #333; }
 footer { break-before: avoid; page-break-before: avoid; margin-top: 8pt; border-top: 0.75pt solid #000; padding-top: 3pt; font-size: 9pt; }
 @media print { body { padding: 0; max-width: none; font-size: 10pt; } h1 { font-size: 16pt; } h2 { font-size: 14pt; }

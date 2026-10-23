@@ -150,6 +150,7 @@ class TestAsiairCsv(unittest.TestCase):
                                                        end=2461334.7).to_dict()])
         line = export.asiair_csv([n], {"s": t}, SITE).split("\n")[1]
         self.assertTrue(line.startswith("Foo Bar <&>, 05hr 35' 17\", -05º 23' 28\", "))
+        self.assertEqual(export.ascii_name("Tromsø Æbelø Straße Łódź Þór"), "Tromso AEbelo Strasse Lodz Thor")
         self.assertTrue(all(ord(c) < 128 for c in line.split(",")[0]))
         line2 = export.asiair_csv([n], {"s": t}, SITE, pane_names=False).split("\n")[1]
         self.assertTrue(line2.startswith("Pane 1, "))
@@ -339,7 +340,8 @@ class TestNightFiles(unittest.TestCase):
 
     def test_asiair_file_is_one_night_and_unchanged_format(self):
         text = export.night_file_text("asiair", oct22_night(), BY_ID, SITE, optics=OPTICS)
-        self.assertEqual(text, export.asiair_csv([oct22_night()], BY_ID, SITE, optics=OPTICS) + "\n")
+        self.assertEqual(text, export.asiair_csv([oct22_night()], BY_ID, SITE, optics=OPTICS))
+        self.assertFalse(text.endswith("\n"), "byte-identical to v1.0.0 Save CSV: no trailing newline")
         self.assertNotIn("TOI-2046 b", text, "only that night's targets")
         self.assertEqual([ln.split(", ")[0] for ln in text.splitlines()[1:]], ["HD 219134", "K2-29 b"])
         path, note = export.write_night_file(text, export.night_file_name("asiair", "2026-10-22"), self.downloads,
