@@ -765,7 +765,8 @@ def parse_vizier_vsx_row(row: dict) -> dict:
     """One B/vsx/vsx CSV row (space-padded strings) → the common variable dict. f_min "(" = min is an amplitude."""
     g = lambda k: str(row.get(k, "") or "").strip()
     mx, mn = _f(g("max")), _f(g("min"))
-    if g("f_min") == "(" and mx is not None and mn is not None:
+    # MinIsAmplitude: "(" in the ASU text output, "Y" in today's TAP/ASU replies (both seen)
+    if g("f_min") in ("(", "Y") and mx is not None and mn is not None:
         mn = mx + mn
     return {"name": _clean(g("Name")), "ra": _f(g("RAJ2000")), "dec": _f(g("DEJ2000")), "vtype": g("Type"),
             "period": _f(g("Period")), "epoch": _f(g("Epoch")), "max": mx, "min": mn, "band": g("n_max"),
@@ -1222,6 +1223,7 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     floor = max(float(site.min_alt or 0.0), sky.alt_for_airmass(site.max_airmass) if site.max_airmass else 0.0)
 
     best: dict[str, tuple] = {}
+    first: dict[str, tuple] = {}
     cands = [p for p in catalog if p.get("vmag") is not None and vmin <= p["vmag"] <= vmax
              and (p.get("depth") or 0) >= min_depth and p.get("t14") and _key_name(p.get("name")) not in excl
              and sky.culmination_alt(p["dec"], site.lat) >= floor]
@@ -1250,6 +1252,8 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
             k = _key_name(p["name"])
             if k not in best or score > best[k][0]:
                 best[k] = (score, p, ev, night[0], sig, pen, snr)
+            if k not in first or ev["t1"] < first[k][0]:
+                first[k] = (ev["t1"], ev["t4"])           # the soonest good transit: the page lists by it
 
     n_ref = 2 * int(o["suggest_max"]) if refine else 0
     total = len(cands) + n_ref
@@ -1271,6 +1275,7 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
                 except Exception:
                     pass
             p = entry[1]
+            first.pop(_key_name(p["name"]), None)
             pl = precise_planet(p["name"], mid)
             if pl:
                 p = dict(p, period=pl["period"], period_err=pl.get("period_err"), t0=pl["t0"],
@@ -1279,7 +1284,8 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     ranked = sorted(best.values(), key=lambda b: -b[0])[: int(o["suggest_max"])]
     out = []
     for score, p, ev, d, sig, pen, snr in ranked:
-        note = f"{_night_label(d, site)}: ingress {sky.hhmm(ev['t1'], site.tz)}, egress {sky.hhmm(ev['t4'], site.tz)} (site clock)"
+        note = (f"{_night_label(d, site)}: ingress {sky.hhmm(ev['t1'], site.tz)}, egress "
+                f"{sky.hhmm(ev['t4'], site.tz)}, {sky.local_label(site.tz, ev['t1'])}")
         if sig is not None and sig > warn:
             note += f"; ⚠ Tc uncertain ±{sig:.0f} min"
         pl = Planet(name=p["name"], period=p["period"], period_err=p.get("period_err"), t0=p["t0"],
@@ -1288,10 +1294,405 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
         t = Target(name=p["name"], kind="transit", mode="T", ra=p["ra"], dec=p["dec"], vmag=p["vmag"],
                    enabled=False, suggested=True, source="NEA", planet=pl.__dict__.copy(), notes=note,
                    added=today_iso(site))
+        f1, f4 = first.get(_key_name(p["name"]), (ev["t1"], ev["t4"]))
         t.suggest_info = {"night": d.isoformat(), "t1": ev["t1"], "tc": ev["tc"], "t4": ev["t4"], "score": score,
-                          "snr": snr, "moon_penalty": pen, "tc_sigma_min": sig}
+                          "snr": snr, "moon_penalty": pen, "tc_sigma_min": sig, "when": f1,
+                          "text": f"{_fmt_day(f1, site)} {sky.hhmm(f1, site.tz)}–{sky.hhmm(f4, site.tz)} (full)"}
         out.append(t)
     return out
+
+
+# ---- suggested variables (VSX via VizieR B/vsx) --------------------------------------------------------------------
+
+# Type families of the "Find suggested variables" pop-up → VSX type codes, matched as prefixes of the type's first
+# part ("EA/SD", "RRAB/BL", "DSCTC", "SRB", "CWA"); "M" (Mira) only as itself (MISC is not a Mira). A trailing ":"
+# marks an uncertain type (left out unless asked for). "other" = any type outside the five families.
+VAR_FAMILIES = (
+    ("eclipsing", "Eclipsing binaries (EA, EB, EW)", ("EA", "EB", "EW")),
+    ("rrlyr", "RR Lyrae (RRAB, RRC)", ("RRAB", "RRC", "RRD", "RR")),
+    ("dsct", "δ Scuti, HADS, SX Phe", ("HADS", "DSCTC", "DSCT", "SXPHE")),
+    ("long", "Miras and semi-regulars (M, SR)", ("M", "SR")),
+    ("cepheid", "Cepheids (DCEP, CW)", ("DCEP", "CEP", "CW")),
+    ("other", "Other types", ()),
+)
+VAR_FAMILY_NAMES = {k: lab for k, lab, _c in VAR_FAMILIES}
+NOT_VARIABLE_TYPES = ("CST", "NON-CV", "VAR", "*", "")       # constant, not a variable, or no type at all
+VISUAL_BANDS = ("V", "CV", "Vj", "vis", "VT", "G", "Hp", "g")   # max given in (near-)V light; R, I, W1, Kp... are not
+VAR_SEARCH_MAX_ROWS = 3000
+VAR_SEARCH_MAX_AGE_DAYS = 1.0
+VAR_SEARCH_DEFAULTS = {"families": ["eclipsing", "rrlyr", "dsct"], "uncertain": False, "pmin": None, "pmax": None,
+                       "punit": "d", "vmin": None, "vmax": None, "min_amp": 0.1, "max_results": 12}
+SHORT_PULSATOR_DAYS = 0.5          # a pulsator this short (or shorter) needs a whole cycle in one night
+FILLER_MIN_RUN_MIN = 60.0          # an any-time star needs at least this long above the limits in the dark
+CYCLE_MARGIN_MIN = 30.0            # a full cycle plus this margin
+
+
+def variable_family(vtype: str) -> tuple[str | None, bool]:
+    """(family key, uncertain) of a VSX type: "EA/SD" → ("eclipsing", False), "RRAB:" → ("rrlyr", True),
+    "DSCT|GDOR|SXPHE" → ("dsct", False), "MISC" → ("other", False), "CST" → (None, False)."""
+    s = str(vtype or "").strip()
+    first = re.split(r"[|+,]", s)[0].strip() if s else ""
+    uncertain = first.endswith(":") or s.endswith(":")
+    head = first.rstrip(":").split("/")[0].strip("() ").upper()
+    if head in NOT_VARIABLE_TYPES:
+        return None, uncertain
+    for key, _label, codes in VAR_FAMILIES:
+        for c in codes:
+            if (head == c) if c == "M" else head.startswith(c):
+                return key, uncertain
+    return "other", uncertain
+
+
+def var_search_params(options: dict | None) -> dict:
+    """The pop-up's parameters: the saved ones (options["var_search"]) over the defaults; the V range defaults to
+    Setup's Suggested-transits range (suggest_vmin / suggest_vmax)."""
+    o = dict(settings.DEFAULT_OPTIONS)
+    o.update(options or {})
+    p = dict(VAR_SEARCH_DEFAULTS)
+    saved = o.get("var_search")
+    if isinstance(saved, dict):
+        p.update({k: v for k, v in saved.items() if k in VAR_SEARCH_DEFAULTS})
+    if p.get("vmin") is None:
+        p["vmin"] = float(o["suggest_vmin"])
+    if p.get("vmax") is None:
+        p["vmax"] = float(o["suggest_vmax"])
+    fams = [f for f in (p.get("families") or []) if f in VAR_FAMILY_NAMES]
+    p["families"] = fams
+    p["punit"] = "h" if p.get("punit") == "h" else "d"
+    return p
+
+
+def _period_days(p: dict) -> tuple[float | None, float | None]:
+    k = 24.0 if p.get("punit") == "h" else 1.0
+    lo, hi = _f(p.get("pmin")), _f(p.get("pmax"))
+    return (lo / k if lo is not None else None), (hi / k if hi is not None else None)
+
+
+def _dec_reach(site, floor: float) -> tuple[float, float]:
+    """Declinations whose culmination clears the floor altitude: |lat − dec| ≤ 90 − floor."""
+    span = 90.0 - float(floor)
+    return max(-90.0, float(site.lat) - span), min(90.0, float(site.lat) + span)
+
+
+POLAR_CAP_DEC = 60.0               # stars nearer the (site's) pole than this are searched at every RA
+
+
+def _max_hour_angle(site, floor: float, dec_lo: float, dec_hi: float) -> float:
+    """The largest hour angle (degrees) at which a star of the searched declinations (outside the polar cap) still
+    clears the floor altitude, + 2° margin."""
+    lat = math.radians(float(site.lat))
+    cap = POLAR_CAP_DEC if site.lat >= 0 else -POLAR_CAP_DEC
+    lo, hi = (dec_lo, min(dec_hi, cap)) if site.lat >= 0 else (max(dec_lo, cap), dec_hi)
+    if hi < lo:
+        return 0.0
+    dec = np.radians(np.linspace(lo, hi, 61))
+    c = (math.sin(math.radians(floor)) - math.sin(lat) * np.sin(dec)) / np.maximum(1e-9, math.cos(lat) * np.cos(dec))
+    return float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))).max()) + 2.0
+
+
+def _ra_ranges(site, wins: list, widen: float = 90.0) -> list[tuple[float, float]] | None:
+    """RA ranges that can be up in the dark windows (LST at dusk − widen … LST at dawn + widen, widen = the largest
+    useful hour angle; the exact test is made per star later), as non-wrapping (lo, hi) pairs; None = every RA."""
+    starts = [float(sky.lst_deg(w[1], site.lon)) for w in wins]
+    lengths = [(w[2] - w[1]) * 360.985647 for w in wins]          # sidereal degrees of each dark window
+    a0 = starts[0]
+    offs = [(s - a0 + 180.0) % 360.0 - 180.0 for s in starts]      # the nights start within a few degrees
+    lo = a0 + min(offs) - widen
+    hi = a0 + max(o + n for o, n in zip(offs, lengths)) + widen
+    if hi - lo >= 360.0:
+        return None
+    start = lo % 360.0
+    stop = start + (hi - lo)
+    if stop <= 360.0:
+        return [(start, stop)]
+    return [(start, 360.0), (0.0, stop - 360.0)]
+
+
+def var_search_adql(p: dict, dec_lo: float, dec_hi: float, ras: list | None, top: int = VAR_SEARCH_MAX_ROWS,
+                    north: bool = True) -> str:
+    """The VizieR TAP query for the search: variables (VarFlag 0) brighter-than/inside the V range in a visual band,
+    reachable declinations, RAs up in the dark, the period range and the chosen families (none when "other" is
+    chosen: that is every type)."""
+    vmin, vmax = float(p["vmin"]), float(p["vmax"])
+    where = ["V = 0", f"max BETWEEN {vmin:.2f} AND {vmax:.2f}",
+             "n_max IN (" + ", ".join(f"'{b}'" for b in VISUAL_BANDS) + ")",
+             f"DEJ2000 BETWEEN {dec_lo:.3f} AND {dec_hi:.3f}"]
+    if ras:
+        polar = (f"DEJ2000 >= {POLAR_CAP_DEC:.0f}" if (north and dec_hi > POLAR_CAP_DEC) else
+                 f"DEJ2000 <= {-POLAR_CAP_DEC:.0f}" if (not north and dec_lo < -POLAR_CAP_DEC) else "")
+        ors = [f"RAJ2000 BETWEEN {a:.3f} AND {b:.3f}" for a, b in ras] + ([polar] if polar else [])
+        where.append("(" + " OR ".join(ors) + ")")
+    plo, phi = _period_days(p)
+    if plo is not None:
+        where.append(f"Period >= {plo:.8f}")
+    if phi is not None:
+        where.append(f"Period <= {phi:.8f}")
+    amp = float(_f(p.get("min_amp")) or 0.0)
+    if amp > 0:                         # f_min 'Y': min is the amplitude; else min − max is (same band, checked later)
+        where.append(f"((f_min = 'Y' AND min >= {amp:.3f}) OR (f_min IS NULL AND min - max >= {amp:.3f}))")
+    fams = p.get("families") or []
+    if fams and "other" not in fams:
+        groups = []
+        for key, _l, codes in VAR_FAMILIES:
+            if key not in fams:
+                continue
+            likes = [f"Type = '{c}'" if c == "M" else f"Type LIKE '{c}%'" for c in codes]
+            if key == "long":
+                likes.append("Type LIKE 'M:%'")
+                groups.append("(" + " OR ".join(likes) + ")")
+            elif key == "eclipsing":               # minima are timed: epoch and period needed
+                groups.append("((" + " OR ".join(likes) + ") AND Period > 0 AND Epoch > 0)")
+            else:                                  # pulsators: a period at least
+                groups.append("((" + " OR ".join(likes) + ") AND Period > 0)")
+        where.append("(" + " OR ".join(groups) + ")")
+    # oldest VSX entries first (OID order: the GCVS's named variables, then the big surveys): when there are more
+    # matches than the cap, the best-studied stars are the ones checked, from every part of the sky
+    return (f"SELECT TOP {int(top)} Name, V, RAJ2000, DEJ2000, Type, max, n_max, f_min, min, n_min, Epoch, Period "
+            "FROM \"B/vsx/vsx\" WHERE " + " AND ".join(where) + " ORDER BY OID")
+
+
+VAR_SEARCH_ASU_ROWS = 20000        # ASU filters less on the server (no types / bands / amplitude): fetch more
+
+
+def _var_search_asu(p: dict, dec_lo: float, dec_hi: float, top: int = VAR_SEARCH_ASU_ROWS) -> list[dict]:
+    """The same search through VizieR ASU (TAP down): position / brightness / period constraints on the server, the
+    types, bands, amplitudes and RAs filtered here."""
+    q = {"-out": "Name V RAJ2000 DEJ2000 Type max n_max f_min min n_min Epoch Period", "V": "0",
+         "max": f"{float(p['vmin']):.2f}..{float(p['vmax']):.2f}", "DEJ2000": f"{dec_lo:.3f}..{dec_hi:.3f}",
+         "-out.max": str(int(top)), "-sort": "OID"}
+    plo, phi = _period_days(p)
+    if plo is not None or phi is not None:
+        q["Period"] = f"{plo if plo is not None else 0:.8f}..{phi if phi is not None else 30000:.8f}"
+    return vizier_asu(q)
+
+
+def fetch_variable_candidates(p: dict, site, wins: list, refresh: bool = False) -> tuple[list[dict], str, bool]:
+    """B/vsx rows for the search (TAP, then ASU at CDS / CfA), cached a day per query: (rows as common variable
+    dicts with "amp", the cache note, truncated). LookupError_ when nothing answers and nothing is cached."""
+    floor = max(float(site.min_alt or 0.0), sky.alt_for_airmass(site.max_airmass) if site.max_airmass else 0.0)
+    dec_lo, dec_hi = _dec_reach(site, floor)
+    ras = _ra_ranges(site, wins, _max_hour_angle(site, floor, dec_lo, dec_hi))
+    adql = var_search_adql(p, dec_lo, dec_hi, ras, north=site.lat >= 0)
+    key = "vizier:varsearch:" + hashlib.sha1(adql.encode("utf-8")).hexdigest()[:16]
+
+    cols = ("Name", "V", "RAJ2000", "DEJ2000", "Type", "max", "n_max", "f_min", "min", "n_min", "Epoch", "Period")
+
+    def fetch():
+        try:
+            rows = vizier_query(adql)
+            full = len(rows) >= VAR_SEARCH_MAX_ROWS
+        except FetchError as exc:
+            settings.log(f"VizieR TAP did not answer ({exc.reason}); trying VizieR ASU for the variable search")
+            rows = _var_search_asu(p, dec_lo, dec_hi)
+            full = len(rows) >= VAR_SEARCH_ASU_ROWS
+            rows = [r for r in rows if _row_wanted(p, r)]
+            full = full or len(rows) > VAR_SEARCH_MAX_ROWS
+            rows = rows[:VAR_SEARCH_MAX_ROWS]
+        return {"rows": [{k: str(r.get(k, "") or "").strip() for k in cols} for r in rows], "truncated": full}
+    data, note = cached_lookup("VizieR", key, "this variable-star search", VAR_SEARCH_MAX_AGE_DAYS, fetch, refresh)
+    rows = (data or {}).get("rows") or []
+    return [candidate_from_row(r) for r in rows], note, bool((data or {}).get("truncated"))
+
+
+def _row_wanted(p: dict, row: dict) -> bool:
+    """The server-side filters of var_search_adql, here (for ASU replies): a chosen family, a visual band, the
+    amplitude, a period (epoch too for eclipsing)."""
+    v = candidate_from_row(row)
+    fam, _u = variable_family(v.get("vtype", ""))
+    fams = set(p.get("families") or [])
+    if fam is None or (fams and "other" not in fams and fam not in fams):
+        return False
+    if v.get("band") not in VISUAL_BANDS:
+        return False
+    if v.get("amp") is None or v["amp"] < float(_f(p.get("min_amp")) or 0.0):
+        return False
+    if fam in ("eclipsing", "rrlyr", "dsct", "cepheid") and not v.get("period"):
+        return False
+    return not (fam == "eclipsing" and not v.get("epoch"))
+
+
+def candidate_from_row(row: dict) -> dict:
+    """A B/vsx row → the common variable dict plus "amp" (mag; None unknown), "band", "varflag"."""
+    v = parse_vizier_vsx_row(row)
+    v["band"] = str(row.get("n_max", "") or "").strip()
+    v["varflag"] = str(row.get("V", "") or "").strip()
+    v["amp"] = (v["min"] - v["max"]) if (v.get("min") is not None and v.get("max") is not None) else None
+    return v
+
+
+def _runs(mask, grid) -> list[tuple[float, float]]:
+    """Consecutive True stretches of a boolean grid as (start, end) JD."""
+    out, start = [], None
+    for ok, t in zip(mask, grid):
+        if ok and start is None:
+            start = t
+        if not ok and start is not None:
+            out.append((start, prev))
+            start = None
+        prev = t
+    if start is not None:
+        out.append((start, grid[-1]))
+    return out
+
+
+def _var_kind(fam: str, v: dict) -> str:
+    """How a star is planned in the search: "timed" (minima / RR Lyrae maxima from epoch + period), "cycle" (a short
+    pulsator: one whole cycle in a night), "any" (a filler: any time)."""
+    period, epoch = v.get("period"), v.get("epoch")
+    kind = classify_vtype(v.get("vtype", ""))
+    if fam == "eclipsing" or (fam == "other" and kind == "eclipsing"):
+        return "timed" if (period and epoch) else ""
+    if fam == "rrlyr":
+        return "timed" if (period and epoch) else "cycle"
+    if fam == "dsct":
+        return "cycle" if period else ""          # a δ Scuti without a period is only a candidate
+    if fam == "cepheid" or (fam == "other" and kind == "pulsator"):
+        return "cycle" if (period and period <= SHORT_PULSATOR_DAYS) else "any"
+    return "any"
+
+
+def suggest_variables(site, options, nights: list, params: dict | None = None, exclude_names=frozenset(),
+                      rows: list | None = None, progress=None) -> tuple[list[Target], str, str]:
+    """Variable stars worth a look on the given nights (the variables twin of suggest_transits). Returns (targets,
+    note, info): note = a saved-copy / source message ("" when fresh), info = what was checked. params =
+    var_search_params(...) (families, period range, V range, minimum amplitude, max results, uncertain types).
+    rows = candidate dicts (fetched from VizieR when None). Each star is kept when, on at least one night:
+      timed (eclipsing minima, RR Lyrae maxima from the VSX epoch + period): an event ± its half-width falls in the
+        planning darkness above every limit (sky.up_mask);
+      cycle (δ Scuti / HADS / SX Phe, short Cepheids, RR Lyrae without an epoch): one whole cycle + 30 min fits in
+        one dark stretch above the limits;
+      any (Miras, semi-regulars, long-period pulsators): at least an hour above the limits in the dark;
+    and the Moon-brightened sky stays within suggest_moon_penalty_max. Ranked by amplitude, brightness in the V range
+    and a timed event (sooner = better), capped at max results; each carries suggest_info["when"] = its first event
+    (or the start of its first good stretch) for the page's date order."""
+    o = dict(settings.DEFAULT_OPTIONS)
+    o.update(options or {})
+    p = var_search_params(dict(o, var_search=params) if params is not None else o)
+    if not site or not site.complete() or not nights:
+        return [], "", ""
+    wins = []
+    for d in nights:
+        w = sky.night_window(d, site)
+        if w is not None:
+            wins.append((d, w[0], w[1]))
+    if not wins:
+        return [], "", "no dark time on these nights"
+    note, truncated = "", False
+    if rows is None:
+        rows, note, truncated = fetch_variable_candidates(p, site, wins)
+    vmin, vmax = float(p["vmin"]), float(p["vmax"])
+    plo, phi = _period_days(p)
+    min_amp = float(_f(p.get("min_amp")) or 0.0)
+    fams = set(p.get("families") or [])
+    moon_max = float(o["suggest_moon_penalty_max"])
+    dark_v = float(o.get("dark_sky_v", sky.DARK_SKY_V))
+    excl = {_key_name(n) for n in (exclude_names or ())}
+    floor = max(float(site.min_alt or 0.0), sky.alt_for_airmass(site.max_airmass) if site.max_airmass else 0.0)
+    grids = [np.arange(w[1], w[2], 10.0 / 1440.0) for w in wins]
+
+    cands = []
+    for v in rows:
+        fam, unsure = variable_family(v.get("vtype", ""))
+        if fam is None or fam not in fams or (unsure and not p.get("uncertain")):
+            continue
+        if v.get("varflag") not in (None, "", "0"):
+            continue
+        if v.get("band") and v["band"] not in VISUAL_BANDS:
+            continue
+        if v.get("ra") is None or v.get("dec") is None or v.get("max") is None or not (vmin <= v["max"] <= vmax):
+            continue
+        per = v.get("period")
+        if (plo is not None and (per is None or per < plo)) or (phi is not None and (per is None or per > phi)):
+            continue
+        if v.get("amp") is None or v["amp"] < min_amp:
+            continue
+        if _key_name(v.get("name")) in excl or sky.culmination_alt(v["dec"], site.lat) < floor:
+            continue
+        kind = _var_kind(fam, v)
+        if kind:
+            cands.append((v, fam, kind, unsure))
+
+    found = []
+    for i, (v, fam, kind, unsure) in enumerate(cands):
+        if progress:
+            try:
+                progress(i, len(cands))
+            except Exception:
+                pass
+        ra, dec = v["ra"], v["dec"]
+        el = elements_from_vsx(v)
+        good_nights, first = 0, None
+        for (d, w0, w1), grid in zip(wins, grids):
+            if len(grid) < 2:
+                continue
+            up = sky.up_mask(ra, dec, site, grid)
+            hit = None
+            if kind == "timed":
+                tel = VarElements(vtype=el.vtype, period=v["period"], epoch=v["epoch"], any_time=False,
+                                  epoch_kind="min" if fam != "rrlyr" else "max",
+                                  event_halfwidth_min=el.event_halfwidth_min or 60.0)
+                for ev in events.variable_events(tel, ra, dec, w0, w1):
+                    if ev["start"] < w0 or ev["end"] > w1:
+                        continue
+                    span = np.linspace(ev["start"], ev["end"], 7)
+                    if bool(np.all(sky.up_mask(ra, dec, site, span))):
+                        hit = (ev["t"], ev["start"], ev["end"], ev["kind"])
+                        break
+            else:
+                need = ((v["period"] * 1440.0 + CYCLE_MARGIN_MIN) if kind == "cycle" else FILLER_MIN_RUN_MIN) / 1440.0
+                for a, b in _runs(up, grid):
+                    if b - a >= need:
+                        hit = (a, a, min(b, a + max(need, 1.0 / 24.0)), "cycle" if kind == "cycle" else "any")
+                        break
+            if hit is None:
+                continue
+            span = np.linspace(hit[1], hit[2], 7)
+            if float(np.mean(sky.moon_sky_penalty(ra, dec, site, span, dark_v))) > moon_max:
+                continue
+            good_nights += 1
+            if first is None:
+                first = (d, hit)
+        if first is None:
+            continue
+        d, hit = first
+        amp = float(v["amp"])
+        soon = (d - wins[0][0]).days
+        score = (2.0 * min(amp, 1.0) + (vmax - v["max"]) / max(0.1, vmax - vmin)
+                 + (1.0 + (0.5 if soon <= 1 else 0.0) if kind == "timed" else (0.5 if kind == "cycle" else 0.0))
+                 + 0.5 * good_nights / len(wins))
+        if unsure:
+            score *= 0.8
+        found.append((score, v, fam, kind, d, hit, good_nights, amp))
+
+    found.sort(key=lambda x: -x[0])
+    out = []
+    for score, v, fam, kind, d, hit, good, amp in found[: int(p.get("max_results") or 12)]:
+        t0 = hit[0]
+        when_text = f"{_fmt_day(t0, site)} {sky.hhmm(t0, site.tz)}"
+        if kind == "timed":
+            text = f"{hit[3]} {when_text}"
+        elif kind == "cycle":
+            text = f"full cycle from {when_text}"
+        else:
+            text = f"from {when_text}"
+        el = elements_from_vsx(v)
+        rng = (f"{v['max']:.2f}–{v['min']:.2f} {v.get('band') or ''}".strip() if v.get("min") is not None
+               else f"{v['max']:.2f}")
+        per = v.get("period")
+        per_text = (f"P = {per * 24:.2f} h" if per and per < 1 else (f"P = {per:.4g} d" if per else "no period"))
+        note_text = (f"{v.get('vtype')}, {per_text}, {rng} (Δ {amp:.2f} mag); {text}, "
+                     f"{sky.local_label(site.tz, t0)}")
+        t = Target(name=v["name"], kind="variable", mode="V", ra=v["ra"], dec=v["dec"], vmag=v["max"],
+                   enabled=False, suggested=True, source="VizieR VSX", elements=el.__dict__.copy(), notes=note_text,
+                   added=today_iso(site))
+        t.suggest_info = {"night": d.isoformat(), "when": float(t0), "event": hit[3], "text": text,
+                          "score": round(float(score), 3), "amp": round(amp, 3), "family": fam, "kind": kind,
+                          "good_nights": good, "nights": len(wins)}
+        out.append(t)
+    info = (f"{len(cands)} of {len(rows)} catalog stars matched"
+            + (f" (the first {VAR_SEARCH_MAX_ROWS} VSX matches, best-studied first: narrow the V or period range or "
+               "the types to reach the rest)" if truncated else ""))
+    return out, note, info
 
 
 # ---- next useful event (Targets page column) -----------------------------------------------------------------------

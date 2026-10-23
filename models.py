@@ -12,7 +12,7 @@ from typing import Any
 
 MODES = ("V", "T", "D")                       # SHOBS-P mode a block will be reduced in
 MODE_NAMES = {"V": "Variables", "T": "Transits", "D": "Discovery"}
-KINDS = ("transit", "variable", "campaign")   # Targets-page groups (Suggested = transit with suggested=True)
+KINDS = ("transit", "variable", "campaign")   # Targets groups; Suggested Transits / Variables = suggested=True
 PRIORITIES = ("High", "Normal", "Low")
 PRIORITY_RANK = {"High": 0, "Normal": 1, "Low": 2}
 BLOCK_STATUS = ("planned", "done", "partial", "clouded")
@@ -187,6 +187,8 @@ class Target:
     notes: str = ""
     added: str = ""                           # ISO date added
     planets_checked: bool = False             # its planets were offered once (Edit/Add); later Edits never re-tick
+    suggest_info: dict | None = None          # a suggestion's night, "when" (JD of its event / first good night,
+                                              # for sorting), score and event text; None for the user's own
 
     def planet_obj(self) -> Planet | None:
         return Planet.from_dict(self.planet) if self.planet else None

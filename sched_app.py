@@ -5,7 +5,8 @@ Plans each night's targets for the three SHOBS-P modes (Variables, Transits, Dis
 seven, and exports the plan for ASIAIR. Four pages, as the numbered steps in the blue sidebar:
 
   1 Setup     site, optics and camera, mount, limits, horizon, weather source
-  2 Targets   the target list in four groups (Transits, Variables, Campaigns, Suggested)
+  2 Targets   the target list in five groups (Transits, Variables, Campaigns, Suggested Transits, Suggested
+              Variables)
   3 Schedule  one tab per night: night plot (airmass, twilight, Moon, weather), nightly table, didn't fit, free time
   4 Export    ASIAIR coordinate CSV and the printable plan card
 
@@ -48,7 +49,10 @@ from models import (MODE_NAMES, PRIORITIES, STATUS_LABELS, Block, NightPlan, Opt
 from style import px  # noqa: E402
 
 STEPS = ("Setup", "Targets", "Schedule", "Export")
-GROUPS = (("transit", "Transits"), ("variable", "Variables"), ("campaign", "Campaigns"), ("suggested", "Suggested"))
+# group keys are saved nowhere (a target's group comes from kind + suggested), so old target files load unchanged:
+# "suggested" stays the Suggested Transits key, "suggested_var" is new
+GROUPS = (("transit", "Transits"), ("variable", "Variables"), ("campaign", "Campaigns"),
+          ("suggested", "Suggested Transits"), ("suggested_var", "Suggested Variables"))
 DARKNESS = (("Astronomical (Sun −18°)", -18.0), ("Nautical (Sun −12°)", -12.0))
 
 
@@ -197,8 +201,29 @@ def span_text(a, b, tz) -> str:
 
 def group_of(t: Target) -> str:
     if t.suggested:
-        return "suggested"
+        return "suggested_var" if t.kind == "variable" else "suggested"
     return t.kind if t.kind in ("transit", "variable", "campaign") else "variable"
+
+
+def suggested_when(t: Target) -> float | None:
+    """A suggestion's date (JD): a transit's ingress, a variable's next event or first good night; None unknown."""
+    info = t.suggest_info if isinstance(t.suggest_info, dict) else {}
+    try:
+        w = float(info.get("when"))
+    except (TypeError, ValueError):
+        return None
+    return w if math.isfinite(w) else None
+
+
+def row_order(group: str):
+    """Sort key of a Targets group: the Suggested groups by date of occurrence (soonest first; undated last, by
+    name), the others by name (rows stay put when ticked)."""
+    if group in ("suggested", "suggested_var"):
+        def key(t):
+            w = suggested_when(t)
+            return (0, w, t.name.lower()) if w is not None else (1, 0.0, t.name.lower())
+        return key
+    return lambda t: (0, 0.0, t.name.lower())
 
 
 def rules_summary(t: Target) -> str:
@@ -1730,10 +1755,16 @@ class TargetsPage:
         bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(px(app, 6), 0))
         ttk.Button(bottom, text="Edit…", command=self.edit_selected).pack(side=tk.LEFT)
         ttk.Button(bottom, text="Remove", command=self.remove_selected).pack(side=tk.LEFT, padx=px(app, 6))
-        ttk.Button(bottom, text="Keep (move to Transits)", command=self.keep_selected).pack(side=tk.LEFT)
-        self.find_ind = JobIndicator(bottom)
-        self.find_ind.pack(side=tk.RIGHT, padx=(px(app, 10), 0))
+        ttk.Button(bottom, text="Keep (move to Transits / Variables)", command=self.keep_selected).pack(side=tk.LEFT)
         style.green_button(bottom, "Find suggested transits", self.find_suggested).pack(side=tk.RIGHT)
+        style.green_button(bottom, "Find suggested variables…", self.ask_variable_search).pack(
+            side=tk.RIGHT, padx=(0, px(app, 8)))
+        # the searches' spinner and result on a line of their own above the buttons (a long message never squeezes
+        # the buttons)
+        find_row = ttk.Frame(self.frame, style="Card.TFrame")
+        find_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(px(app, 4), 0))
+        self.find_ind = JobIndicator(find_row)
+        self.find_ind.pack(side=tk.RIGHT)
         self.msg_var = tk.StringVar()
         self.msg = ttk.Label(self.frame, textvariable=self.msg_var, style="Card.TLabel", justify=tk.LEFT)
         self.msg.pack(side=tk.BOTTOM, fill=tk.X, anchor="w")
@@ -1796,12 +1827,13 @@ class TargetsPage:
             planned = sum(1 for t in rows if t.enabled)
             label = f"{name}  ({len(rows)}{f', {planned} planned' if rows else ''})"
             hint = "" if rows else {"suggested": "none yet: press Find suggested transits",
+                                    "suggested_var": "none yet: press Find suggested variables",
                                     "campaign": "none: a campaign is a star or field you visit on many nights",
                                     }.get(key, "none")
             vals = ["", "", "", "", hint, ""]       # the hint sits in the wide "Next useful event" column
             tree.insert("", tk.END, iid=f"grp:{key}", text=label, values=vals, open=opened.get(key, True),
                         tags=("group",))
-            for t in sorted(rows, key=lambda x: x.name.lower()):      # rows stay put when ticked
+            for t in sorted(rows, key=row_order(key)):      # rows stay put when ticked; Suggested by date
                 tags = []
                 if not t.enabled:
                     tags.append("off")
@@ -1831,7 +1863,8 @@ class TargetsPage:
             tc = self.tc_text(t, pl, when)
             if tc.startswith("⚠"):
                 src += f"  ·  ⚠ Tc {tc[2:]}"
-        nxt = self.next_text.get(t.id, "…" if self.app.site.complete() else "set the site first")
+        nxt = self.suggested_next(t, when) or self.next_text.get(t.id, "…" if self.app.site.complete()
+                                                                 else "set the site first")
         return ("☑" if t.enabled else "☐", f"{t.vmag:.1f}" if t.vmag is not None else "—",
                 fmt_radec(t.ra, t.dec), t.priority, nxt, src)
 
@@ -1863,9 +1896,26 @@ class TargetsPage:
         bits.append(f"exposure {fmt_num(t.exposure_s)} s" if t.exposure_s else "exposure: SCHED estimates it")
         if t.kind != "transit":
             bits.append(f"block {fmt_num(t.block_min)} min (at least {fmt_num(t.min_block_min)})")
+        info = t.suggest_info if (t.suggested and isinstance(t.suggest_info, dict)) else {}
+        if info.get("score") is not None:
+            what = "transit" if t.kind == "transit" else "variable"
+            extra = f", S/N {float(info['snr']):.1f}" if info.get("snr") is not None else ""
+            if info.get("good_nights") is not None and info.get("nights"):
+                extra += f", good on {info['good_nights']} of {info['nights']} nights"
+            bits.append(f"suggested {what}: score {float(info['score']):.2f}{extra}")
         if t.notes:
             bits.append(f"notes: {t.notes}")
         return "   ·   ".join(bits)
+
+    def suggested_next(self, t: Target, when: float) -> str:
+        """A suggestion's own date: a suggested transit's soonest good transit, a suggested variable's timed minimum
+        / maximum or the start of its first good stretch, while it is still ahead; "" otherwise (the column's usual
+        text then). The Suggested groups are listed by this date."""
+        if not (t.suggested and isinstance(t.suggest_info, dict)):
+            return ""
+        w = suggested_when(t)
+        text = str(t.suggest_info.get("text") or "")
+        return text if (w is not None and w >= when and text) else ""
 
     def show_detail(self):
         ts = self.selected_targets()
@@ -1944,9 +1994,11 @@ class TargetsPage:
             if exc is not None or res is None:
                 return
             self.next_text.update(res)
+            by_id = app.targets_by_id()
             for tid, text in res.items():
                 if self.tree.exists(tid):
-                    self.tree.set(tid, "next", text)
+                    own = self.suggested_next(by_id[tid], sky.now_jd()) if tid in by_id else ""
+                    self.tree.set(tid, "next", own or text)
             fit_columns(self.tree, self.headings, cap=300, stretch="next", extra=self.FIT)
         app.jobs.run(work, done, None, "Next useful events")
 
@@ -2291,15 +2343,22 @@ class TargetsPage:
     def keep_selected(self):
         ts = [t for t in self.selected_targets() if t.suggested]
         if not ts:
-            set_msg(self.msg_var, self.msg, "⚠ Select a Suggested transit to keep.")
+            set_msg(self.msg_var, self.msg, "⚠ Select a suggested transit or variable to keep.")
             return
         for t in ts:
             t.suggested = False
         self.app.save_targets()
         self.app.targets_changed()
         self.fill()
-        set_msg(self.msg_var, self.msg, "✔ Moved to Transits: " + ", ".join(t.name for t in ts) + ".")
-        self.refine_ephemerides([t.id for t in ts])
+        moved = []
+        for kind, group in (("transit", "Transits"), ("variable", "Variables")):
+            names = [t.name for t in ts if (t.kind == "variable") == (kind == "variable")]
+            if names:
+                moved.append(f"to {group}: " + ", ".join(names))
+        set_msg(self.msg_var, self.msg, "✔ Moved " + "; ".join(moved) + ".")
+        transits = [t.id for t in ts if t.kind == "transit"]
+        if transits:
+            self.refine_ephemerides(transits)
 
     def edit_selected(self):
         ts = self.selected_targets()
@@ -2341,6 +2400,7 @@ class TargetsPage:
         site, optics, opts = app.site, app.optics, dict(app.options)
         nights = self.suggestion_nights()
         exclude = {t.name for t in app.targets if not t.suggested or t.enabled}
+
         def work(progress):
             note, kw = "", {}
             if hasattr(tg, "load_transit_catalog"):      # load it here to hear its note (saved copy, age ...)
@@ -2362,7 +2422,9 @@ class TargetsPage:
         if isinstance(res, tuple):
             res, note = res
         new = [t for t in (res or []) if isinstance(t, Target)]
-        keep = [t for t in self.app.targets if not t.suggested or t.enabled]
+        # unticked Suggested Transits are replaced; the user's own targets, ticked suggestions and the Suggested
+        # Variables stay
+        keep = [t for t in self.app.targets if not t.suggested or t.enabled or t.kind == "variable"]
         names = {t.name.strip().lower() for t in keep}
         added = []
         for t in new:
@@ -2381,13 +2443,216 @@ class TargetsPage:
             self.tree.item("grp:suggested", open=True)
             self.tree.see("grp:suggested")
         self._start_next_events()
-        text = (f"{len(added)} suggested transit{'s' if len(added) != 1 else ''} found."
+        text = (f"{len(added)} suggested transit{'s' if len(added) != 1 else ''} found, soonest first."
                 if added else "Done: no new full transits fit these nights.")
         if note:
             note = note.strip().rstrip(".")
             self.find_ind.finish(f"⚠ {text} Catalog: {note[:1].upper() + note[1:]}.", linger_ms=0)
         else:
             self.find_ind.finish("✔ " + text)
+
+    # ---- suggested variables ----
+    def ask_variable_search(self):
+        """The search parameters pop-up; its Search runs find_variables."""
+        tg = mod("targets")
+        if tg is None or not hasattr(tg, "suggest_variables"):
+            self.find_ind.finish(missing("targets"))
+            return None
+        if not self.app.site.complete():
+            self.find_ind.finish("✖ Enter your site on the Setup page first (latitude, longitude, time zone).")
+            return None
+        return VarSearchDialog(self.app, self, modal=not self.app.testing)
+
+    def find_variables(self, params: dict):
+        app = self.app
+        tg = mod("targets")
+        if tg is None or not hasattr(tg, "suggest_variables"):
+            self.find_ind.finish(missing("targets"))
+            return
+        if not app.site.complete():
+            self.find_ind.finish("✖ Enter your site on the Setup page first (latitude, longitude, time zone).")
+            return
+        site, opts = app.site, dict(app.options)
+        nights = self.suggestion_nights()
+        exclude = {t.name for t in app.targets if not t.suggested or t.enabled}
+
+        def work(progress):
+            return tg.suggest_variables(site, opts, nights, dict(params), exclude_names=exclude, progress=progress)
+        app.jobs.run(work, self._found_variables, self.find_ind,
+                     "Finding suggested variables (VSX at VizieR; up to a minute)", counted=True)
+
+    def _found_variables(self, res, exc):
+        if exc is not None:
+            self.find_ind.finish(f"✖ No suggested variables: {exc}", linger_ms=0)
+            return
+        res = tuple(res) if isinstance(res, (tuple, list)) else (res, "", "")
+        found, note, info = (list(res) + ["", ""])[:3]
+        new = [t for t in (found or []) if isinstance(t, Target)]
+        # unticked Suggested Variables are replaced; everything else stays
+        keep = [t for t in self.app.targets if not (t.suggested and t.kind == "variable" and not t.enabled)]
+        names = {t.name.strip().lower() for t in keep}
+        added = []
+        for t in new:
+            if t.name.strip().lower() in names:
+                continue
+            t.suggested, t.enabled, t.kind, t.mode = True, False, "variable", "V"
+            added.append(t)
+            names.add(t.name.strip().lower())
+        self.app.targets = keep + added
+        self.app.save_targets()
+        self.app.targets_changed()
+        self.fill()
+        if self.tree.exists("grp:suggested_var"):
+            self.tree.item("grp:suggested_var", open=True)
+            self.tree.see("grp:suggested_var")
+        self._start_next_events()
+        text = (f"{len(added)} suggested variable{'s' if len(added) != 1 else ''} found, soonest first."
+                if added else "Done: no new variables fit these nights and settings.")
+        info = str(info or "").strip().rstrip(".")
+        set_msg(self.msg_var, self.msg, f"Suggested variables: {info}." if info else "")
+        note = str(note or "").strip().rstrip(".")
+        if note:
+            self.find_ind.finish(f"⚠ {text} VSX: {note[:1].upper() + note[1:]}.", linger_ms=0)
+        else:
+            self.find_ind.finish("✔ " + text, linger_ms=0)
+
+
+class VarSearchDialog:
+    """"Find suggested variables": the search parameters (type families, period, V range, amplitude, how many),
+    remembered in the settings (options["var_search"]); Search starts the search on the Targets page."""
+
+    def __init__(self, app: App, page: TargetsPage, modal: bool = True):
+        self.app, self.page = app, page
+        tg = mod("targets")
+        p = tg.var_search_params(app.options)
+        self.win, body = _dialog(app, "Find suggested variables")
+        r = 0
+
+        def label(text, row, **kw):
+            ttk.Label(body, text=text, style=kw.pop("style", "Card.TLabel")).grid(row=row, column=0, sticky="nw",
+                                                                                 pady=px(app, 3), **kw)
+        ttk.Label(body, text="Variable stars from AAVSO VSX (VizieR's copy) that are up in the dark on the nights "
+                             "below, from your site; they land unticked in Suggested Variables, soonest first.",
+                  style="Hint.TLabel", wraplength=px(app, 460), justify=tk.LEFT).grid(
+            row=r, column=0, columnspan=2, sticky="w", pady=(0, px(app, 6)))
+        r += 1
+        label("Types", r)
+        box = ttk.Frame(body, style="Card.TFrame")
+        box.grid(row=r, column=1, sticky="w", padx=px(app, 8))
+        self.fam_vars = {}
+        for key, text, _codes in tg.VAR_FAMILIES:
+            var = tk.BooleanVar(value=key in p["families"])
+            ttk.Checkbutton(box, text=text, variable=var, style="Card.TCheckbutton").pack(anchor="w")
+            self.fam_vars[key] = var
+        self.unsure = tk.BooleanVar(value=bool(p.get("uncertain")))
+        ttk.Checkbutton(box, text="Include uncertain types (marked “:” in VSX)", variable=self.unsure,
+                        style="Card.TCheckbutton").pack(anchor="w", pady=(px(app, 4), 0))
+        r += 1
+        self.vars: dict[str, tk.StringVar] = {}
+
+        def pair(text, k1, k2, unit, row):
+            label(text, row)
+            f = ttk.Frame(body, style="Card.TFrame")
+            f.grid(row=row, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
+            for i, k in enumerate((k1, k2)):
+                self.vars[k] = tk.StringVar(value=fmt_num(p.get(k)))
+                ttk.Entry(f, textvariable=self.vars[k], width=8).pack(side=tk.LEFT)
+                if i == 0:
+                    ttk.Label(f, text="to", style="Card.TLabel").pack(side=tk.LEFT, padx=px(app, 6))
+            return f
+        f = pair("Period", "pmin", "pmax", "", r)
+        self.punit = tk.StringVar(value=p.get("punit") or "d")
+        for text, val in (("days", "d"), ("hours", "h")):
+            ttk.Radiobutton(f, text=text, value=val, variable=self.punit, style="Card.TRadiobutton").pack(
+                side=tk.LEFT, padx=(px(app, 8), 0))
+        ttk.Label(f, text="(empty = any)", style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 6), 0))
+        r += 1
+        f = pair("Brightness (V at maximum)", "vmin", "vmax", "", r)
+        ttk.Label(f, text="mag", style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 6), 0))
+        r += 1
+
+        def single(text, k, unit, row):
+            label(text, row)
+            f = ttk.Frame(body, style="Card.TFrame")
+            f.grid(row=row, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
+            self.vars[k] = tk.StringVar(value=fmt_num(p.get(k)))
+            ttk.Entry(f, textvariable=self.vars[k], width=8).pack(side=tk.LEFT)
+            ttk.Label(f, text=unit, style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 6), 0))
+        single("Amplitude at least", "min_amp", "mag", r)
+        r += 1
+        single("Show at most", "max_results", "stars", r)
+        r += 1
+        nights = page.suggestion_nights()
+        site = app.site
+        span = (night_label(nights[0].isoformat(), site) + (f" – {night_label(nights[-1].isoformat(), site)}"
+                                                            if len(nights) > 1 else "")) if nights else "—"
+        label("Nights", r)
+        ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}, as for Suggested "
+                             "transits); your minimum altitude, horizon, darkness and Moon limit from Setup",
+                  style="Card.TLabel", wraplength=px(app, 380), justify=tk.LEFT).grid(
+            row=r, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
+        r += 1
+        self.msg_var = tk.StringVar()
+        self.msg = ttk.Label(body, textvariable=self.msg_var, style="Card.TLabel", wraplength=px(app, 460),
+                             justify=tk.LEFT)
+        self.msg.grid(row=r, column=0, columnspan=2, sticky="w", pady=(px(app, 6), 0))
+        r += 1
+        btns = ttk.Frame(body, style="Card.TFrame")
+        btns.grid(row=r, column=0, columnspan=2, sticky="e", pady=(px(app, 10), 0))
+        ttk.Button(btns, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
+        style.green_button(btns, "Search", self.search).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
+        _keys(self.win, self.search)
+        if modal:
+            _show_modal(app, self.win)
+
+    def params(self) -> tuple[dict | None, str]:
+        """The form as search parameters, or (None, the reason in plain words)."""
+        v = {k: str(var.get()).strip().replace(",", ".") for k, var in self.vars.items()}
+
+        def num(k, text, lo, hi, empty_ok=False):
+            if not v.get(k):
+                if empty_ok:
+                    return None
+                raise ValueError(f"{text} is empty.")
+            try:
+                x = float(v[k])
+            except ValueError:
+                raise ValueError(f"{text} must be a number (you typed “{v[k]}”).") from None
+            if not (lo <= x <= hi):
+                raise ValueError(f"{text} must be between {fmt_num(lo)} and {fmt_num(hi)}.")
+            return x
+        try:
+            fams = [k for k, var in self.fam_vars.items() if var.get()]
+            if not fams:
+                raise ValueError("Tick at least one type.")
+            pmin = num("pmin", "The shortest period", 0, 100000, True)
+            pmax = num("pmax", "The longest period", 0, 100000, True)
+            if pmin is not None and pmax is not None and pmin > pmax:
+                raise ValueError("The shortest period is longer than the longest.")
+            vmin = num("vmin", "The brightest V", -2, 25)
+            vmax = num("vmax", "The faintest V", -2, 25)
+            if vmin > vmax:
+                raise ValueError("The V range runs the wrong way (brightest first, e.g. 9 to 13).")
+            amp = num("min_amp", "The amplitude", 0, 20)
+            n = num("max_results", "Show at most", 1, 100)
+        except ValueError as exc:
+            return None, str(exc)
+        return {"families": fams, "uncertain": bool(self.unsure.get()), "pmin": pmin, "pmax": pmax,
+                "punit": self.punit.get() or "d", "vmin": vmin, "vmax": vmax, "min_amp": amp,
+                "max_results": int(round(n))}, ""
+
+    def search(self):
+        p, err = self.params()
+        if p is None:
+            set_msg(self.msg_var, self.msg, f"✖ {err}")
+            return False
+        self.app.options["var_search"] = p               # remembered for next time
+        if not settings.save_settings(self.app.settings):
+            self.app.set_status("⚠ The search settings could not be saved (the settings file is not writable).")
+        settings.log(f"variable search: {p}")
+        self.win.destroy()
+        self.page.find_variables(p)
+        return True
 
 
 class EditTargetDialog:
