@@ -58,11 +58,14 @@ class TestFitsHeader(unittest.TestCase):
 
     def test_mono_and_missing_keywords(self):
         vals, notes, absent = fits_header.read_camera_values(MONO)
-        self.assertIs(vals["optics.color_camera"], False, "no BAYERPAT = mono")
+        self.assertIs(vals["optics.color_camera"], False, "BAYERPAT NONE = mono")
         self.assertEqual(vals["optics.gain"], 0.0)
         self.assertEqual(absent, ["EGAIN", "ROTATOR"])
         self.assertNotIn("optics.e_per_adu", vals)
         self.assertEqual(notes, [])
+        vals, _n, absent = fits_header.camera_values({"INSTRUME": "Some Cam", "GAIN": 0})
+        self.assertNotIn("optics.color_camera", vals, "no BAYERPAT keyword: the sensor type is left alone")
+        self.assertIn("BAYERPAT", absent)
 
     def test_binned_pixel(self):
         vals, notes, _absent = fits_header.read_camera_values(BIN2)
@@ -275,7 +278,7 @@ class TestSetupPage(Base):
         text = setup.fits_var.get()
         self.assertTrue(text.startswith("⚠ "), text)
         self.assertIn("Sensor: Color → Mono", text)
-        self.assertIn("Not in this frame: EGAIN (e⁻ per ADU), ROTATOR (Usual camera angle).", text)
+        self.assertIn("Not in this frame: e⁻ per ADU (EGAIN), Usual camera angle (ROTATOR).", text)
         self.assertEqual(self.tag(setup, "optics.e_per_adu"), "")
         bad = os.path.join(self.tmp, "x.fits")
         with open(bad, "w", encoding="utf-8") as fh:
@@ -646,7 +649,7 @@ class TestSetupReviewRound2(Base):
         setup = app.pages[0]
         vals = setup.read_fits(path)
         self.assertNotIn("optics.e_per_adu", vals)
-        self.assertIn("EGAIN (e⁻ per ADU)", setup.fits_var.get())
+        self.assertIn("e⁻ per ADU (EGAIN)", setup.fits_var.get())
         self.assertEqual(setup.vars["optics.camera"].get(), "Test Cam")
 
     def test_dialog_not_clamped_when_main_window_is_on_another_monitor(self):
@@ -662,6 +665,99 @@ class TestSetupReviewRound2(Base):
         self.assertEqual(self.sa._clamp_to_screen(FakeApp(-1800), -1500, 200, 600, 400, 1920, 1080), (-1500, 200))
         self.assertEqual(self.sa._clamp_to_screen(FakeApp(2400), 2600, 200, 600, 400, 1920, 1080), (2600, 200))
         self.assertEqual(self.sa._clamp_to_screen(FakeApp(100), 1700, 900, 600, 400, 1920, 1080), (1320, 640))
+
+
+@unittest.skipUnless(HAVE_TK, "needs a display (run under xvfb-run)")
+class TestSetupReviewRound3(Base):
+    def shobs_p(self, data):
+        p = os.path.join(self.tmp, "shobs_p.json")
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.environ["SHOBS_P_SETTINGS"] = p
+
+    def built_home(self):
+        """The golden home with a built schedule (so a Setup change can make it stale)."""
+        self.golden_home()
+        app = self.open()
+        app.show_page(2)
+        app.pages[2].build()
+        self.pump()
+        self.assertTrue(app.schedule.nights)
+        app.pages[2].setup_stale = False
+        return app
+
+    def test_no_edit_save_does_not_make_the_schedule_stale(self):
+        app = self.built_home()
+        app.show_page(0)
+        setup = app.pages[0]
+        app.night_info(app.tonight())
+        self.assertTrue(setup.save(), setup.msg_var.get())
+        self.assertFalse(app.pages[2].setup_stale, "nothing changed: the schedule is not stale")
+        self.assertTrue(app._info_cache, "and the night-info cache is kept")
+        # a FITS frame that changes nothing, then leaving the page (which saves)
+        setup.read_fits(ASI)                               # the first read changes the camera: stale
+        self.assertTrue(setup.save())
+        self.assertTrue(app.pages[2].setup_stale)
+        app.pages[2].setup_stale = False
+        setup.read_fits(ASI)                               # the same frame again changes nothing
+        self.assertTrue(setup.dirty_form())
+        app.show_page(1)
+        self.assertFalse(app.pages[2].setup_stale)
+        # a real change does
+        app.show_page(0)
+        setup.vars["site.min_alt"].set("33")
+        self.assertTrue(setup.save())
+        self.assertTrue(app.pages[2].setup_stale)
+        self.assertFalse(self.sa._differs({"elevation_m": 280.123, "horizon": [[90.0, 25.0]]},
+                                          {"elevation_m": 280.1, "horizon": [(90.0, 25.0)]}))
+        self.assertTrue(self.sa._differs({"e_per_adu": 0.24}, {"e_per_adu": 0.26}))
+
+    def test_fits_value_typed_back_to_shobs_p_tags_from_shobs_p(self):
+        self.shobs_p({"site_lat": 35.303, "site_lon": -81.9407, "site_tz": "America/New_York", "focal_mm": 2900,
+                      "aperture_mm": 356})
+        app = self.open()
+        app.show_page(0)
+        setup = app.pages[0]
+        setup.read_fits(ASI)
+        self.assertTrue(setup.save())
+        self.assertEqual(self.tag(setup, "optics.focal_mm"), "from FITS")
+        setup.vars["optics.focal_mm"].set("2900")
+        self.assertTrue(setup.save())
+        s = settings.load_settings()
+        self.assertNotIn("optics.focal_mm", s["set_here"])
+        self.assertNotIn("optics.focal_mm", s["from_fits"])
+        self.assertEqual(self.tag(setup, "optics.focal_mm"), "from SHOBS-P", "follows SHOBS-P again, said at once")
+
+    def test_provenance_worded_from_the_sources(self):
+        self.shobs_p({"site_lat": 35.303, "site_lon": -81.9407, "site_tz": "America/New_York"})
+        app = self.open()
+        app.show_page(0)
+        setup = app.pages[0]
+        self.assertTrue(setup.prov_var.get().startswith("✔ Site read from SHOBS-P (settings of"),
+                        setup.prov_var.get())
+        self.assertNotIn("camera", setup.prov_var.get().split(".")[0])
+        setup.read_fits(ASI)
+        self.assertIn("Camera values read from a FITS frame.", setup.prov_var.get())
+        os.environ["SHOBS_P_SETTINGS"] = os.path.join(self.tmp, "none.json")
+        app.destroy()
+        self.app = None
+        app = self.open()                                      # stand-alone, camera from FITS only
+        app.show_page(0)
+        app.pages[0].read_fits(ASI)
+        self.assertTrue(app.pages[0].prov_var.get().startswith("✔ Camera values read from a FITS frame."),
+                        app.pages[0].prov_var.get())
+
+    def test_site_name_cleared_said_in_the_status_bar_at_start(self):
+        self.golden_home()
+        s = settings.load_settings()
+        s["site"]["name"] = "iOptron 14 RC"
+        settings.save_settings(s)
+        self.shobs_p({"telescope_name": "iOptron 14 RC"})
+        app = self.open()
+        self.assertNotEqual(app.page_index, 0, "opens on another page")
+        self.assertTrue(app.status_var.get().startswith("⚠ Site name cleared: it was SHOBS-P's telescope name "
+                                                        "(“iOptron 14 RC”)"), app.status_var.get())
+        self.assertIn("Setup page", app.status_var.get())
 
 
 if __name__ == "__main__":

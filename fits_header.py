@@ -128,7 +128,8 @@ def _num(v):
 def camera_values(hdr: dict) -> tuple[dict, list[str], list[str]]:
     """The Setup values a header gives: ({Setup field: value}, notes, missing keywords).
     pixel_um = XPIXSZ / XBINNING (XPIXSZ is the binned pixel); camera angle = ROTATOR modulo 180 (210° and 30° are
-    the same framing on the other pier side; the note says so). Sensor = color when BAYERPAT is present, else mono.
+    the same framing on the other pier side; the note says so). Sensor = color when BAYERPAT names a pattern
+    ("RGGB"), mono when it says NONE / MONO / N/A; no BAYERPAT keyword leaves the sensor as it is (listed missing).
     Values are rounded the way the Setup page shows them."""
     vals: dict = {}
     notes: list[str] = []
@@ -139,8 +140,10 @@ def camera_values(hdr: dict) -> tuple[dict, list[str], list[str]]:
     else:
         missing.append("INSTRUME")
     bayer = hdr.get("BAYERPAT")
-    vals["optics.color_camera"] = (isinstance(bayer, str) and bool(bayer.strip())
-                                   and bayer.strip().upper() not in NOT_BAYER)
+    if isinstance(bayer, str) and bayer.strip():
+        vals["optics.color_camera"] = bayer.strip().upper() not in NOT_BAYER
+    else:                               # no Bayer keyword at all: some software never writes one, so say nothing
+        missing.append("BAYERPAT")
     gain = _num(hdr.get("GAIN"))
     if gain is not None and gain >= 0:
         vals["optics.gain"] = round(gain, 6)

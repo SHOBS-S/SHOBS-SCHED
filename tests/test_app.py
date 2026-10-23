@@ -393,7 +393,7 @@ class TestAppWithFakes(Base):
         os.environ["SHOBS_P_SETTINGS"] = p
         app = self.open()
         setup = app.pages[0]
-        self.assertTrue(setup.prov_var.get().startswith("✔ Site, optics and camera read from SHOBS-P (settings of"))
+        self.assertTrue(setup.prov_var.get().startswith("✔ Site and telescope read from SHOBS-P (settings of"))
         self.assertEqual(setup.vars["site.lat"].get(), "35.303")
         self.assertEqual(self.tag(setup, "site.lat"), "from SHOBS-P")
         self.assertEqual(self.tag(setup, "site.max_airmass"), "", "an untouched default has no tag")
