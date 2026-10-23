@@ -657,6 +657,9 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         first = 0 if not self.site.complete() else (1 if not self.targets else 2)
         self.show_page(first)
+        if self.site_name_note:          # said once at start too: the app often opens on Schedule, not Setup
+            self.set_status(f"⚠ Site name cleared: it was SHOBS-P's telescope name (“{self.site_name_note}”); type "
+                            "your observatory's name on the Setup page.")
         if not testing:                  # kept transits still on the composite ephemeris: upgrade them (background)
             self.after(800, lambda: self.pages[1].refine_ephemerides(quiet=True))
 
@@ -1268,8 +1271,13 @@ class SetupPage:
             return "set here"
         if dotted in set(self.app.settings.get("set_here") or []):
             return "set here"
-        if dotted in set(self.app.p_taken or []):        # SHOBS-P's values, and limits its finder seeded
-            return "from SHOBS-P"
+        if dotted in settings.FINDER_DOTTED:
+            # limits the finder seeded (seeded once: SHOBS-P's finder today may say something else)
+            return "from SHOBS-P" if dotted in set(self.app.p_taken or []) else ""
+        theirs = (self.app.p_values or {}).get(dotted)
+        if theirs not in (None, "") and (cur == self._text_of(key, theirs)
+                                         or (key == "site.elevation_m" and dotted in set(self.app.p_taken or []))):
+            return "from SHOBS-P"                        # SHOBS-P's live value (e.g. typed back to it)
         return ""
 
     def _tags_later(self):
@@ -1297,15 +1305,26 @@ class SetupPage:
 
     def _show_provenance(self):
         app = self.app
-        if app.shobs_p is not None and app.p_taken:
+        # worded from where the values on the page actually came from (the tags)
+        src = {self.FORM_TO_SETTING.get(k, k): self.source_of(k) for k in self.tags}
+        from_p = [w for w, pre in (("site", "site."), ("telescope", "optics."))
+                  if any(v == "from SHOBS-P" and d.startswith(pre) and d not in settings.FINDER_DOTTED
+                         for d, v in src.items())]
+        finder = [d for d, v in src.items() if v == "from SHOBS-P" and d in settings.FINDER_DOTTED]
+        fits = [d for d, v in src.items() if v == "from FITS"]
+        bits = []
+        if app.shobs_p is not None and from_p:
             when = app.settings.get("shobs_p_read") or "?"
-            text = (f"✔ Site, optics and camera read from SHOBS-P (settings of {when}). "
-                    "Change them there, or override here.")
-            finder = [d for d in app.p_taken if d in settings.FINDER_DOTTED]
-            if finder:
-                text += (" The minimum altitude, darkness and the Suggested-transits filter started from its "
-                         "Tonight's-transits finder (once; later changes there do not move them).")
-            text += " Tags: from SHOBS-P, from FITS, set here."
+            what = and_list(from_p)
+            bits.append(f"{what[:1].upper() + what[1:]} read from SHOBS-P (settings of {when}). Change them there, "
+                        "or override here.")
+        if fits:
+            bits.append("Camera values read from a FITS frame.")
+        if finder:
+            bits.append("The minimum altitude, darkness and the Suggested-transits filter started from SHOBS-P's "
+                        "Tonight's-transits finder (once; later changes there do not move them).")
+        if bits:
+            text = "✔ " + " ".join(bits) + " Tags: from SHOBS-P, from FITS, set here."
         else:
             text = ("Enter your site and equipment once (or read the camera from a FITS frame). SHOBS-P, if you add "
                     "it later, can share these.")
@@ -1367,7 +1386,7 @@ class SetupPage:
             else:
                 same.append(label)
             self.fits_pending[dotted] = vals[dotted]
-        gone = [f"{kw} ({label})" for _d, label, kw in fh.FIELDS if kw in absent]
+        gone = [f"{label} ({kw})" for _d, label, kw in fh.FIELDS if kw in absent]
         cam = vals.get("optics.camera")
         lines = [f"Read the header of {name}" + (f" ({cam})" if cam else "") + ". Press Save to keep these values."]
         if changed:
@@ -1384,7 +1403,7 @@ class SetupPage:
         self.fits_msg.grid()
         settings.log(f"FITS header read from {name}: " + (", ".join(changed) or "nothing changed")
                      + (f"; not in the frame: {', '.join(absent)}" if absent else ""))
-        self._show_tags()
+        self._show_provenance()
         return vals
 
     def _units_changed(self):
@@ -1578,6 +1597,10 @@ class SetupPage:
                 # the user's own value: a SHOBS-P installed later must not overwrite it
                 settings.mark_set_here(s, dotted)
         s["from_finder"] = seeded
+        # only a real change of site / optics / options makes the schedule stale (a no-edit Save, or one after a
+        # FITS frame that changed nothing, does not)
+        changed = any(_differs(s.get(sec) or {}, val) for sec, val in (("site", site), ("optics", op),
+                                                                         ("options", opts)))
         s["site"], s["optics"] = site, op
         s["options"] = opts
         if not settings.save_settings(s):
@@ -1594,7 +1617,8 @@ class SetupPage:
             lines[0] = lines[0].replace("Press Save to keep these values.", "Saved.")
             self._fits_lines = lines
             set_msg(self.fits_var, self.fits_msg, "\n".join(lines))
-        self.app.settings_changed()
+        if changed:
+            self.app.settings_changed()
         self._snapshot = self.form_state()
         set_msg(self.msg_var, self.msg, "✔ Saved.")
         self.app.set_status("✔ Setup saved.")
@@ -2979,6 +3003,26 @@ def _same(a, b) -> bool:
             and not isinstance(b, bool):
         return abs(float(a) - float(b)) < 1e-6 * max(1.0, abs(float(a)))
     return a == b
+
+
+_SHOWN_TO_TENTHS = frozenset({"elevation_m", "dew_spread_c"})
+
+
+def _differs(a, b) -> bool:
+    """Two settings values (dicts / lists / numbers / text) differ beyond the rounding of a value shown and saved
+    back; lists and tuples alike (a horizon read from JSON is lists, one from the form tuples)."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in set(a) | set(b):
+            x, y = a.get(k), b.get(k)
+            if k in _SHOWN_TO_TENTHS and isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                if abs(float(x) - float(y)) > 0.06:      # shown to 0.1 (and maybe in ft / °F): rounding is no change
+                    return True
+            elif _differs(x, y):
+                return True
+        return False
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) != len(b) or any(_differs(x, y) for x, y in zip(a, b))
+    return not _same(a, b)
 
 
 def _close(a, b) -> bool:
