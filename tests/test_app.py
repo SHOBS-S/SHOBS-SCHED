@@ -37,6 +37,12 @@ from models import Block, NightPlan, Schedule, Target  # noqa: E402
 GOLDEN = os.path.join(HERE, "fixtures", "golden_oct19_24.json")
 
 
+def px_tol(app) -> int:
+    """A few pixels of slack (padding) at the display's scaling."""
+    import style
+    return style.px(app, 12)
+
+
 def golden():
     with open(GOLDEN, encoding="utf-8") as fh:
         return json.load(fh)
@@ -609,16 +615,16 @@ class TestAppWithFakes(Base):
         self.assertTrue(tab.tab_text().startswith("⚠ "), "warning mark first, no padding")
         self.assertFalse(tab.tab_text().endswith(" "))
         app.update()
-        tab.draw_bar()
-        tab.draw_weather()
-        texts = [tab.bar.itemcget(i, "text") for i in tab.bar.find_all() if tab.bar.type(i) == "text"]
-        self.assertIn("Site clock", texts)
-        self.assertTrue(any(s.startswith("Moon ") and "%" in s for s in texts))
-        self.assertTrue(any("·" in s or s.startswith("X ") for s in texts), "airmass values under the blocks")
-        fonts = {tab.bar.itemcget(i, "font") for i in tab.bar.find_all() if tab.bar.type(i) == "text"}
-        self.assertFalse([f for f in fonts if " 8" in f or " 7" in f], fonts)
-        wtexts = [tab.wx.itemcget(i, "text") for i in tab.wx.find_all() if tab.wx.type(i) == "text"]
-        self.assertTrue(any(s.startswith("⚠ dew from") for s in wtexts), wtexts)
+        tab.redraw()
+        self.assertIsNotNone(tab.plot, "the night plot is drawn")
+        p = tab.plot
+        texts = [t.get_text() for t in p.ax.texts + p.fig.texts]
+        self.assertTrue(p.ax.get_xlabel().startswith("Local time (UTC"), p.ax.get_xlabel())
+        self.assertTrue(any("Moon " in s and "%" in s for s in texts), texts)
+        self.assertTrue(any(s.count(".") == 1 and s[:1] in "12" and len(s) == 4 for s in texts),
+                        "airmass at the block ends")
+        wtexts = [t.get_text() for t in p.axw.texts]
+        self.assertTrue(any("⚠ dew from" in s for s in wtexts), wtexts)
         self.assertGreater(len(tab.table.get_children()), 3)
         first = tab.table.get_children()[0]
         self.assertTrue(tab.table.tag_has("modeV", first) or tab.table.tag_has("modeT", first))
@@ -766,12 +772,12 @@ class TestAppWithFakes(Base):
         self.golden_home()
         app = self.open()
         counts = {}
-        orig = self.sa.NightTab.draw_bar
+        orig = self.sa.NightTab.draw_plot
 
         def counting(tab):
             counts[tab.idx] = counts.get(tab.idx, 0) + 1
             return orig(tab)
-        self.sa.NightTab.draw_bar = counting
+        self.sa.NightTab.draw_plot = counting
         try:
             page = self.build(n=7)
             self.settle()
@@ -790,7 +796,7 @@ class TestAppWithFakes(Base):
             self.assertEqual(set(counts), {3})
             self.assertLessEqual(counts[3], 2)
         finally:
-            self.sa.NightTab.draw_bar = orig
+            self.sa.NightTab.draw_plot = orig
 
     def test_rereview_keeps_future_nights(self):
         self.golden_home()
@@ -855,56 +861,32 @@ class TestAppWithFakes(Base):
         src.fetch = real
 
     def test_night_graph_grows_with_window(self):
-        """The weather strip and block bar get taller with the window (between their min and max) and their rows
-        never overlap; at a small window they keep their minimum."""
+        """The night plot gets taller with the window (between its min and max: it takes the spare height instead of
+        leaving empty space below) and is re-rendered at the new size; at a small window it keeps its minimum."""
         self.golden_home()
         app = self.open()
         page = self.build(n=1)
         tab = page.tabs[0]
         lh = tab.lh
+        w = tab.plot_widget()
+        self.assertIsNotNone(w, "matplotlib is installed for the tests")
         app.geometry("1100x620+0+0")
         self.settle(0.6)
-        small = (int(tab.wx.cget("height")), int(tab.bar.cget("height")))
-        self.assertGreaterEqual(small[0], int(lh * tab.GRAPH_LINES["wx"][0]))
-        self.assertGreaterEqual(small[1], int(lh * tab.GRAPH_LINES["bar"][0]))
+        small = int(w.cget("height"))
+        self.assertGreaterEqual(small, int(lh * tab.GRAPH_LINES[0]))
         app.geometry("1400x1400+0+0")
         self.settle(0.6)
-        big = (int(tab.wx.cget("height")), int(tab.bar.cget("height")))
-        self.assertGreater(big[0], small[0], "the weather strip grows with the window")
-        self.assertGreater(big[1], small[1], "the block bar grows with the window")
-        self.assertLessEqual(big[0], lh * tab.GRAPH_LINES["wx"][1] + 1)
-        self.assertLessEqual(big[1], lh * tab.GRAPH_LINES["bar"][1] + 1)
-        self.assertEqual(tab._drawn_w["bar"], (int(tab.bar.winfo_width()), int(tab.bar.winfo_height())),
-                         "redrawn at the new height")
-        # row layout: in order, apart, inside the canvas, at the min and the max heights
-        for H in (int(lh * 10), int(lh * 17)):
-            r = tab.wx_rows(H)
-            self.assertLess(r["legend"] + lh / 2, r["ya"])
-            self.assertLess(r["ya"], r["yb"])
-            self.assertGreaterEqual(r["yc"] - r["yb"], lh * 0.8, "cloud bars apart from the temperature numbers")
-            self.assertGreaterEqual(r["ye"] - lh / 2 - r["yd"], lh * 0.8, "spread row apart from the dew numbers")
-            self.assertLessEqual(r["ye"] + lh / 2, H)
-        for H in (int(lh * 13.5), int(lh * 19.5)):
-            r = tab.bar_rows(H)
-            self.assertLess(r["ym"], r["yb0"])
-            self.assertGreaterEqual(r["ym1"] - r["ym0"], lh * 2.0, "a Moon altitude plot with some height")
-            self.assertGreaterEqual(r["ym0"], lh, "room for the degrees above the curve")
-            self.assertGreaterEqual(r["yb0"] - r["ym1"], lh * 0.5, "Moon plot apart from the blocks")
-            self.assertGreaterEqual(r["yb1"] - r["yb0"], lh * 2.4, "a tall enough block bar")
-            self.assertLess(r["yb1"], r["ya0"])
-            self.assertGreaterEqual(r["ya1"] - r["ya0"], lh)
-            self.assertGreaterEqual(r["yt"] - lh / 2, r["ya1"], "airmass values under the band")
-            self.assertGreaterEqual(r["yh"] - r["yt"], lh, "hour labels apart from the airmass values")
-            self.assertGreaterEqual(r["yd"] - r["yh"], lh)
-            self.assertLessEqual(r["yd"] + lh / 2, H + 1)
-        # airmass numbers stay inside their block (neighbors never overlap)
-        tab.draw_bar()
-        for item in tab.bar.find_withtag("am"):
-            self.assertTrue(tab.bar.bbox(item))
-        blocks = [(tab.axis(tab.bar).x(b.start), tab.axis(tab.bar).x(b.end)) for _i, b in tab.blocks()]
-        for item in tab.bar.find_withtag("am"):
-            x0, _y0, x1, _y1 = tab.bar.bbox(item)
-            self.assertTrue(any(xa - 2 <= x0 and x1 <= xb + 2 for xa, xb in blocks), (x0, x1, blocks))
+        big = int(w.cget("height"))
+        self.assertGreater(big, small, "the plot grows with the window")
+        self.assertLessEqual(big, lh * tab.GRAPH_LINES[1] + 1)
+        self.assertEqual(tab._plot_size, (int(w.winfo_width()), int(w.winfo_height())), "rendered at the new size")
+        fw, fh = tab.mpl_canvas.figure.get_size_inches() * tab.mpl_canvas.figure.dpi
+        self.assertLessEqual(abs(fh - w.winfo_height()), 2, "the figure follows the widget")
+        # the free height goes to the plot: the tab's contents end near the bottom of the visible area
+        view_h = int(tab.body.canvas.winfo_height())
+        used = int(tab.body.inner.winfo_reqheight())
+        if big < lh * tab.GRAPH_LINES[1]:
+            self.assertLessEqual(abs(view_h - used), px_tol(app), (view_h, used))
 
     def _sandbox_downloads(self):
         downloads = os.path.join(self.tmp, "Downloads")
@@ -1038,8 +1020,7 @@ class TestAppWithFakes(Base):
         lines = [w.cget("text") for w in tab.notes_box.winfo_children()]
         self.assertTrue(lines[0].startswith("✖ No dark time tonight"), lines)
         self.assertEqual(tab.notes_box.winfo_children()[0].cget("style"), "Bad.TLabel")
-        tab.draw_bar()
-        tab.draw_weather()
+        tab.redraw()
 
     # ---- final review (marks, tonight, the star itself, history, icon, notes, stale setup) ----
     def test_marks_survive_rebuild_without_restamping(self):
@@ -1583,9 +1564,9 @@ class TestAppWithRealModules(Base):
         for k, tab in enumerate(page.tabs):
             page.nb.select(k)
             app.update()
-            tab.draw_bar()
-            tab.draw_weather()
-            self.assertTrue(tab.bar.find_all())
+            tab.redraw()
+            self.assertIsNotNone(tab.plot)
+            self.assertTrue(tab.plot.groups, "the blocks' targets are drawn")
         tab = page.tabs[0]
         self.assertTrue(tab.night().weather and tab.night().weather.get("hours"), "weather from the recording")
         i, b = tab.blocks()[0]
