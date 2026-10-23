@@ -4430,9 +4430,18 @@ def own_row(b: Block, site, targets_by_id: dict) -> dict:
 # ---- 4 Export -------------------------------------------------------------------------------------------------------
 
 class ExportPage:
+    """4 Export: the plan card itself, on screen (one scrolling page for the ticked nights, laid out like the printed
+    card), Print (the HTML card in the browser), and per night Export to ASIAIR / Export to NINA (a CSV file each;
+    both programs plan one night at a time)."""
     title = "Export"
-    subtitle = ("ASIAIR's Plan imports coordinates only: copy the list and import it there. Exposures, times and "
-                "notes are on the printable plan card.")
+    subtitle = ("The plan card for the ticked nights. Print it, or send one night at a time to ASIAIR or NINA: "
+                "their imports take the targets' positions only; times, exposures and notes stay on the card.")
+    PROGRAMS = (("asiair", "ASIAIR"), ("nina", "NINA"))
+    HOW = {"asiair": "In ASIAIR's Plan: Add → Import, and paste the file's text.",
+           "nina": "In NINA: Sequencer → Import targets, and pick this file (each target gets your default "
+                   "sequence template)."}
+    COLUMNS = ("Time", "Target", "RA / Dec (J2000)", "SHOBS-P mode", "Alt", "Meridian", "Exposure", "Frames",
+               "Notes")
 
     def __init__(self, app: App, parent):
         self.app = app
@@ -4442,38 +4451,39 @@ class ExportPage:
         top.pack(fill=tk.X)
         ttk.Label(top, text="Nights", style="Bold.TLabel").pack(anchor="w")
         self.checks = ttk.Frame(top, style="Card.TFrame")
-        self.checks.pack(fill=tk.X, pady=(px(app, 2), px(app, 8)))
+        self.checks.pack(fill=tk.X, pady=(px(app, 2), px(app, 6)))
         self.night_vars: dict[str, tk.BooleanVar] = {}
-        btns = ttk.Frame(self.frame, style="Card.TFrame")
-        btns.pack(fill=tk.X, pady=(0, px(app, 8)))
-        style.green_button(btns, "Copy ASIAIR CSV", self.copy_csv).pack(side=tk.LEFT)
-        style.green_button(btns, "Save CSV…", self.save_csv).pack(side=tk.LEFT, padx=px(app, 8))
-        style.green_button(btns, "Print plan card", self.print_card).pack(side=tk.LEFT)
-        # after a save: open the folder the CSV went to (shown only then)
-        self.saved_path = ""
-        self.open_btn = ttk.Button(btns, text="Open folder", command=self.open_folder)
+        bar = ttk.Frame(self.frame, style="Card.TFrame")
+        bar.pack(fill=tk.X, pady=(0, px(app, 4)))
+        style.green_button(bar, "Print plan card", self.print_card).pack(side=tk.LEFT)
         self.angle_var = tk.StringVar()
-        ttk.Label(self.frame, textvariable=self.angle_var, style="Hint.TLabel").pack(anchor="w",
-                                                                                   pady=(0, px(app, 4)))
-        self.msg_var = tk.StringVar()
-        self.msg = ttk.Label(self.frame, textvariable=self.msg_var, style="Card.TLabel", justify=tk.LEFT)
-        self.msg.pack(anchor="w", fill=tk.X, pady=(0, px(app, 8)))
-        follow_wrap(self.msg, self.frame, px(app, 20))
-        ttk.Label(self.frame, text="Plan card preview", style="Section.TLabel").pack(anchor="w")
-        pf = ttk.Frame(self.frame, style="Card.TFrame")
-        pf.pack(fill=tk.BOTH, expand=True, pady=(px(app, 2), 0))
-        self.preview = tk.Text(pf, wrap="none", font=(style.MONO_FONT, 10), relief="solid", borderwidth=1,
-                               highlightthickness=0, background="#fbfcfd", foreground=style.TEXT, padx=px(app, 8),
-                               pady=px(app, 6))
-        vb = ttk.Scrollbar(pf, orient=tk.VERTICAL, command=self.preview.yview)
-        hb = ttk.Scrollbar(pf, orient=tk.HORIZONTAL, command=self.preview.xview)
-        self.preview.configure(yscrollcommand=vb.set, xscrollcommand=hb.set)
-        self.preview.grid(row=0, column=0, sticky="nsew")
-        vb.grid(row=0, column=1, sticky="ns")
-        hb.grid(row=1, column=0, sticky="ew")
-        pf.rowconfigure(0, weight=1)
-        pf.columnconfigure(0, weight=1)
+        ttk.Label(bar, textvariable=self.angle_var, style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 12), 0))
+        # where Export to ASIAIR writes: e.g. an iCloud / OneDrive folder that syncs to the phone running ASIAIR
+        fold = ttk.Frame(self.frame, style="Card.TFrame")
+        fold.pack(fill=tk.X, pady=(0, px(app, 4)))
+        ttk.Label(fold, text="ASIAIR export folder:", style="Bold.TLabel").pack(side=tk.LEFT)
+        self.folder_var = tk.StringVar()
+        self.folder_label = ttk.Label(fold, textvariable=self.folder_var, style="Card.TLabel")
+        self.folder_label.pack(side=tk.LEFT, padx=(px(app, 6), 0))
+        ttk.Button(fold, text="Choose folder…", command=self.choose_folder).pack(side=tk.LEFT, padx=(px(app, 10), 0))
+        self.downloads_btn = ttk.Button(fold, text="Use Downloads", command=self.use_downloads)
+        hint = ttk.Label(self.frame, text="A folder that syncs to the phone or tablet running ASIAIR (iCloud Drive, "
+                                          "OneDrive) puts each night's file there. NINA files go to the Downloads "
+                                          "folder.", style="Hint.TLabel", justify=tk.LEFT)
+        hint.pack(anchor="w", fill=tk.X)
+        follow_wrap(hint, self.frame, px(app, 20))
+        self.msg_var = tk.StringVar()            # the last message of any action on this page
+        self.page_msg_var = tk.StringVar()       # shown here: Print and folder messages (night ones go by the night)
+        self.page_msg = ttk.Label(self.frame, textvariable=self.page_msg_var, style="Card.TLabel", justify=tk.LEFT)
+        self.page_msg.pack(anchor="w", fill=tk.X, pady=(px(app, 2), px(app, 4)))
+        follow_wrap(self.page_msg, self.frame, px(app, 20))
+        self.body = ScrollBody(self.frame)
+        self.body.outer.pack(fill=tk.BOTH, expand=True)
+        self.card = self.body.inner
+        self.nights_ui: dict[str, dict] = {}
+        self.results: dict[tuple, dict] = {}     # (night ISO, "asiair" / "nina" / "copy") -> {msg, path, text, shown}
 
+    # ---- nights ----
     def refresh(self):
         for w in self.checks.winfo_children():
             w.destroy()
@@ -4495,20 +4505,30 @@ class ExportPage:
         if nights and not any(v.get() for v in self.night_vars.values()):
             for v in self.night_vars.values():
                 v.set(True)
+        live = {n.get("date") for n in nights}
+        self.results = {k: v for k, v in self.results.items() if k[0] in live}
         self.update_preview()
 
     def chosen(self) -> list[NightPlan]:
         return [NightPlan.from_dict(n) for n in self.app.schedule.nights if self.night_vars.get(n.get("date"),
                                                                                                 tk.BooleanVar()).get()]
 
+    def night_of(self, iso: str) -> NightPlan | None:
+        for n in self.app.schedule.nights:
+            if n.get("date") == iso:
+                return NightPlan.from_dict(n)
+        return None
+
     def _weather_by_date(self, nights):
         return {n.date: n.weather for n in nights if n.weather}
 
     def _msg(self, text):
-        set_msg(self.msg_var, self.msg, text)
+        """A page-level message (Print, folder): shown under the buttons."""
+        self.msg_var.set(text or "")
+        set_msg(self.page_msg_var, self.page_msg, text)
 
     def angle_text(self) -> str:
-        """What the ASIAIR list writes as the position angle (Setup's usual camera angle)."""
+        """What the ASIAIR and NINA lists write as the position angle (Setup's usual camera angle)."""
         ex = mod("export")
         if ex is None or not hasattr(ex, "asiair_angle"):
             return ""
@@ -4517,34 +4537,332 @@ class ExportPage:
             why = "Setup's usual camera angle"
         else:
             why = "set your usual camera angle in Setup"
-        return f"ASIAIR list: position angle {a:.2f}° ({why})."
+        return f"ASIAIR and NINA lists: position angle {a:.2f}° ({why})."
 
-    def update_preview(self):
-        ex = mod("export")
-        self.angle_var.set(self.angle_text())
-        nights = self.chosen()
-        self.preview.configure(state="normal")
-        self.preview.delete("1.0", tk.END)
-        if ex is None:
-            text = missing("export")
-        elif not nights:
-            text = "Tick one or more nights above."
+    # ---- the ASIAIR folder ----
+    def asiair_folder(self) -> str:
+        return str(self.app.settings.get("asiair_dir") or "")
+
+    def folder_text(self) -> str:
+        f = self.asiair_folder()
+        if not f:
+            return f"Downloads ({settings.downloads_dir()})"
+        if not os.path.isdir(f):
+            return f"{f}   ⚠ not found: files go to Downloads"
+        return f
+
+    def _show_folder(self):
+        text = self.folder_text()
+        self.folder_var.set(text)
+        self.folder_label.configure(style="Warn.TLabel" if "⚠" in text else "Card.TLabel")
+        if self.asiair_folder():
+            if not self.downloads_btn.winfo_manager():
+                self.downloads_btn.pack(side=tk.LEFT, padx=(px(self.app, 6), 0))
         else:
-            try:
-                text = ex.plan_card_text(nights, self.app.site, self.app.settings, self._weather_by_date(nights),
-                                         targets_by_id=self.app.targets_by_id())
-            except Exception as exc:
-                settings.log(f"plan_card_text: {exc!r}\n{traceback.format_exc()}")
-                text = f"✖ The preview could not be made: {exc}"
-        self.preview.insert("1.0", text)
-        self.preview.configure(state="disabled")
+            self.downloads_btn.pack_forget()
 
-    def csv_text(self) -> str | None:
+    def choose_folder(self) -> str | None:
+        start = self.asiair_folder() if os.path.isdir(self.asiair_folder()) else settings.downloads_dir()
+        path = filedialog.askdirectory(parent=self.app, title="ASIAIR export folder", initialdir=start,
+                                       mustexist=True)
+        if not path:
+            return None
+        return self.set_folder(path)
+
+    def set_folder(self, path: str) -> str:
+        path = os.path.abspath(path) if path else ""
+        self.app.settings["asiair_dir"] = path
+        settings.save_settings(self.app.settings)
+        self._show_folder()
+        self._msg(f"✔ Export to ASIAIR now writes to {path}." if path else
+                  f"✔ Export to ASIAIR now writes to the Downloads folder ({settings.downloads_dir()}).")
+        return path
+
+    def use_downloads(self):
+        self.set_folder("")
+
+    # ---- the on-screen plan card ----
+    def update_preview(self):
+        """Draw the plan card for the ticked nights (kept under this name: the night ticks call it)."""
+        self.angle_var.set(self.angle_text())
+        self._show_folder()
+        for w in self.card.winfo_children():
+            w.destroy()
+        self.nights_ui = {}
+        ex = mod("export")
+        nights = self.chosen()
+        if ex is None:
+            self._note(missing("export"), "Bad.TLabel")
+            return
+        if not nights:
+            self._note("Tick one or more nights above." if self.app.schedule.nights else
+                       "No schedule yet: build one on the Schedule page.", "Hint.TLabel")
+            return
+        wbd, tbi = self._weather_by_date(nights), self.app.targets_by_id()
+        for n in nights:
+            try:
+                self._night_section(ex, n, wbd, tbi)
+            except Exception as exc:
+                settings.log(f"export card {n.date}: {exc!r}\n{traceback.format_exc()}")
+                self._note(f"✖ {night_label(n.date, self.app.site)}: this night could not be shown ({exc}).",
+                           "Bad.TLabel")
+        if hasattr(ex, "nights_clock_label"):
+            foot = f"All times {ex.nights_clock_label(nights, self.app.site)} ({self.app.site.tz or 'UTC'})"
+            ttk.Label(self.card, text=foot, style="Small.TLabel").pack(anchor="w", pady=(px(self.app, 4), 0))
+
+    def card_text(self) -> str:
+        """Every text on the on-screen card, in order, one per line (self-test and tests)."""
+        out = []
+
+        def walk(w):
+            for c in w.winfo_children():
+                try:
+                    t = c.cget("text")
+                except tk.TclError:
+                    t = ""
+                if t:
+                    out.append(str(t))
+                walk(c)
+        walk(self.card)
+        return "\n".join(out)
+
+    def _note(self, text, st):
+        lbl = ttk.Label(self.card, text=text, style=st, justify=tk.LEFT)
+        lbl.pack(anchor="w", fill=tk.X, pady=px(self.app, 6))
+        follow_wrap(lbl, self.card, px(self.app, 20))
+
+    def _sections(self, ex, n, wbd, tbi) -> dict:
+        if hasattr(ex, "card_sections"):
+            return ex.card_sections(n, self.app.site, self.app.settings, wbd, tbi)
+        return {"date": night_label(n.date, self.app.site), "iso": n.date, "dark": "", "moon": "", "weather": "",
+                "clock": sky.night_local_label(date.fromisoformat(n.date), self.app.site.tz),
+                "rows": ex.table_rows(n, self.app.site, tbi), "lists": []}
+
+    def _night_section(self, ex, n: NightPlan, wbd, tbi):
+        app = self.app
+        sec = self._sections(ex, n, wbd, tbi)
+        iso = n.date
+        box = ttk.Frame(self.card, style="Card.TFrame")
+        box.pack(fill=tk.X, pady=(px(app, 4), px(app, 10)))
+        ttk.Separator(box, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, px(app, 6)))
+        head = ttk.Frame(box, style="Card.TFrame")
+        head.pack(fill=tk.X)
+        ttk.Label(head, text=sec["date"], style="Title.TLabel").pack(side=tk.LEFT)
+        ui = {"box": box, "buttons": {}}
+        for k, (prog, name) in enumerate(self.PROGRAMS):
+            b = style.green_button(head, f"Export to {name}", lambda p=prog, i=iso: self.export_night(i, p))
+            b.pack(side=tk.LEFT, padx=(px(app, 16) if k == 0 else px(app, 6), 0))
+            ui["buttons"][prog] = b
+        ui["buttons"]["copy"] = ttk.Button(head, text="Copy ASIAIR list", command=lambda i=iso: self.copy_csv(i))
+        ui["buttons"]["copy"].pack(side=tk.LEFT, padx=(px(app, 6), 0))
+        facts = ttk.Frame(box, style="Card.TFrame")
+        facts.pack(fill=tk.X, pady=(px(app, 2), 0))
+        parts = [(sec.get("dark"), "Bold.TLabel"), (sec.get("moon"), "Card.TLabel"),
+                 (f"Times: {sec['clock']}" if sec.get("clock") else "", "Card.TLabel")]
+        first = True
+        for text, st in parts:
+            if not text:
+                continue
+            if not first:
+                ttk.Label(facts, text="·", style="Hint.TLabel").pack(side=tk.LEFT, padx=px(app, 6))
+            if text.startswith("✖"):
+                st = "Bad.TLabel"
+            ttk.Label(facts, text=text, style=st).pack(side=tk.LEFT)
+            first = False
+        if sec.get("weather"):
+            wl = ttk.Label(box, text=sec["weather"], style="Card.TLabel", justify=tk.LEFT)
+            wl.pack(anchor="w", fill=tk.X)
+            follow_wrap(wl, box, px(app, 10))
+        ui["status"] = ttk.Frame(box, style="Card.TFrame")
+        ui["status"].pack(fill=tk.X)
+        self.nights_ui[iso] = ui
+        self._draw_status(iso)
+        self._table(box, sec.get("rows") or [])
+        lists = [(h, items) for h, items in (sec.get("lists") or []) if items]
+        if lists:
+            lf = ttk.Frame(box, style="Card.TFrame")
+            lf.pack(fill=tk.X)
+            body = tkfont.Font(app, font=style.font(10))
+            items_lbls = []
+            gap = px(app, 18)
+            for col, (h, items) in enumerate(lists):
+                c = ttk.Frame(lf, style="Card.TFrame")
+                c.grid(row=0, column=col, sticky="nw", padx=(0, gap))
+                lf.columnconfigure(col, weight=1, uniform="lists")
+                ttk.Label(c, text=h, style="Section.TLabel").pack(anchor="w")
+                for x in items:
+                    lbl = ttk.Label(c, text=f"•  {x}", style="Card.TLabel", justify=tk.LEFT,
+                                    wraplength=body.measure("0") * 24)
+                    lbl.pack(anchor="w")
+                    items_lbls.append(lbl)
+
+            def wrap_lists(e, labels=items_lbls, k=len(lists)):
+                w = max(body.measure("0") * 16, int(e.width / k) - gap - px(app, 4))
+                for lb in labels:
+                    try:
+                        lb.configure(wraplength=w)
+                    except tk.TclError:
+                        pass
+            lf.bind("<Configure>", wrap_lists, add="+")
+
+    def _table(self, parent, rows: list[dict]):
+        """The nightly table as a grid of labels (rows grow to fit wrapped notes; widths from the content)."""
+        app = self.app
+        if not rows:
+            ttk.Label(parent, text="No blocks planned.", style="Hint.TLabel").pack(anchor="w", pady=px(app, 4))
+            return
+        grid = tk.Frame(parent, background=style.LINE, padx=0, pady=0)
+        grid.pack(fill=tk.X, pady=(px(app, 6), px(app, 6)))
+        ch = tkfont.Font(app, font=style.font(10)).measure("0")
+        pad = (px(app, 5), px(app, 3))
+
+        def cell(r, c, text, font=None, bg="#ffffff", fg=style.TEXT, wrap=0):
+            lbl = tk.Label(grid, text=text, font=font or style.font(10), background=bg, foreground=fg, anchor="nw",
+                           justify=tk.LEFT, padx=pad[0], pady=pad[1], wraplength=wrap)
+            lbl.grid(row=r, column=c, sticky="nsew", padx=(1, 1 if c == len(self.COLUMNS) - 1 else 0),
+                     pady=(1, 1 if r == len(rows) else 0))
+            return lbl
+
+        for c, h in enumerate(self.COLUMNS):
+            cell(0, c, h, style.font(9, "bold"), bg="#eef3f6", fg=style.SIDE)
+        grid.columnconfigure(len(self.COLUMNS) - 1, weight=1)
+        for i, r in enumerate(rows, 1):
+            lock = " (locked)" if r.get("locked") else (" (set by you)" if r.get("set_by_user") else "")
+            status = "" if r.get("status", "planned") == "planned" else f"\n[{r.get('status_label', r['status'])}]"
+            exp = str(r.get("exposure", "—"))
+            if r.get("exposure_is_estimate") and exp != "—":
+                exp += " est."
+            code = str(r.get("mode_code") or "")
+            mbg = style.mode_color(code, "light") if code else "#ffffff"
+            cell(i, 0, r.get("time", ""), style.font(12, "bold"))
+            cell(i, 1, f"{r.get('target', '')}{lock}{status}", style.font(11, "bold"), wrap=ch * 18)
+            cell(i, 2, "\n".join(str(r.get("radec", "—")).split(" ", 1)))
+            m = cell(i, 3, f"{code}  {r.get('mode', '')}".strip(), style.font(9, "bold"), bg="#ffffff")
+            if code:
+                m.configure(background=mbg, foreground=style.text_on(mbg))
+            cell(i, 4, f"{r.get('alt', '—')}\n{r.get('alt_x', '—')}")
+            cell(i, 5, r.get("meridian", "—"), style.font(11, "bold"))
+            cell(i, 6, exp)
+            cell(i, 7, r.get("frames", "—"), wrap=ch * 14)
+            cell(i, 8, r.get("notes", ""), wrap=ch * 46)
+
+    # ---- per-night results (status line, Open folder, Open in Notepad, Show file contents) ----
+    def _draw_status(self, iso: str):
+        ui = self.nights_ui.get(iso)
+        if not ui:
+            return
+        st = ui["status"]
+        for w in st.winfo_children():
+            w.destroy()
+        app = self.app
+        for prog in ("asiair", "nina", "copy"):
+            r = self.results.get((iso, prog))
+            if not r:
+                continue
+            row = ttk.Frame(st, style="Card.TFrame")
+            row.pack(fill=tk.X, pady=(px(app, 4), 0))
+            lbl = ttk.Label(row, text=r["msg"], style=style.status_style(style.kind_of(r["msg"])), justify=tk.LEFT)
+            lbl.pack(anchor="w", fill=tk.X)
+            follow_wrap(lbl, st, px(app, 10))
+            ui[prog] = {"label": lbl, "contents": None}
+            path = r.get("path")
+            if not path:
+                continue
+            btns = ttk.Frame(row, style="Card.TFrame")
+            btns.pack(anchor="w", pady=(px(app, 2), 0))
+            ttk.Button(btns, text="Open folder", command=lambda p=path: self.open_folder(p)).pack(side=tk.LEFT)
+            ttk.Button(btns, text="Open in Notepad", command=lambda p=path: self.open_in_notepad(p)).pack(
+                side=tk.LEFT, padx=(px(app, 6), 0))
+            ttk.Button(btns, text="Hide file contents ▾" if r.get("shown") else "Show file contents ▸",
+                       command=lambda pr=prog: self.toggle_contents(iso, pr)).pack(side=tk.LEFT, padx=(px(app, 6), 0))
+            if r.get("shown"):
+                text = (r.get("text") or "").replace("\r\n", "\n").rstrip("\n")
+                lines = text.splitlines() or [""]
+                t = tk.Text(row, wrap="none", font=(style.MONO_FONT, 9), relief="solid", borderwidth=1,
+                            highlightthickness=0, background="#fbfcfd", foreground=style.TEXT,
+                            height=min(len(lines), 14), width=min(140, max(len(x) for x in lines) + 2),
+                            padx=px(app, 6), pady=px(app, 4))
+                t.insert("1.0", text)
+                t.configure(state="disabled")
+                t.pack(anchor="w", pady=(px(app, 4), 0))
+                ui[prog]["contents"] = t
+
+    def toggle_contents(self, iso: str, prog: str) -> bool:
+        r = self.results.get((iso, prog))
+        if not r:
+            return False
+        r["shown"] = not r.get("shown")
+        self._draw_status(iso)
+        return r["shown"]
+
+    def _result(self, iso: str, prog: str, msg: str, path: str = "", text: str = ""):
+        self.results[(iso, prog)] = {"msg": msg, "path": path, "text": text, "shown": False}
+        self.msg_var.set(msg)
+        self._draw_status(iso)
+
+    # ---- Export to ASIAIR / NINA, Copy ----
+    def _targets_of(self, ex, night) -> tuple[int, list]:
+        if hasattr(ex, "asiair_targets"):
+            try:
+                rows, skipped = ex.asiair_targets([night], self.app.targets_by_id(), self.app.site)
+                return len(rows), list(skipped)
+            except Exception:
+                pass
+        return 0, []
+
+    def export_night(self, iso: str, program: str) -> str | None:
+        """Write ONE night's file for ASIAIR (to the ASIAIR export folder, else Downloads) or NINA (to the
+        Downloads folder); the full path goes in the night's ✔ status line."""
+        app = self.app
+        name = dict(self.PROGRAMS).get(program, program)
+        ex = mod("export")
+        if ex is None or not hasattr(ex, "night_file_text"):
+            self._result(iso, program, missing("export"))
+            return None
+        night = self.night_of(iso)
+        if night is None:
+            self._msg("⚠ That night is no longer in the schedule.")
+            return None
+        when = night_label(iso, app.site)
+        try:
+            text = ex.night_file_text(program, night, app.targets_by_id(), app.site, optics=app.optics)
+        except Exception as exc:
+            settings.log(f"{name} file: {exc!r}\n{traceback.format_exc()}")
+            self._result(iso, program, f"✖ {name}: the list for {when} could not be made: {exc}")
+            return None
+        n, skipped = self._targets_of(ex, night)
+        if n == 0:
+            self._result(iso, program, f"⚠ {name}: nothing to export for {when}: no target that night has "
+                                       "coordinates.")
+            return None
+        folder = self.asiair_folder() if program == "asiair" else settings.export_dir(app.settings)
+        try:
+            path, note = ex.write_night_file(text, ex.night_file_name(program, iso), folder, settings.downloads_dir())
+        except OSError as exc:
+            self._result(iso, program, f"✖ {name}: not saved: {exc.strerror or exc}.")
+            return None
+        msg = f"{name}: saved {n} target{'s' if n != 1 else ''} for {when} to {path}. {self.HOW[program]}"
+        warn = []
+        if note:
+            warn.append(note.lstrip("⚠ "))
+        if skipped:
+            warn.append(f"Left out (no coordinates): {', '.join(skipped)}.")
+        ang = self.angle_text().replace("ASIAIR and NINA lists: position", "Position")
+        if ang:
+            msg += " " + ang
+        msg = (f"⚠ {msg} " + " ".join(warn)) if warn else f"✔ {msg}"
+        self._result(iso, program, msg, path, text)
+        settings.log(f"{name} file for {iso} saved to {path} ({n} rows)")
+        return path
+
+    def csv_text(self, iso: str | None = None) -> str | None:
+        """The ASIAIR list of one night (the first ticked night when none is given)."""
         ex = mod("export")
         if ex is None:
             self._msg(missing("export"))
             return None
-        nights = self.chosen()
+        nights = [self.night_of(iso)] if iso else self.chosen()[:1]
+        nights = [n for n in nights if n is not None]
         if not nights:
             self._msg("⚠ Tick one or more nights first.")
             return None
@@ -4555,97 +4873,74 @@ class ExportPage:
             self._msg(f"✖ The CSV could not be made: {exc}")
             return None
 
-    def count_targets(self, text: str) -> tuple[int, list]:
-        ex = mod("export")
-        if ex is not None and hasattr(ex, "asiair_targets"):
-            try:
-                rows, skipped = ex.asiair_targets(self.chosen(), self.app.targets_by_id(), self.app.site)
-                return len(rows), list(skipped)
-            except Exception:
-                pass
-        return self.count_rows(text), []
-
-    @staticmethod
-    def count_rows(text: str) -> int:
-        lines = [l for l in text.splitlines() if l.strip()]
-        return max(0, len(lines) - 1)
-
-    def copy_csv(self):
-        text = self.csv_text()
-        if text is None:
+    def copy_csv(self, iso: str | None = None):
+        """Copy one night's ASIAIR list to the clipboard (the secondary way: Export to ASIAIR writes the file)."""
+        if iso is None:
+            ch = self.chosen()
+            iso = ch[0].date if ch else None
+        text = self.csv_text(iso)
+        if text is None or iso is None:
             return
         try:
             self.app.clipboard_clear()
             self.app.clipboard_append(text)
             self.app.update_idletasks()
         except tk.TclError as exc:
-            self._msg(f"✖ The clipboard did not take the list ({exc}).")
+            self._result(iso, "copy", f"✖ The clipboard did not take the list ({exc}).")
             return
-        n, skipped = self.count_targets(text)
-        msg = f"✔ Copied {n} target{'s' if n != 1 else ''}. In ASIAIR's Plan: Add → Import, and paste."
+        ex = mod("export")
+        n, skipped = self._targets_of(ex, self.night_of(iso)) if ex is not None else (0, [])
+        if not n:
+            n = max(0, len([l for l in text.splitlines() if l.strip()]) - 1)
+        when = night_label(iso, self.app.site)
+        msg = f"✔ Copied {n} target{'s' if n != 1 else ''} for {when}. In ASIAIR's Plan: Add → Import, and paste."
         if skipped:
-            msg = f"⚠ Copied {n} target{'s' if n != 1 else ''}; left out (no coordinates): {', '.join(skipped)}."
-        ang = self.angle_text()
+            msg = (f"⚠ Copied {n} target{'s' if n != 1 else ''} for {when}; left out (no coordinates): "
+                   f"{', '.join(skipped)}.")
+        ang = self.angle_text().replace("ASIAIR and NINA lists: position", "Position")
         if ang:
-            msg += " " + ang.replace("ASIAIR list: position", "Position")
-        self._msg(msg)
-        settings.log(f"ASIAIR CSV copied ({n} rows)")
+            msg += " " + ang
+        self._result(iso, "copy", msg)
+        settings.log(f"ASIAIR CSV copied for {iso} ({n} rows)")
 
-    def save_csv(self):
-        text = self.csv_text()
-        if text is None:
-            return
-        path = filedialog.asksaveasfilename(parent=self.app, title="Save the ASIAIR coordinate list",
-                                            defaultextension=".csv", initialfile=self.suggested_name(),
-                                            initialdir=settings.export_dir(self.app.settings),
-                                            filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
-        if not path:
-            return
-        self.write_csv(path, text)
-
-    def suggested_name(self) -> str:
-        nights = sorted(n.date for n in self.chosen() if n.date)
-        return f"SHOBS-SCHED_ASIAIR_{nights[0]}.csv" if nights else "SHOBS-SCHED_ASIAIR.csv"
-
-    def write_csv(self, path: str, text: str) -> bool:
-        path = os.path.abspath(path)
-        try:
-            with open(path, "w", encoding="utf-8", newline="") as fh:
-                fh.write(text)
-        except OSError as exc:
-            self._msg(f"✖ Not saved: {exc.strerror or exc}.")
-            return False
-        n = self.count_rows(text)
-        ang = self.angle_text().replace("ASIAIR list: position", "Position")
-        self._msg(f"✔ Saved {n} target{'s' if n != 1 else ''} to {path}" + (f". {ang}" if ang else ""))
-        self.saved_path = path
-        folder = os.path.dirname(path)
-        if folder and folder != self.app.settings.get("export_dir"):
-            self.app.settings["export_dir"] = folder         # Save CSV opens here next time
-            settings.save_settings(self.app.settings)
-        if not self.open_btn.winfo_manager():
-            self.open_btn.pack(side=tk.LEFT, padx=(px(self.app, 8), 0))
-        settings.log(f"ASIAIR CSV saved to {path} ({n} rows)")
-        return True
-
-    def open_folder(self) -> str | None:
-        """Show the folder of the last saved CSV in Explorer (Windows) or the file manager (never in tests)."""
-        folder = os.path.dirname(self.saved_path) if self.saved_path else ""
-        if not folder or not os.path.isdir(folder):
-            self._msg("⚠ Save the CSV first; the folder it went to opens here.")
-            return None
+    # ---- opening files and folders (never in tests) ----
+    def _launch(self, args_win, args_other) -> bool:
         if self.app.testing:
-            return folder
+            return True
         try:
             if sys.platform == "win32":
-                os.startfile(folder)          # noqa: S606 - the user's own folder
+                if args_win[0] == "startfile":
+                    os.startfile(args_win[1])          # noqa: S606 - the user's own folder
+                else:
+                    import subprocess
+                    subprocess.Popen(args_win)
             else:
                 import subprocess
-                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", folder])
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open"] + args_other)
         except Exception as exc:
-            self._msg(f"✖ The folder did not open ({exc}). The CSV is at {self.saved_path}")
+            self._msg(f"✖ It did not open ({exc}).")
+            return False
+        return True
+
+    def open_folder(self, path: str) -> str | None:
+        """Show the folder a file went to in Explorer (Windows) or the file manager."""
+        folder = os.path.dirname(path) if path else ""
+        if not folder or not os.path.isdir(folder):
+            self._msg(f"⚠ The folder {folder or '?'} is not there any more.")
             return None
-        return folder
+        return folder if self._launch(["startfile", folder], [folder]) else None
+
+    def open_in_notepad(self, path: str) -> str | None:
+        """Open the file in Notepad (Windows), else the system's text editor."""
+        if not path or not os.path.isfile(path):
+            self._msg(f"⚠ The file {path or '?'} is not there any more.")
+            return None
+        return path if self._launch(["notepad.exe", path], [path]) else None
+
+    # ---- Print ----
+    def card_plots(self, nights) -> dict | None:
+        """Night plots for the printed card ({night ISO: PNG bytes}); None = none. The lead wires nightplot here."""
+        return None
 
     def print_card(self, open_browser: bool = True) -> str | None:
         ex = mod("export")
@@ -4657,8 +4952,11 @@ class ExportPage:
             self._msg("⚠ Tick one or more nights first.")
             return None
         try:
-            html = ex.plan_card_html(nights, self.app.site, self.app.settings, self._weather_by_date(nights),
-                                     targets_by_id=self.app.targets_by_id())
+            kw = {"targets_by_id": self.app.targets_by_id()}
+            plots = self.card_plots(nights)
+            if plots:
+                kw["plots"] = plots
+            html = ex.plan_card_html(nights, self.app.site, self.app.settings, self._weather_by_date(nights), **kw)
         except Exception as exc:
             settings.log(f"plan_card_html: {exc!r}\n{traceback.format_exc()}")
             self._msg(f"✖ The plan card could not be made: {exc}")

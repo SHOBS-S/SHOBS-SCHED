@@ -1,16 +1,18 @@
-"""SHOBS-SCHED exports: the nightly table (shared by the app and the plan card), the ASIAIR coordinate list, and the
-printable plan card (HTML) with its plain-text twin.
+"""SHOBS-SCHED exports: the nightly table (shared by the app and the plan card), the ASIAIR coordinate list, the NINA
+target list (one night per file), and the printable plan card (HTML) with its plain-text twin.
 
 Every time shown is on the SITE's clock (site.tz), never the computer's. Nights and blocks may be passed as model
 objects or as their dicts (as saved in the schedule)."""
 from __future__ import annotations
 
+import base64
 import csv
 import html
 import io
 import math
+import os
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 
 import sky
 from models import MODE_NAMES, STATUS_LABELS, Block, NightPlan, Site, Target
@@ -299,6 +301,141 @@ def asiair_csv(nights, targets_by_id, site: Site | None = None, *, style: str = 
     return "\n".join(lines)
 
 
+# ---- NINA target list -------------------------------------------------------------------------------------------------
+#
+# What N.I.N.A. imports: Sequencer → "Import targets" (the Simple Sequencer's target-set import; the open dialog's
+# filter reads "Telescopius|*.csv"). Verified in NINA's source, develop branch, version 3.3.0.1069 (Oct 2026):
+#   https://github.com/isbeorn/nina/blob/develop/NINA/ViewModel/Sequencer/SimpleSequence/SimpleSequenceVM.cs
+#   (ImportTargets()). It reads the file with CsvHelper (InvariantCulture, standard RFC 4180 quoting), matches the
+#   header names lower-cased and trimmed, and accepts two Telescopius layouts:
+#     * a row with a "pane" column (Telescopius mosaic "Copy CSV"/download): name = Pane, "ra" → HMSToDegrees,
+#       "dec" → DMSToDegrees, "position angle (east)" (a number, taken modulo 360) → the target's position angle;
+#       coordinates are J2000;
+#     * else a "familiar name" column (Telescopius observing list): "catalogue entry", "right ascension" /
+#       "declination (j2000)" ..., position angle optional.
+#   AstroUtil.DMSToDegrees (NINA.Astrometry/AstroUtil.cs) takes the numbers out with a regex ([0-9.]+), so
+#   "23hr 13' 17"" and "57º 10' 06"" both parse; a "-" anywhere in the field makes it negative.
+#   Each row becomes one target of the Simple Sequencer (name, RA/Dec J2000, rotation), with the user's default
+#   sequence template for exposures. (Bug 1028, https://bitbucket.org/Isbeorn/nina/issues/1028, fixed the rotation
+#   being dropped on import.)
+# We write the mosaic layout (the one NINA reads the position angle from without conditions): the same columns and
+# values as the ASIAIR list, but as proper CSV (no space after the commas; fields with quotes are quoted with the
+# quote doubled, as CsvHelper expects). Names keep their real spelling (Unicode is fine: NINA reads UTF-8).
+# NINA's own Target Scheduler plugin plans several nights itself: we do not feed it.
+# TODO (NINA level 2, GitHub issue): a full Advanced Sequencer file (.json) with the night's times, exposures, frame
+# counts and the meridian flip, so NINA runs the night as planned. Not built yet.
+
+NINA_HEADER = ["Pane", "RA", "DEC", "Position Angle (East)", "Pane width (arcmins)", "Pane height (arcmins)",
+               "Overlap", "Row", "Column"]
+
+
+def nina_name(name: str) -> str:
+    """The target's name for NINA: real spelling, control characters and surrounding spaces removed."""
+    t = "".join(ch if unicodedata.category(ch)[0] != "C" else " " for ch in str(name or ""))
+    return " ".join(t.split()) or "Target"
+
+
+def nina_csv(nights, targets_by_id, site: Site | None = None, *, optics=None) -> str:
+    """Target list for N.I.N.A.'s Sequencer → Import targets (Telescopius mosaic CSV; see the comment above): one
+    row per target in time order (each once), RA/Dec J2000, position angle = Setup's usual camera angle. Ends with
+    a newline."""
+    rows, _skipped = asiair_targets(nights, targets_by_id, site)
+    fw, fh = fov_arcmin(optics)
+    pa = asiair_angle(optics)
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\r\n")
+    w.writerow(NINA_HEADER)
+    for r in rows:
+        w.writerow([nina_name(r["name"]), ra_telescopius(r["ra"]), dec_telescopius(r["dec"]), f"{pa:.2f}",
+                    f"{fw:.2f}", f"{fh:.2f}", "0%", "-", "-"])
+    return buf.getvalue()
+
+
+# ---- one night's file -----------------------------------------------------------------------------------------------
+
+PROGRAMS = {"asiair": "ASIAIR", "nina": "NINA"}
+
+
+def night_file_name(program: str, night_date) -> str:
+    """'SHOBS-SCHED_ASIAIR_2026-10-20.csv' / 'SHOBS-SCHED_NINA_2026-10-20.csv'."""
+    tag = PROGRAMS.get(str(program).lower(), str(program).upper())
+    return f"SHOBS-SCHED_{tag}_{str(night_date)[:10]}.csv"
+
+
+def night_file_text(program: str, night, targets_by_id, site: Site | None = None, *, optics=None) -> str:
+    """The file for ONE night (both programs plan one night at a time)."""
+    if str(program).lower() == "nina":
+        return nina_csv([night], targets_by_id, site, optics=optics)
+    return asiair_csv([night], targets_by_id, site, optics=optics) + "\n"
+
+
+def folder_writable(folder: str) -> bool:
+    """An existing folder we can create a file in."""
+    if not folder or not os.path.isdir(folder):
+        return False
+    probe = os.path.join(folder, f".shobs_sched_probe_{os.getpid()}")
+    try:
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def write_night_file(text: str, name: str, folder: str, fallback: str) -> tuple[str, str]:
+    """Write `text` (UTF-8, no byte-order mark) as `name` into `folder`; when that folder is missing or cannot be
+    written, into `fallback` (the Downloads folder). Returns (full path, note); the note is "" when the file went
+    where asked, else a ⚠ sentence saying why it went to the fallback. Raises OSError when neither works."""
+    note = ""
+    target = folder
+    if not folder_writable(folder or ""):
+        if folder:
+            why = "is missing" if not os.path.isdir(folder) else "cannot be written"
+            note = f"⚠ The chosen folder {folder} {why}, so the file went to {fallback} instead."
+        target = fallback
+    path = os.path.abspath(os.path.join(target, name))
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+    except OSError:
+        if target == fallback:
+            raise
+        note = f"⚠ The chosen folder {folder} cannot be written, so the file went to {fallback} instead."
+        path = os.path.abspath(os.path.join(fallback, name))
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+    return path, note
+
+
+# ---- local-time labels ------------------------------------------------------------------------------------------------
+
+def _night_day(n: NightPlan) -> date | None:
+    try:
+        return date.fromisoformat(str(n.date)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def night_clock_label(night, site: Site) -> str:
+    """'Local time (UTC−4)' for the night; 'Local time (UTC−4 → UTC−5)' on a daylight-saving night; 'UTC' for an
+    unknown zone (sky.night_local_label)."""
+    d = _night_day(_night(night))
+    if d is None:
+        return sky.local_label(site.tz)
+    return sky.night_local_label(d, site.tz)
+
+
+def nights_clock_label(nights, site: Site) -> str:
+    """One label for a run of nights: first night's local noon to the last night's next local noon."""
+    days = [d for d in (_night_day(_night(n)) for n in (nights or [])) if d is not None]
+    if not days or not sky.zone_ok(site.tz):
+        return sky.local_label(site.tz)
+    a = sky.local_jd(min(days), 12, 0, site.tz)
+    b = sky.local_jd(max(days) + timedelta(days=1), 12, 0, site.tz)
+    return sky.local_label(site.tz, a, b)
+
+
 # ---- plan card ------------------------------------------------------------------------------------------------------
 
 def _darkness_word(site: Site) -> str:
@@ -343,7 +480,8 @@ def _night_facts(n: NightPlan, site: Site, weather_by_date: dict | None, setting
             wline += f" ({w['note']})"
         if wline:
             wline = f"Weather ({w.get('source') or 'forecast'}): {wline}"
-    return {"date": _date_label(n.date, site, year=True), "dark": dark, "moon": moon, "weather": wline}
+    return {"date": _date_label(n.date, site, year=True), "dark": dark, "moon": moon, "weather": wline,
+            "clock": night_clock_label(n, site)}
 
 
 def _didnt_fit_lines(n: NightPlan, site: Site) -> list[str]:
@@ -376,6 +514,29 @@ def _free_lines(n: NightPlan, site: Site) -> list[str]:
     return [f"Free {_hhmm(g[0], site.tz)}–{_hhmm(g[1], site.tz)}" for g in (n.free or []) if len(g) >= 2]
 
 
+def card_lists(night, site: Site) -> list[tuple[str, list[str]]]:
+    """The lists under a night's table, in card order, only those with something in them: Flats, Darks, Didn't
+    fit (and why), Free time."""
+    n = _night(night)
+    out = []
+    for head, items in (("Flats", n.flats), ("Darks", n.darks),
+                        ("Didn't fit, and why", _didnt_fit_lines(n, site)), ("Free time", _free_lines(n, site))):
+        items = _items(head, items)
+        if items:
+            out.append((head, items))
+    return out
+
+
+def card_sections(night, site: Site, settings_dict: dict | None = None, weather_by_date: dict | None = None,
+                  targets_by_id: dict | None = None) -> dict:
+    """One night of the plan card as data, for the app's on-screen card (same content as plan_card_html):
+    {date "Tue 20 Oct 2026", iso, dark, moon, weather ("" when none), clock "Local time (UTC−4)", rows (table_rows),
+    lists [(heading, [items])]}."""
+    n = _night(night)
+    f = _night_facts(n, site, weather_by_date, settings_dict)
+    return dict(f, iso=str(n.date)[:10], rows=table_rows(n, site, targets_by_id), lists=card_lists(n, site))
+
+
 def _title(nights: list[NightPlan], site: Site) -> str:
     if not nights:
         return "Observing plan"
@@ -397,11 +558,13 @@ def _site_line(site: Site, settings_dict: dict | None) -> str:
     return " · ".join(parts)
 
 
-def _footer(site: Site) -> str:
-    text = f"SHOBS-SCHED · site clock ({site.tz or 'UTC'})"
+def _footer(site: Site, nights=None) -> tuple[str, str]:
+    """('SHOBS-SCHED · all times Local time (UTC−4)', 'America/New_York'): the label, and the zone name in small
+    text. An unknown zone: ('SHOBS-SCHED · all times UTC ⚠ unknown time zone', 'Mars/Olympus')."""
+    text = f"SHOBS-SCHED · all times {nights_clock_label(nights, site)}"
     if not sky.zone_ok(site.tz):
-        text += " ⚠ unknown time zone, times in UTC"
-    return text
+        text += " ⚠ unknown time zone"
+    return text, str(site.tz or "UTC")
 
 
 _CSS = """
@@ -439,6 +602,9 @@ td.notes { font-size: 10pt; }
 .list h3 { font-size: 11pt; margin: 4pt 0 1pt; }
 .list ul { margin: 0; padding-left: 16pt; }
 .empty { font-style: italic; }
+.plot { margin: 4pt 0; break-inside: avoid; page-break-inside: avoid; }
+.plot img { display: block; width: 100%; height: auto; max-height: 170mm; object-fit: contain; }
+footer .zone { font-size: 8pt; color: #333; }
 footer { break-before: avoid; page-break-before: avoid; margin-top: 8pt; border-top: 0.75pt solid #000; padding-top: 3pt; font-size: 9pt; }
 @media print { body { padding: 0; max-width: none; font-size: 10pt; } h1 { font-size: 16pt; } h2 { font-size: 14pt; }
                .night { margin-top: 6pt; } }
@@ -446,10 +612,13 @@ footer { break-before: avoid; page-break-before: avoid; margin-top: 8pt; border-
 
 
 def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weather_by_date: dict | None = None,
-                   targets_by_id: dict | None = None) -> str:
+                   targets_by_id: dict | None = None, plots: dict | None = None) -> str:
     """A printable, self-contained HTML page (no scripts, no external files): black on white, big times. Per night:
-    date, darkness, Moon, weather + dew onset, the nightly table, flats, darks, didn't fit, free gaps. Footer
-    'SHOBS-SCHED · site clock (<zone>)'. Pass targets_by_id to fill the RA / Dec column."""
+    date, darkness, Moon, weather + dew onset, the local-time label, the night plot (when given), the nightly table,
+    flats, darks, didn't fit, free gaps. Footer 'SHOBS-SCHED · all times Local time (UTC−4)' with the zone name in
+    small text. Pass targets_by_id to fill the RA / Dec column. plots: {night date ISO: PNG bytes}: each night's
+    plot embedded (base64) full width under its heading; it never splits across pages. Without plots the card is
+    unchanged."""
     e = lambda s: html.escape(str(s), quote=True)
     ns = [_night(n) for n in (nights or [])]
     title = _title(ns, site)
@@ -463,9 +632,14 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
         f = _night_facts(n, site, weather_by_date, settings_dict)
         out.append('<section class="night">')
         out.append(f"<h2>{e(f['date'])}</h2>")
-        out.append(f'<p class="facts"><b>{e(f["dark"])}</b> · {e(f["moon"])}</p>')
+        out.append(f'<p class="facts"><b>{e(f["dark"])}</b> · {e(f["moon"])} · Times: {e(f["clock"])}</p>')
         if f["weather"]:
             out.append(f'<p class="facts">{e(f["weather"])}</p>')
+        png = (plots or {}).get(str(n.date)[:10])
+        if png:
+            b64 = base64.b64encode(bytes(png)).decode("ascii")
+            out.append(f'<figure class="plot"><img src="data:image/png;base64,{b64}" '
+                       f'alt="Night plot, {e(f["date"])}"></figure>')
         rows = table_rows(n, site, targets_by_id)
         if rows:
             cols = ("c-time", "c-target", "c-radec", "c-mode", "c-alt", "c-mer", "c-exp", "c-frames", "c-notes")
@@ -492,14 +666,13 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
         else:
             out.append('<p class="empty">No blocks planned.</p>')
         out.append('<div class="lists">')
-        for head, items in (("Flats", n.flats), ("Darks", n.darks),
-                            ("Didn't fit, and why", _didnt_fit_lines(n, site)), ("Free time", _free_lines(n, site))):
-            items = _items(head, items)
+        for head, items in card_lists(n, site):
             if items:
                 out.append(f'<div class="list"><h3>{e(head)}</h3><ul>'
                            + "".join(f"<li>{e(x)}</li>" for x in items) + "</ul></div>")
         out.append("</div></section>")
-    out.append(f"<footer>{e(_footer(site))}</footer></body></html>")
+    foot, zone_name = _footer(site, ns)
+    out.append(f'<footer>{e(foot)} <span class="zone">({e(zone_name)})</span></footer></body></html>')
     return "\n".join(out)
 
 
@@ -520,7 +693,7 @@ def plan_card_text(nights, site: Site, settings_dict: dict | None = None, weathe
         lines += ["", "No nights selected."]
     for n in ns:
         f = _night_facts(n, site, weather_by_date, settings_dict)
-        lines += ["", "=" * min(width, 60), f["date"], f"{f['dark']} · {f['moon']}"]
+        lines += ["", "=" * min(width, 60), f["date"], f"{f['dark']} · {f['moon']} · Times: {f['clock']}"]
         if f["weather"]:
             lines += _wrap(f["weather"], width)
         rows = table_rows(n, site, targets_by_id)
@@ -538,10 +711,9 @@ def plan_card_text(nights, site: Site, settings_dict: dict | None = None, weathe
             if r["notes"]:
                 for part in _wrap(r["notes"], width - 14):
                     lines.append(f"{'':13} {part}")
-        for head, items in (("Flats", n.flats), ("Darks", n.darks),
-                            ("Didn't fit, and why", _didnt_fit_lines(n, site)), ("Free time", _free_lines(n, site))):
-            items = _items(head, items)
+        for head, items in card_lists(n, site):
             if items:
                 lines += ["", f"{head}:"] + [f"  - {x}" for x in items]
-    lines += ["", _footer(site)]
+    foot, zone_name = _footer(site, ns)
+    lines += ["", f"{foot} ({zone_name})"]
     return "\n".join(lines)

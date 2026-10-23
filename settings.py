@@ -93,7 +93,7 @@ DEFAULT_OPTIONS = {
 def default_settings() -> dict:
     return {"version": APP_VERSION, "site": Site().to_dict(), "optics": Optics().to_dict(),
             "options": dict(DEFAULT_OPTIONS), "observer_code": "", "set_here": [], "shobs_p_read": "",
-            "from_fits": {}, "export_dir": ""}
+            "from_fits": {}, "export_dir": "", "asiair_dir": ""}      # asiair_dir: Export page's ASIAIR folder ("" = Downloads)
 
 
 def _windows_downloads() -> str | None:
