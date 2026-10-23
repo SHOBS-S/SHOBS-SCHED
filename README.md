@@ -37,6 +37,9 @@ All times are shown on your **site's clock**, whatever time zone the computer is
    `matplotlib`, and puts a SHOBS-SCHED icon on the Desktop and in the Start menu.
 3. **Run self-test.bat** checks the install; `run_windows.bat` starts the app with a console window beside it.
 
+Upgrading: after unzipping a new version over the old one, double-click **Create shortcuts.bat** again (it installs
+any new packages, e.g. matplotlib for the night plot).
+
 Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_targets.json` and the
 `.shobs_sched` folder (saved schedule, cache, log).
 

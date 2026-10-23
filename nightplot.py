@@ -62,6 +62,16 @@ def available(force: bool = False) -> bool:
 
 
 MISSING_TEXT = "⚠ Night plot needs matplotlib — run Create shortcuts.bat again"
+TK_MISSING_TEXT = ("⚠ Night plot: matplotlib is installed but its Tk backend does not load ({why}). Run Create "
+                   "shortcuts.bat again; if this stays, reinstall Python with “tcl/tk and IDLE” ticked.")
+TK_PROBLEM = ""            # why the Tk backend did not load (set by tk_canvas)
+
+
+def missing_text() -> str:
+    """The Schedule tab's ⚠ line when there is no plot: matplotlib missing, or only its Tk backend."""
+    if _load() is not None and TK_PROBLEM:
+        return TK_MISSING_TEXT.format(why=TK_PROBLEM)
+    return MISSING_TEXT
 
 # ---- look -----------------------------------------------------------------------------------------------------------
 BRIGHT = {"V": "#8ec5f2", "T": "#8fe3a8", "D": "#e09bd9"}       # bold block paths on the dark sky (John's mockup)
@@ -165,10 +175,18 @@ def hour_ticks(j0: float, j1: float, tz: str, every: int = 1) -> list[float]:
     out = []
     j = _ceil_hour(j0, tz)
     while j <= j1 + 1e-9:
-        if every == 1 or sky.to_local(j, tz).hour % every == 0:
+        if every == 1 or sky.to_local(j + 0.5 / 86400.0, tz).hour % every == 0:   # (18:00 may read 17:59:59.99)
             out.append(j)
         j += 1.0 / 24.0
     return out
+
+
+def needs_flip(b: Block, meridian: float, site) -> bool:
+    """A German mount must flip when the block runs on past the meridian by more than the tracking margin
+    (site.past_meridian_min, as the planner's "stop by"); an alt-az mount never does."""
+    if (site.mount or "GEM") != "GEM":
+        return False
+    return (b.end - meridian) * 1440.0 > float(site.past_meridian_min or 0.0) + 1e-6
 
 
 def plan_blackouts(night, targets_by_id: dict, j0: float | None = None, j1: float | None = None) -> list[dict]:
@@ -258,6 +276,8 @@ class NightPlot:
         self.labels: list = []           # (text artist, mid jd, n chars) block label boxes, staggered in layout()
         self.edge_texts: list = []       # (start text, end text, block) airmass numbers
         self.twilight_texts: list = []   # (text, jd)
+        self.band_texts: list = []       # transit times and no-transit notes: top of their band, under the twilight
+        self.dew_box = None
         self.spread_texts: list = []
         self.ax = self.ax2 = self.axw = self.axt = None
 
@@ -483,7 +503,7 @@ class NightPlot:
     def _block(self, i: int, b: Block):
         ax, look = self.ax, self.look
         tid = b.target_id or f"#{i}"
-        mode = b.mode if b.mode in "VTD" else "V"
+        mode = b.mode if b.mode in ("V", "T", "D") else "V"
         col = look["mode"][mode]
         ra, dec = self._coords(b)
         x0, x1 = float(self.x(b.start)), float(self.x(b.end))
@@ -498,9 +518,11 @@ class NightPlot:
                                       zorder=1), "span")
             for t in (b.t1, b.t4):
                 self._reg(tid, ax.axvline(float(self.x(t)), color=tl, lw=1.1, zorder=2), "line")
-            self._reg(tid, ax.text(float(self.x(b.t1)), 0.25, f" Transit {self.hhmm(b.t1)}–{self.hhmm(b.t4)}",
-                                   transform=ax.get_xaxis_transform(), color=look["transit_text"], fontsize=8,
-                                   va="center", zorder=5), "text")
+            tt = ax.text(float(self.x(b.t1)), 0.8, f" Transit {self.hhmm(b.t1)}–{self.hhmm(b.t4)}",
+                         transform=ax.get_xaxis_transform(), color=look["transit_text"], fontsize=8, va="top",
+                         zorder=5)
+            self._reg(tid, tt, "text")
+            self.band_texts.append(tt)            # placed under the twilight labels in layout()
         if ra is None or dec is None:
             return
         alt = np.asarray(sky.target_alt(ra, dec, self.site, self.jd), dtype=float)
@@ -519,10 +541,10 @@ class NightPlot:
         st = en = None
         if np.isfinite(xb[0]):
             st = self._reg(tid, ax.text(xx[0], xb[0] + 0.03, f"{xb[0]:.2f}", fontsize=7.5, color=tc, ha="left",
-                                        va="top", zorder=8), "text")
+                                        va="top", zorder=8, clip_on=True), "text")
         if np.isfinite(xb[-1]):
             en = self._reg(tid, ax.text(xx[-1], xb[-1] + 0.03, f"{xb[-1]:.2f}", fontsize=7.5, color=tc,
-                                        ha="right", va="top", zorder=8), "text")
+                                        ha="right", va="top", zorder=8, clip_on=True), "text")
         self.edge_texts.append((st, en, b))
         # ▼ only when the meridian is inside the block
         mer = b.meridian
@@ -532,9 +554,14 @@ class NightPlot:
         if b.start <= mer <= b.end:
             xm = float(sky.target_airmass(ra, dec, self.site, mer))
             if np.isfinite(xm):
-                self._reg(tid, ax.plot([float(self.x(mer))], [xm], marker="v", ms=8, color=look["flip"],
-                                       mec=MODE_FILL[mode], ls="none", zorder=9, clip_on=False)[0], "line")
-                word = "flip" if (self.site.mount or "GEM") == "GEM" else "meridian"
+                flip = needs_flip(b, mer, self.site)
+                if flip:                                   # ▼ a meridian flip inside the block
+                    mark = dict(marker="v", ms=8, color=look["flip"], mec=MODE_FILL[mode])
+                else:                                      # | the meridian, no flip needed (alt-az, or ends in time)
+                    mark = dict(marker="|", ms=11, mew=1.6, color=look["flip"])
+                self._reg(tid, ax.plot([float(self.x(mer))], [xm], ls="none", zorder=9, clip_on=False, **mark)[0],
+                          "line")
+                word = "flip" if flip else "meridian"
                 if xm - AIRMASS_TOP > 0.09:                # room above the mark
                     at = dict(x=float(self.x(mer)), y=xm - 0.03, ha="center", va="bottom")
                 else:                                      # at the top edge: under the line
@@ -563,8 +590,12 @@ class NightPlot:
         p = ax.axvspan(a, z, facecolor="none", edgecolor=look["blackout"], hatch="///", lw=0, alpha=0.6, zorder=2)
         self._reg(tid, p, "span")
         reason = str(bo.get("reason", "")).replace(" transits", " transit")
-        self._reg(tid, ax.text(a, self.bottom - 0.06, f" no {bo['name']} ({reason})", color=look["blackout_text"],
-                               fontsize=7.5, va="bottom", zorder=5, clip_on=True), "text")
+        if reason.startswith(bo["name"] + " "):          # "HD 219134 c transit" → "c transit"
+            reason = reason[len(bo["name"]) + 1:]
+        bt = ax.text(a, 0.8, f" no {bo['name']} ({reason})", color=look["blackout_text"], fontsize=7.5, va="top",
+                     zorder=5, transform=ax.get_xaxis_transform())
+        self._reg(tid, bt, "text")
+        self.band_texts.append(bt)
 
     def _weather(self):
         axw, look = self.axw, self.look
@@ -615,7 +646,7 @@ class NightPlot:
         onset = (self.weather or {}).get("dew_onset")
         if onset and self.j0 <= onset <= self.j1:
             axw.axvline(float(self.x(onset)), color="#8a5a00", lw=1.2, ls=(0, (4, 3)), zorder=4)
-            axw.text(float(self.x(onset)), 96, f" ⚠ dew from {self.hhmm(onset)}", color="#8a5a00", fontsize=7.5,
+            self.dew_box = axw.text(float(self.x(onset)), 96, f" ⚠ dew from {self.hhmm(onset)}", color="#8a5a00", fontsize=7.5,
                      va="top", ha="left", zorder=5, fontweight="bold",
                      bbox=dict(boxstyle="round,pad=0.15", fc="#fff3c4", ec="#8a5a00", lw=0.5))
 
@@ -708,10 +739,37 @@ class NightPlot:
                 row = 1
             last[side] = (x, row)
             t.set_y(0.995 if row == 0 else 0.995 - 2.3 * 7.5 * 1.1 / 72 * dpi / max(1.0, ax_px))
+        # transit times and no-transit notes: under the two rows of twilight labels
+        rows = 2 if any(abs(t.get_position()[1] - 0.995) > 1e-6 for t, _j in self.twilight_texts) else 1
+        y_band = 0.995 - (rows * 2.3 + 0.4) * 7.5 * 1.1 / 72 * dpi / max(1.0, ax_px)
+        for t in self.band_texts:
+            t.set_y(y_band)
         # spread numbers: every hour, or every other hour when narrow
         step = 1 if pph >= 22 * dpi / 100 else 2
         for k, t in enumerate(self.spread_texts):
             t.set_visible(k % step == 0)
+        self._nudge()
+
+    def _nudge(self):
+        """Small collision fixes that need the real text sizes: a block's start/end airmass under a twilight label
+        moves to the other side of its point; a spread number under the "⚠ dew from" box is hidden."""
+        try:
+            r = self.fig.canvas.get_renderer()
+        except Exception:
+            return
+        tw = [t.get_window_extent(r) for t, _j in self.twilight_texts]
+        for st, en, _b in self.edge_texts:
+            for t, normal, other in ((st, "left", "right"), (en, "right", "left")):
+                if t is None or not t.get_visible():
+                    continue
+                t.set_ha(normal)
+                if any(t.get_window_extent(r).overlaps(e) for e in tw):
+                    t.set_ha(other)
+        if self.dew_box is not None and self.dew_box.get_visible():
+            box = self.dew_box.get_window_extent(r)
+            for t in self.spread_texts:
+                if t.get_visible() and t.get_window_extent(r).overlaps(box):
+                    t.set_visible(False)
 
     # ---- mouse ----
     def block_at(self, x: float) -> int | None:
@@ -779,15 +837,25 @@ class NightPlot:
 def tk_canvas(master):
     """A FigureCanvasTkAgg (white, empty figure) for the Schedule tab, or None when matplotlib (or its Tk backend)
     does not load."""
+    global TK_PROBLEM
     mpl = _load()
     if mpl is None:
         return None
     try:
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-    except Exception:
+    except Exception as exc:
+        TK_PROBLEM = f"{type(exc).__name__}: {exc}"[:160]
         return None
+    TK_PROBLEM = ""
     fig = mpl["Figure"](figsize=(10, 6), dpi=100, facecolor="#ffffff")
-    return FigureCanvasTkAgg(fig, master=master)
+    canvas = FigureCanvasTkAgg(fig, master=master)
+    # take the display's scaling now, while the figure is empty: matplotlib otherwise does it when the widget is
+    # first mapped, resetting the widget to the figure's size and rendering the night plot at that size once more
+    try:
+        canvas._update_device_pixel_ratio()
+    except Exception:
+        pass
+    return canvas
 
 
 def png_bytes(night, site, targets_by_id, weather, options, print_style=True) -> bytes | None:

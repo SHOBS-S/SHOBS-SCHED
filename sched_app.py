@@ -3458,7 +3458,8 @@ class NightTab:
             self.mpl_canvas.mpl_connect("button_press_event", self._plot_click)
             self.mpl_canvas.mpl_connect("figure_leave_event", lambda _e: self.hover_var.set(""))
         else:
-            text = getattr(np_mod, "MISSING_TEXT", "⚠ Night plot needs matplotlib — run Create shortcuts.bat again")
+            text = np_mod.missing_text() if np_mod is not None else \
+                "⚠ Night plot needs matplotlib — run Create shortcuts.bat again"
             self.plot_missing = ttk.Label(self.plot_box, text=text, style=style.status_style("warn"),
                                           justify=tk.LEFT)
             self.plot_missing.pack(anchor="w", fill=tk.X, pady=px(app, 4))
@@ -3466,7 +3467,8 @@ class NightTab:
         ttk.Label(inner, textvariable=self.hover_var, style="Card.TLabel").pack(anchor="w", fill=tk.X, padx=pad,
                                                                                 pady=(px(app, 2), 0))
         legend = ("Faint line: the target all night  ·  bold: its block, in the color of the SHOBS-P mode it will be "
-                  "reduced in, with the airmass at the start and the end  ·  ▼ meridian flip inside the block  ·  "
+                  "reduced in, with the airmass at the start and the end  ·  ▼ flip inside the block; | meridian, no flip "
+                  "needed  ·  "
                   "dashed gold: the Moon (thicker = fuller)  ·  green band: the transit, lighter: its baselines  ·  "
                   "hatched: a no-transit window that changed the plan  ·  gold box edge: locked or set by you  ·  "
                   "click a block or a row to pick it out; point at the plot for values")
@@ -3714,7 +3716,7 @@ class NightTab:
                 target += "  · locked"
             if b.status != "planned":
                 target += f"  · {STATUS_LABELS.get(b.status, b.status)}"
-            tags = [f"mode{b.mode if b.mode in 'VTD' else 'V'}"]
+            tags = [f"mode{b.mode if b.mode in ('V', 'T', 'D') else 'V'}"]
             if b.status in ("done", "clouded"):
                 tags.append("done")
             notes = r["notes"]
@@ -4054,7 +4056,25 @@ class NightTab:
             self.plot = None
             self._plot_key_now = None
         self._highlight_from_table()
-        self.mpl_canvas.draw_idle()
+        self._render()
+
+    def _render(self):
+        """Render once at the widget's final size: fit the height first, and size the figure before drawing it
+        (rendering at the default size and again after the fit cost 2–4 renders on the first show)."""
+        w = self.plot_widget()
+        try:
+            if self.fit_height():
+                return                             # its <Configure> at the new height renders it
+            size = (int(w.winfo_width()), int(w.winfo_height()))
+        except tk.TclError:
+            return
+        if size[0] < 20 or size[1] < 20:
+            return                                 # not laid out yet: its <Configure> renders it
+        if size != self._plot_size:
+            self._plot_event = type("Size", (), {"width": size[0], "height": size[1]})()
+            self._plot_resize()                    # sets the figure size and draws
+        else:
+            self.mpl_canvas.draw_idle()
 
     def _plot_configured(self, event):
         """The plot widget changed size: redraw once the window settles (80 ms), and only when the size really
@@ -4081,6 +4101,8 @@ class NightTab:
                 return
         except tk.TclError:
             return
+        if self.fit_height():
+            return                                 # the height changes again: its <Configure> comes next
         self._plot_size = (int(ev.width), int(ev.height))
         self.mpl_canvas.resize(ev)                 # sets the figure size and draws (layout() via resize_event)
         if self.stale_plot:
