@@ -12,7 +12,8 @@ from typing import Any
 
 MODES = ("V", "T", "D")                       # SHOBS-P mode a block will be reduced in
 MODE_NAMES = {"V": "Variables", "T": "Transits", "D": "Discovery"}
-KINDS = ("transit", "variable", "campaign")   # Targets groups; Suggested Transits / Variables = suggested=True
+KINDS = ("transit", "variable", "campaign")   # Targets groups; suggested=True → group "suggested" (Suggested
+                                              # Transits) or "suggested_var" (Suggested Variables, kind "variable")
 PRIORITIES = ("High", "Normal", "Low")
 PRIORITY_RANK = {"High": 0, "Normal": 1, "Low": 2}
 BLOCK_STATUS = ("planned", "done", "partial", "clouded")

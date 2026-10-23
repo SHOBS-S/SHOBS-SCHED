@@ -256,8 +256,8 @@ class TestFetch(Base):
 from tests.test_app import HAVE_TK, Base as AppBase  # noqa: E402
 
 
-@unittest.skipUnless(HAVE_TK, "needs a display (run under xvfb-run)")
-class TestSuggestedVariablesPage(AppBase):
+class VarsPageBase(AppBase):
+    """The app with the fake targets module answering the variable search from the recorded field (no tests)."""
     def setUp(self):
         super().setUp()
         tg = self.fakes["targets"]
@@ -285,6 +285,9 @@ class TestSuggestedVariablesPage(AppBase):
     def kids(self, page, group):
         return [page.tree.item(i, "text").strip() for i in page.tree.get_children(f"grp:{group}")]
 
+
+@unittest.skipUnless(HAVE_TK, "needs a display (run under xvfb-run)")
+class TestSuggestedVariablesPage(VarsPageBase):
     def test_group_names_and_old_files(self):
         old = Target(name="WASP-2 b", kind="transit", mode="T", ra=307.7, dec=6.4, suggested=True, enabled=False,
                      planet={"name": "WASP-2 b", "period": 2.15, "t0": 2453991.5, "t14": 0.07})
@@ -324,8 +327,8 @@ class TestSuggestedVariablesPage(AppBase):
         ts = [t for t in app.targets if t.suggested and t.kind == "variable"]
         self.assertTrue(all(not t.enabled for t in ts), "unticked")
         by_name = {t.name: t for t in ts}
-        keys = [(by_name[n].suggest_info["night"], by_name[n].suggest_info["kind"] == "any",
-                 by_name[n].suggest_info["when"]) for n in names]
+        order = self.sa.row_order("suggested_var", sky.now_jd())     # dates already past count as undated
+        keys = [order(by_name[n]) for n in names]
         self.assertEqual(keys, sorted(keys), "night by night: timed events first, then fillers")
         self.assertTrue(page.find_ind.var.get().startswith("✔ "), page.find_ind.var.get())
         self.assertIn("found, soonest first", page.find_ind.var.get())
@@ -422,6 +425,157 @@ class TestSuggestedVariablesPage(AppBase):
         page.tree.selection_set(next(t.id for t in app.targets if t.name == "B-2 b"))
         app.update()
         self.assertIn("suggested transit: score 3.00, S/N 2.0", page.detail_var.get())
+
+
+# ---- review round 3: timing precision, amplitude bands, Keep keeps the timing, stale, names ------------------------
+
+def well_placed(night_index: int = 1):
+    """(RA, mid-dark JD) of a star crossing the meridian in the middle of a golden night's darkness."""
+    w0, w1 = sky.night_window(NIGHTS[night_index], SITE)
+    mid = (w0 + w1) / 2.0
+    return float(sky.lst_deg(mid, SITE.lon)), mid
+
+
+def row(name, vtype, period, epoch, ra, dec=40.0, vmax="11.0", vmin="12.0", n_min="V", **extra):
+    """A B/vsx row as VizieR sends it (strings), for one synthetic star."""
+    r = {"Name": name, "V": "0", "RAJ2000": f"{ra:.5f}", "DEJ2000": f"{dec:.5f}", "Type": vtype, "max": vmax,
+         "n_max": "V", "f_min": "", "min": vmin, "n_min": n_min, "Epoch": epoch, "u_Epoch": "", "l_Period": "",
+         "Period": period, "u_Period": ""}
+    r.update(extra)
+    return T.candidate_from_row(r)
+
+
+class TestTimingPrecision(unittest.TestCase):
+    def test_sigma_from_published_decimals(self):
+        dm = row("DM Cyg-like", "RRAB", "0.41986", "2442582.406", 10.0)
+        s = T.ephemeris_sigma_min(dm, 2461337.0)
+        self.assertGreater(s, 300, "44 670 cycles × 0.5e-5 d ≈ ±5 h")
+        zp = row("Z Per-like", "EA/SD", "3.0563691", "2448500.6056", 10.0)
+        self.assertLess(T.ephemeris_sigma_min(zp, 2461337.0), 1.0)
+        padded = row("ASU padded", "EA", "0.520759600000", "2457000.123400", 10.0)
+        self.assertAlmostEqual(T.ephemeris_sigma_min(padded, 2457000.1234 + 0.5207596 * 100),
+                               (100 * 0.5e-7 + 0.5e-4) * 1440, places=6, msg="ASU's zero padding is not precision")
+        self.assertIsNone(T.ephemeris_sigma_min(row("limit", "EA", "1.2", "2457000.1", 10.0, l_Period=">"), 2461337))
+
+    def test_precise_ephemeris_is_timed_and_kept_timed(self):
+        ra, mid = well_placed(1)
+        zp = row("Z Per-like", "EA/SD", "3.0563691", f"{mid:.4f}", ra)
+        out, _n, _i = T.suggest_variables(SITE, {}, NIGHTS, params(families=["eclipsing"]), rows=[zp])
+        self.assertEqual(len(out), 1)
+        t = out[0]
+        info = t.suggest_info
+        self.assertEqual(info["kind"], "timed")
+        self.assertFalse(info["time_uncertain"])
+        self.assertLess(info["timing_sigma_min"], 1.0)
+        self.assertLess(abs(info["when"] - mid) * 1440, 15)
+        self.assertEqual((t.elements["any_time"], t.elements["epoch_kind"]), (False, "min"))
+        # kept and planned: the planner puts the block on the minimum it was suggested for
+        import planner
+        from tests.test_targets import OPTICS
+        t.suggested, t.enabled = False, True
+        night = planner.build_night(NIGHTS[1], SITE, OPTICS, [t], dict(settings.DEFAULT_OPTIONS))
+        blocks = [b for b in night.blocks_obj() if b.target_id == t.id]
+        self.assertTrue(blocks, night.didnt_fit)
+        self.assertTrue(any(b.start <= info["when"] <= b.end for b in blocks))
+
+    def test_rr_lyrae_maximum_kept_as_timed_max(self):
+        ra, mid = well_placed(2)
+        rr = row("RR-like", "RRAB", "0.5667148", f"{mid:.4f}", ra, vmax="11.2", vmin="12.1")
+        out, _n, _i = T.suggest_variables(SITE, {}, NIGHTS, params(families=["rrlyr"]), rows=[rr])
+        self.assertEqual(out[0].suggest_info["kind"], "timed")
+        self.assertEqual((out[0].elements["any_time"], out[0].elements["epoch_kind"]), (False, "max"),
+                         "a kept RR Lyrae keeps its timed maxima (VSX elements alone would make it any-time)")
+
+    def test_imprecise_ephemeris_is_not_promised(self):
+        ra, mid = well_placed(1)
+        dm = row("DM Cyg-like", "RRC", "0.29", "2442582.406", ra)       # P to 2 decimals since 1975: hours off
+        out, _n, _i = T.suggest_variables(SITE, {}, NIGHTS, params(families=["rrlyr"]), rows=[dm])
+        self.assertEqual(len(out), 1)
+        info = out[0].suggest_info
+        self.assertEqual(info["kind"], "cycle", "a whole cycle instead of a promised maximum")
+        self.assertTrue(info["time_uncertain"])
+        self.assertIn("⚠ time uncertain ±", out[0].notes)
+        self.assertIn("⚠ time uncertain", info["text"])
+        self.assertTrue(out[0].elements["any_time"])
+        long_p = row("Long EA", "EA", "2.1", "2442582.406", ra)            # no timing, too long for a cycle
+        self.assertEqual(T.suggest_variables(SITE, {}, NIGHTS, params(families=["eclipsing"]), rows=[long_p])[0],
+                         [])
+        limit = row("Limit EA", "EA", "0.3", f"{mid:.4f}", ra, l_Period=">")
+        out, _n, _i = T.suggest_variables(SITE, {}, NIGHTS, params(families=["eclipsing"]), rows=[limit])
+        self.assertTrue(all(t.suggest_info["kind"] != "timed" for t in out))
+        unsure = row("Unsure P", "EA", "0.3000", f"{mid:.4f}", ra, u_Period=":")
+        self.assertEqual(T.suggest_variables(SITE, {}, NIGHTS, params(families=["eclipsing"]), rows=[unsure])[0], [],
+                         "an uncertain period is an uncertain star: left out unless asked for")
+
+    def test_amplitude_needs_one_band(self):
+        ra, _mid = well_placed(1)
+        ck = row("CK Aur-like", "SR", "100", "2457000.1", ra, vmax="11.57", vmin="0.27", n_min="TESS", f_min="Y")
+        self.assertIsNone(ck["amp"])
+        mixed = row("Mixed", "SR", "100", "2457000.1", ra, vmax="11.0", vmin="12.5", n_min="R")
+        self.assertIsNone(mixed["amp"])
+        ok = row("Same band", "SR", "100", "2457000.1", ra, vmax="11.0", vmin="12.5")
+        self.assertAlmostEqual(ok["amp"], 1.5)
+        rows_ = [ck, mixed, ok]
+        out, _n, _i = T.suggest_variables(SITE, {}, NIGHTS, params(families=["long"]), rows=rows_)
+        self.assertEqual([t.name for t in out], ["Same band"])
+        out, _n, _i = T.suggest_variables(SITE, {}, NIGHTS, params(families=["long"], min_amp=0), rows=rows_)
+        self.assertEqual(len(out), 3, "no amplitude filter: unknown amplitudes pass")
+
+    def test_name_key_and_exclusion(self):
+        self.assertEqual(T.variable_name_key("V523 Cas"), T.variable_name_key("V0523 Cas"))
+        self.assertEqual(T.variable_name_key("v 523 cas"), "v0523 cas")
+        ra, mid = well_placed(1)
+        r = row("V0523 Cas", "EA", "3.0563691", f"{mid:.4f}", ra)
+        out, _n, _i = T.suggest_variables(SITE, {}, NIGHTS, params(families=["eclipsing"]), rows=[r],
+                                          exclude_names={"V523 Cas"})
+        self.assertEqual(out, [], "already in the list under the other spelling")
+
+    def test_whole_search_is_quick(self):
+        """12 000 candidates over 5 nights stays a few seconds of computing (VizieR's own time aside)."""
+        import time
+        base = fixture_rows()
+        many = []
+        for k in range(12000 // len(base) + 1):
+            for r in base:
+                many.append(dict(r, name=f"{r['name']} #{k}", ra=(r["ra"] + 7.3 * k) % 360.0))
+        t0 = time.time()
+        T.suggest_variables(SITE, {}, NIGHTS, params(), rows=many[:12000])
+        self.assertLess(time.time() - t0, 30.0)
+
+
+@unittest.skipUnless(HAVE_TK, "needs a display (run under xvfb-run)")
+class TestSuggestionsLeavePlanFresh(VarsPageBase):
+    def test_search_and_keep_do_not_make_the_plan_stale(self):
+        app, page = self.page()
+        app.show_page(2)
+        app.pages[2].build()
+        self.pump()
+        self.assertTrue(app.schedule.nights)
+        app.pages[2].setup_stale = False
+        app.show_page(1)
+        page.find_variables(T.var_search_params({}))
+        self.pump()
+        self.assertFalse(app.pages[2].setup_stale, "only unticked suggestions came: the plan is still current")
+        page.find_suggested()
+        self.pump()
+        self.assertFalse(app.pages[2].setup_stale)
+        kid = page.tree.get_children("grp:suggested_var")[0]
+        page.tree.selection_set(kid)
+        page.keep_selected()
+        self.assertFalse(app.pages[2].setup_stale, "kept unticked: nothing planned changed")
+        page.toggle(kid)                                    # ticking it does change the plan
+        self.assertTrue(app.pages[2].setup_stale)
+
+    def test_past_dates_sort_as_undated(self):
+        app, page = self.page()
+        now = sky.now_jd()
+
+        def mk(name, when):
+            return Target(name=name, kind="variable", mode="V", ra=10.0, dec=20.0, suggested=True, enabled=False,
+                          suggest_info={"night": "2026-10-23", "kind": "timed", "when": when, "text": name})
+        app.targets += [mk("Past", now - 0.5), mk("Soon", now + 0.2), mk("Later", now + 0.4)]
+        page.fill()
+        self.assertEqual(self.kids(page, "suggested_var"), ["Soon", "Later", "Past"])
 
 
 if __name__ == "__main__":

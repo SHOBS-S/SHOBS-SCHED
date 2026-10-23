@@ -1318,14 +1318,17 @@ VAR_FAMILIES = (
 VAR_FAMILY_NAMES = {k: lab for k, lab, _c in VAR_FAMILIES}
 NOT_VARIABLE_TYPES = ("CST", "NON-CV", "VAR", "*", "")       # constant, not a variable, or no type at all
 VISUAL_BANDS = ("V", "CV", "Vj", "vis", "VT", "G", "Hp", "g")   # max given in (near-)V light; R, I, W1, Kp... are not
-VAR_SEARCH_MAX_ROWS = 3000
+VAR_SEARCH_MAX_ROWS = 12000       # VizieR TAP answers 12 000 rows as fast as 3 000 (~10 s); a default search has ~11 000
 VAR_SEARCH_MAX_AGE_DAYS = 1.0
+VAR_COLUMNS = ("Name", "V", "RAJ2000", "DEJ2000", "Type", "max", "n_max", "f_min", "min", "n_min", "Epoch",
+               "u_Epoch", "l_Period", "Period", "u_Period")
 VAR_SEARCH_DEFAULTS = {"families": ["eclipsing", "rrlyr", "dsct", "long"], "uncertain": False, "pmin": None,
                        "pmax": None,
                        "punit": "d", "vmin": None, "vmax": None, "min_amp": 0.1, "max_results": 12}
 SHORT_PULSATOR_DAYS = 0.5          # a pulsator this short (or shorter) needs a whole cycle in one night
 FILLER_MIN_RUN_MIN = 60.0          # an any-time star needs at least this long above the limits in the dark
 CYCLE_MARGIN_MIN = 30.0            # a full cycle plus this margin
+TIMING_SIGMA_MAX_MIN = 30.0        # a minimum / maximum predicted worse than this is not promised at a time
 
 
 def variable_family(vtype: str) -> tuple[str | None, bool]:
@@ -1448,17 +1451,18 @@ def var_search_adql(p: dict, dec_lo: float, dec_hi: float, ras: list | None, top
         where.append("(" + " OR ".join(groups) + ")")
     # oldest VSX entries first (OID order: the GCVS's named variables, then the big surveys): when there are more
     # matches than the cap, the best-studied stars are the ones checked, from every part of the sky
-    return (f"SELECT TOP {int(top)} Name, V, RAJ2000, DEJ2000, Type, max, n_max, f_min, min, n_min, Epoch, Period "
-            "FROM \"B/vsx/vsx\" WHERE " + " AND ".join(where) + " ORDER BY OID")
+    return (f"SELECT TOP {int(top)} {', '.join(VAR_COLUMNS)} FROM \"B/vsx/vsx\" WHERE " + " AND ".join(where)
+            + " ORDER BY OID")
 
 
-VAR_SEARCH_ASU_ROWS = 20000        # ASU filters less on the server (no types / bands / amplitude): fetch more
+VAR_SEARCH_ASU_ROWS = 50000        # ASU filters less on the server (no types / bands / amplitude): fetch more
+                                   # (50 000 is ASU's own limit)
 
 
 def _var_search_asu(p: dict, dec_lo: float, dec_hi: float, top: int = VAR_SEARCH_ASU_ROWS) -> list[dict]:
     """The same search through VizieR ASU (TAP down): position / brightness / period constraints on the server, the
     types, bands, amplitudes and RAs filtered here."""
-    q = {"-out": "Name V RAJ2000 DEJ2000 Type max n_max f_min min n_min Epoch Period", "V": "0",
+    q = {"-out": " ".join(VAR_COLUMNS), "V": "0",
          "max": f"{float(p['vmin']):.2f}..{float(p['vmax']):.2f}", "DEJ2000": f"{dec_lo:.3f}..{dec_hi:.3f}",
          "-out.max": str(int(top)), "-sort": "OID"}
     plo, phi = _period_days(p)
@@ -1476,7 +1480,7 @@ def fetch_variable_candidates(p: dict, site, wins: list, refresh: bool = False) 
     adql = var_search_adql(p, dec_lo, dec_hi, ras, north=site.lat >= 0)
     key = "vizier:varsearch:" + hashlib.sha1(adql.encode("utf-8")).hexdigest()[:16]
 
-    cols = ("Name", "V", "RAJ2000", "DEJ2000", "Type", "max", "n_max", "f_min", "min", "n_min", "Epoch", "Period")
+    cols = VAR_COLUMNS
 
     def fetch():
         try:
@@ -1505,7 +1509,8 @@ def _row_wanted(p: dict, row: dict) -> bool:
         return False
     if v.get("band") not in VISUAL_BANDS:
         return False
-    if v.get("amp") is None or v["amp"] < float(_f(p.get("min_amp")) or 0.0):
+    amp_min = float(_f(p.get("min_amp")) or 0.0)
+    if (v.get("amp") is None and amp_min > 0) or (v.get("amp") is not None and v["amp"] < amp_min):
         return False
     if fam in ("eclipsing", "rrlyr", "dsct", "cepheid") and not v.get("period"):
         return False
@@ -1513,12 +1518,54 @@ def _row_wanted(p: dict, row: dict) -> bool:
 
 
 def candidate_from_row(row: dict) -> dict:
-    """A B/vsx row → the common variable dict plus "amp" (mag; None unknown), "band", "varflag"."""
+    """A B/vsx row → the common variable dict plus "amp" (mag; None unknown), "band", "varflag", and the period /
+    epoch as VSX wrote them ("period_str", "epoch_str": their decimals say how well they are known), "u_period"
+    (":" uncertain), "l_period" (a limit: not a period to time by). An amplitude needs both magnitudes in the same
+    visual band (or the min given as an amplitude in a visual band): CK Aur's 11.57 V max with a 0.27 TESS-band
+    amplitude has no V amplitude."""
+    g = lambda k: str(row.get(k, "") or "").strip()
     v = parse_vizier_vsx_row(row)
-    v["band"] = str(row.get("n_max", "") or "").strip()
-    v["varflag"] = str(row.get("V", "") or "").strip()
-    v["amp"] = (v["min"] - v["max"]) if (v.get("min") is not None and v.get("max") is not None) else None
+    v["band"] = g("n_max")
+    v["varflag"] = g("V")
+    v["period_str"], v["epoch_str"] = g("Period"), g("Epoch")
+    v["u_period"], v["l_period"], v["u_epoch"] = g("u_Period"), g("l_Period"), g("u_Epoch")
+    band_min = g("n_min")
+    is_amp = g("f_min") in ("(", "Y")
+    same_band = (not band_min) or (band_min in VISUAL_BANDS and (is_amp or band_min == v["band"]))
+    v["amp"] = ((v["min"] - v["max"]) if (v.get("min") is not None and v.get("max") is not None and same_band)
+                else None)
     return v
+
+
+def variable_name_key(name: str) -> str:
+    """One key for a variable's spellings: "V523 Cas", "V0523 Cas" and "v 523 cas" → "v0523 cas" (VSX pads
+    V-numbers to four digits); anything else as _key_name."""
+    c = _key_name(name)
+    m = re.match(r"^v\s?0*(\d{1,4})\s+([a-z]{3})$", c)
+    return f"v{int(m.group(1)):04d} {m.group(2)}" if m else c
+
+
+def _decimals(text: str) -> int | None:
+    """Decimals a catalog number was written with ("0.41986" → 5; ASU's zero padding "0.520759600000" → 7);
+    None when it is not a plain decimal number."""
+    t = str(text or "").strip()
+    if not re.fullmatch(r"[-+]?\d+(\.\d*)?", t):
+        return None
+    frac = t.partition(".")[2].rstrip("0")
+    return len(frac)
+
+
+def ephemeris_sigma_min(v: dict, jd: float) -> float | None:
+    """How well VSX's period and epoch predict an event near jd, in minutes: cycles × half a unit in the period's
+    last decimal, plus half a unit in the epoch's — DM Cyg's "0.41986" d over 44 670 cycles is ±5 h. None when the
+    period is a limit or the numbers are not plain decimals (nothing to time by)."""
+    if v.get("l_period") or not v.get("period") or not v.get("epoch"):
+        return None
+    dp, de = _decimals(v.get("period_str") or repr(v["period"])), _decimals(v.get("epoch_str") or repr(v["epoch"]))
+    if dp is None or de is None:
+        return None
+    cycles = abs(float(jd) - float(v["epoch"])) / float(v["period"])
+    return (cycles * 0.5 * 10.0 ** -dp + 0.5 * 10.0 ** -de) * 1440.0
 
 
 def _runs(mask, grid) -> list[tuple[float, float]]:
@@ -1587,13 +1634,15 @@ def suggest_variables(site, options, nights: list, params: dict | None = None, e
     fams = set(p.get("families") or [])
     moon_max = float(o["suggest_moon_penalty_max"])
     dark_v = float(o.get("dark_sky_v", sky.DARK_SKY_V))
-    excl = {_key_name(n) for n in (exclude_names or ())}
+    excl = {variable_name_key(n) for n in (exclude_names or ())}
     floor = max(float(site.min_alt or 0.0), sky.alt_for_airmass(site.max_airmass) if site.max_airmass else 0.0)
     grids = [np.arange(w[1], w[2], 10.0 / 1440.0) for w in wins]
+    mid_jd = (wins[0][1] + wins[-1][2]) / 2.0
 
     cands = []
     for v in rows:
         fam, unsure = variable_family(v.get("vtype", ""))
+        unsure = unsure or v.get("u_period") == ":"          # a period VSX marks uncertain: an uncertain star
         if fam is None or fam not in fams or (unsure and not p.get("uncertain")):
             continue
         if v.get("varflag") not in (None, "", "0"):
@@ -1605,28 +1654,65 @@ def suggest_variables(site, options, nights: list, params: dict | None = None, e
         per = v.get("period")
         if (plo is not None and (per is None or per < plo)) or (phi is not None and (per is None or per > phi)):
             continue
-        if v.get("amp") is None or v["amp"] < min_amp:
+        amp = v.get("amp")
+        if (amp is None and min_amp > 0) or (amp is not None and amp < min_amp):
             continue
-        if _key_name(v.get("name")) in excl or sky.culmination_alt(v["dec"], site.lat) < floor:
+        if variable_name_key(v.get("name")) in excl or sky.culmination_alt(v["dec"], site.lat) < floor:
             continue
-        kind = _var_kind(fam, v)
+        kind, sigma = _var_kind(fam, v), None
+        if kind == "timed":
+            # can VSX's elements still say when? (the decimals they were published with, over the cycles since)
+            sigma = ephemeris_sigma_min(v, mid_jd)
+            if sigma is None or v.get("u_period") == ":" or sigma > TIMING_SIGMA_MAX_MIN:
+                kind = "cycle" if (per and per <= SHORT_PULSATOR_DAYS) else ""
+                sigma = sigma if sigma is not None else float("inf")
+                if not kind:
+                    continue                       # neither timeable nor short enough for a whole cycle
         if kind:
-            cands.append((v, fam, kind, unsure))
+            cands.append((v, fam, kind, unsure, sigma))
+
+    # which nights can each star be up in the dark at all: one vectorized test over every candidate (the exact
+    # per-star work below then skips the nights that cannot work)
+    up_any = np.zeros((len(cands), len(wins)), dtype=bool)
+    up_grids, moon_grids = [], []
+    if cands:
+        ras = np.array([c[0]["ra"] for c in cands], dtype=float)[:, None]
+        decs = np.array([c[0]["dec"] for c in cands], dtype=float)[:, None]
+        for j, grid in enumerate(grids):
+            if len(grid) < 2:
+                up_grids.append(None)
+                moon_grids.append(None)
+                continue
+            m = np.asarray(sky.up_mask(ras, decs, site, grid[None, :]), dtype=bool)
+            up_grids.append(m)
+            up_any[:, j] = m.any(axis=1)
+            # the Moon's added sky brightness at every candidate on the same 10-min grid (the Moon computed once)
+            moon_grids.append(np.asarray(sky.moon_sky_penalty(ras, decs, site, grid[None, :], dark_v), dtype=float))
+
+    def on_grid(grid, values, a, b):
+        """The grid values from a to b (at least the nearest point)."""
+        sel = (grid >= a - 1e-9) & (grid <= b + 1e-9)
+        if not sel.any():
+            sel = np.zeros(len(grid), dtype=bool)
+            sel[int(np.argmin(np.abs(grid - (a + b) / 2.0)))] = True
+        return values[sel]
 
     found = []
-    for i, (v, fam, kind, unsure) in enumerate(cands):
-        if progress:
+    for i, (v, fam, kind, unsure, sigma) in enumerate(cands):
+        if progress and i % 50 == 0:
             try:
                 progress(i, len(cands))
             except Exception:
                 pass
+        if not up_any[i].any():
+            continue
         ra, dec = v["ra"], v["dec"]
         el = elements_from_vsx(v)
         good_nights, first = 0, None
-        for (d, w0, w1), grid in zip(wins, grids):
-            if len(grid) < 2:
+        for j, ((d, w0, w1), grid) in enumerate(zip(wins, grids)):
+            if not up_any[i, j]:
                 continue
-            up = sky.up_mask(ra, dec, site, grid)
+            up = up_grids[j][i]
             hit = None
             if kind == "timed":
                 tel = VarElements(vtype=el.vtype, period=v["period"], epoch=v["epoch"], any_time=False,
@@ -1635,8 +1721,7 @@ def suggest_variables(site, options, nights: list, params: dict | None = None, e
                 for ev in events.variable_events(tel, ra, dec, w0, w1):
                     if ev["start"] < w0 or ev["end"] > w1:
                         continue
-                    span = np.linspace(ev["start"], ev["end"], 7)
-                    if bool(np.all(sky.up_mask(ra, dec, site, span))):
+                    if bool(np.all(on_grid(grid, up, ev["start"], ev["end"]))):
                         hit = (ev["t"], ev["start"], ev["end"], ev["kind"])
                         break
             else:
@@ -1647,8 +1732,7 @@ def suggest_variables(site, options, nights: list, params: dict | None = None, e
                         break
             if hit is None:
                 continue
-            span = np.linspace(hit[1], hit[2], 7)
-            if float(np.mean(sky.moon_sky_penalty(ra, dec, site, span, dark_v))) > moon_max:
+            if float(np.mean(on_grid(grid, moon_grids[j][i], hit[1], hit[2]))) > moon_max:
                 continue
             good_nights += 1
             if first is None:
@@ -1656,18 +1740,18 @@ def suggest_variables(site, options, nights: list, params: dict | None = None, e
         if first is None:
             continue
         d, hit = first
-        amp = float(v["amp"])
+        amp = float(v["amp"] or 0.0)
         soon = (d - wins[0][0]).days
         score = (2.0 * min(amp, 1.0) + (vmax - v["max"]) / max(0.1, vmax - vmin)
                  + (1.0 + (0.5 if soon <= 1 else 0.0) if kind == "timed" else (0.5 if kind == "cycle" else 0.0))
                  + 0.5 * good_nights / len(wins))
         if unsure:
             score *= 0.8
-        found.append((score, v, fam, kind, d, hit, good_nights, amp))
+        found.append((score, v, fam, kind, d, hit, good_nights, amp, sigma))
 
     found.sort(key=lambda x: -x[0])
     out = []
-    for score, v, fam, kind, d, hit, good, amp in found[: int(p.get("max_results") or 12)]:
+    for score, v, fam, kind, d, hit, good, amp, sigma in found[: int(p.get("max_results") or 12)]:
         t0 = hit[0]
         when_text = f"{_fmt_day(t0, site)} {sky.hhmm(t0, site.tz)}"
         if kind == "timed":
@@ -1677,22 +1761,34 @@ def suggest_variables(site, options, nights: list, params: dict | None = None, e
         else:
             text = f"from {when_text}"
         el = elements_from_vsx(v)
+        if kind == "timed":                  # kept, it is planned at its events as suggested (RR Lyrae included)
+            el.any_time, el.epoch_kind = False, hit[3]
+        uncertain_time = sigma is not None and kind != "timed"    # was a timed type: says why it is not timed
+        warn = ""
+        if uncertain_time:
+            warn = (f"⚠ time uncertain ±{sigma / 60:.0f} h" if math.isfinite(sigma) and sigma >= 90
+                    else (f"⚠ time uncertain ±{sigma:.0f} min" if math.isfinite(sigma) else
+                          "⚠ no usable timing (period a limit or uncertain)"))
         rng = (f"{v['max']:.2f}–{v['min']:.2f} {v.get('band') or ''}".strip() if v.get("min") is not None
                else f"{v['max']:.2f}")
         per = v.get("period")
         per_text = (f"P = {per * 24:.2f} h" if per and per < 1 else (f"P = {per:.4g} d" if per else "no period"))
         note_text = (f"{v.get('vtype')}, {per_text}, {rng} (Δ {amp:.2f} mag); {text}, "
-                     f"{sky.local_label(site.tz, t0)}")
+                     f"{sky.local_label(site.tz, t0)}" + (f"; {warn}" if warn else ""))
         t = Target(name=v["name"], kind="variable", mode="V", ra=v["ra"], dec=v["dec"], vmag=v["max"],
                    enabled=False, suggested=True, source="VizieR VSX", elements=el.__dict__.copy(), notes=note_text,
                    added=today_iso(site))
-        t.suggest_info = {"night": d.isoformat(), "when": float(t0), "event": hit[3], "text": text,
+        t.suggest_info = {"night": d.isoformat(), "when": float(t0), "event": hit[3],
+                          "text": text + (f" ({warn})" if warn else ""),
                           "score": round(float(score), 3), "amp": round(amp, 3), "family": fam, "kind": kind,
-                          "good_nights": good, "nights": len(wins)}
+                          "good_nights": good, "nights": len(wins),
+                          "timing_sigma_min": (round(float(sigma), 1) if sigma is not None and math.isfinite(sigma)
+                                               else None),
+                          "time_uncertain": bool(uncertain_time)}
         out.append(t)
     info = (f"{len(cands)} of {len(rows)} catalog stars matched"
-            + (f" (the first {VAR_SEARCH_MAX_ROWS} VSX matches, best-studied first: narrow the V or period range or "
-               "the types to reach the rest)" if truncated else ""))
+            + (" (VizieR's limit was reached, so not every VSX match was checked — the best-studied ones were: "
+               "narrow the V or period range or the types to reach the rest)" if truncated else ""))
     return out, note, info
 
 

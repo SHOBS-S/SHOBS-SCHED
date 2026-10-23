@@ -215,23 +215,27 @@ def suggested_when(t: Target) -> float | None:
     return w if math.isfinite(w) else None
 
 
-def row_order(group: str):
+def row_order(group: str, now: float | None = None):
     """Sort key of a Targets group: the Suggested groups by date of occurrence (soonest first; undated last, by
-    name), the others by name (rows stay put when ticked). Suggested Variables night by night (John, 23 Oct): each
-    night's timed events first (minima, maxima, full cycles, by time), then that night's any-time fillers."""
+    name — a date already past counts as undated), the others by name (rows stay put when ticked). Suggested
+    Variables night by night (John, 23 Oct): each night's timed events first (minima, maxima, full cycles, by time),
+    then that night's any-time fillers (and stars whose event time is too uncertain to promise)."""
+    def dated(t):
+        w = suggested_when(t)
+        return None if (w is None or (now is not None and w < now)) else w
     if group == "suggested_var":
         def key(t):
-            w = suggested_when(t)
+            w = dated(t)
             if w is None:
                 return (1, "", 0, 0.0, t.name.lower())
             info = t.suggest_info if isinstance(t.suggest_info, dict) else {}
             night = str(info.get("night") or "")
-            filler = 1 if info.get("kind") == "any" else 0
+            filler = 1 if (info.get("kind") == "any" or info.get("time_uncertain")) else 0
             return (0, night, filler, w, t.name.lower())
         return key
     if group == "suggested":
         def key(t):
-            w = suggested_when(t)
+            w = dated(t)
             return (0, w, t.name.lower()) if w is not None else (1, 0.0, t.name.lower())
         return key
     return lambda t: (0, 0.0, t.name.lower())
@@ -947,8 +951,10 @@ class App(tk.Tk):
         self.pages[2].dirty = True
         self.pages[3].dirty = True
 
-    def targets_changed(self):
-        if self.schedule.nights:                  # the saved schedule was built from the old target list
+    def targets_changed(self, planned: bool = True):
+        """The target list changed. planned=False: nothing the planner uses changed (only unticked suggestions came
+        or went, or a suggestion was kept as it was): the pages refresh, the plan is not marked out of date."""
+        if planned and self.schedule.nights:      # the saved schedule was built from the old target list
             self.pages[2].setup_stale = True
         self.pages[2].dirty = True
 
@@ -1844,7 +1850,7 @@ class TargetsPage:
             vals = ["", "", "", "", hint, ""]       # the hint sits in the wide "Next useful event" column
             tree.insert("", tk.END, iid=f"grp:{key}", text=label, values=vals, open=opened.get(key, True),
                         tags=("group",))
-            for t in sorted(rows, key=row_order(key)):      # rows stay put when ticked; Suggested by date
+            for t in sorted(rows, key=row_order(key, when)):      # rows stay put when ticked; Suggested by date
                 tags = []
                 if not t.enabled:
                     tags.append("off")
@@ -2359,7 +2365,7 @@ class TargetsPage:
         for t in ts:
             t.suggested = False
         self.app.save_targets()
-        self.app.targets_changed()
+        self.app.targets_changed(planned=False)          # the planner never looks at "suggested"
         self.fill()
         moved = []
         for kind, group in (("transit", "Transits"), ("variable", "Variables")):
@@ -2448,7 +2454,7 @@ class TargetsPage:
             names.add(t.name.strip().lower())
         self.app.targets = keep + added
         self.app.save_targets()
-        self.app.targets_changed()
+        self.app.targets_changed(planned=False)          # only unticked suggestions came and went
         self.fill()
         if self.tree.exists("grp:suggested"):
             self.tree.item("grp:suggested", open=True)
@@ -2490,7 +2496,7 @@ class TargetsPage:
         def work(progress):
             return tg.suggest_variables(site, opts, nights, dict(params), exclude_names=exclude, progress=progress)
         app.jobs.run(work, self._found_variables, self.find_ind,
-                     "Finding suggested variables (VSX at VizieR; up to a minute)", counted=True)
+                     "Finding suggested variables (VSX at VizieR; up to a minute or two)", counted=True)
 
     def _found_variables(self, res, exc):
         if exc is not None:
@@ -2501,17 +2507,19 @@ class TargetsPage:
         new = [t for t in (found or []) if isinstance(t, Target)]
         # unticked Suggested Variables are replaced; everything else stays
         keep = [t for t in self.app.targets if not (t.suggested and t.kind == "variable" and not t.enabled)]
-        names = {t.name.strip().lower() for t in keep}
+        tg = mod("targets")
+        key = getattr(tg, "variable_name_key", None) or (lambda n: str(n).strip().lower())
+        names = {key(t.name) for t in keep}               # "V523 Cas" already listed = VSX's "V0523 Cas"
         added = []
         for t in new:
-            if t.name.strip().lower() in names:
+            if key(t.name) in names:
                 continue
             t.suggested, t.enabled, t.kind, t.mode = True, False, "variable", "V"
             added.append(t)
-            names.add(t.name.strip().lower())
+            names.add(key(t.name))
         self.app.targets = keep + added
         self.app.save_targets()
-        self.app.targets_changed()
+        self.app.targets_changed(planned=False)          # only unticked suggestions came and went
         self.fill()
         if self.tree.exists("grp:suggested_var"):
             self.tree.item("grp:suggested_var", open=True)
