@@ -334,3 +334,15 @@ class DstTimedEvent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLocalLabel(unittest.TestCase):
+    def test_offsets(self):
+        ny = "America/New_York"
+        self.assertEqual(sky.night_local_label(date(2026, 10, 23), ny), "Local time (UTC−4)")
+        self.assertEqual(sky.night_local_label(date(2026, 10, 31), ny), "Local time (UTC−4 → UTC−5)")
+        self.assertEqual(sky.night_local_label(date(2026, 11, 2), ny), "Local time (UTC−5)")
+        self.assertEqual(sky.night_local_label(date(2026, 10, 23), "Asia/Kolkata"), "Local time (UTC+5:30)")
+        self.assertEqual(sky.night_local_label(date(2026, 10, 23), "Etc/UTC"), "Local time (UTC+0)")
+        self.assertEqual(sky.night_local_label(date(2026, 10, 23), ""), "UTC")
+        self.assertEqual(sky.night_local_label(date(2026, 10, 23), "Nowhere/Zone"), "UTC")

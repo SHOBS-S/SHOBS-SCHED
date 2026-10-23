@@ -65,6 +65,40 @@ def hhmm(jd: float | None, tz_name: str) -> str:
     return t.strftime("%H:%M")
 
 
+def utc_offset_text(tz_name: str, jd: float | None = None) -> str:
+    """'UTC−4', 'UTC+5:30', 'UTC+0' for the site zone at that moment (now when jd is None). Daylight saving included.
+    An unknown or empty zone reads 'UTC' (times are then shown in UTC)."""
+    if not tz_name or not zone_ok(tz_name):
+        return "UTC"
+    t = to_local(now_jd() if jd is None else float(jd), tz_name)
+    off = t.utcoffset() or timedelta(0)
+    mins = int(round(off.total_seconds() / 60.0))
+    sign = "+" if mins >= 0 else "−"
+    h, m = divmod(abs(mins), 60)
+    return f"UTC{sign}{h}" + (f":{m:02d}" if m else "")
+
+
+def local_label(tz_name: str, jd: float | None = None, jd_end: float | None = None, word: str = "Local time") -> str:
+    """'Local time (UTC−4)' — THE wording for every local-time label in SCHED (house rule, John 22 Oct; same as
+    SHOBS-P issue #22). Give jd (and jd_end for a span such as a night): when the offset changes inside the span
+    (daylight-saving night) it reads 'Local time (UTC−4 → UTC−5)'. Unknown zone → 'UTC'."""
+    if not tz_name or not zone_ok(tz_name):
+        return "UTC"
+    a = utc_offset_text(tz_name, jd)
+    if jd_end is not None:
+        b = utc_offset_text(tz_name, jd_end)
+        if b != a:
+            return f"{word} ({a} → {b})"
+    return f"{word} ({a})"
+
+
+def night_local_label(d: date, tz_name: str, word: str = "Local time") -> str:
+    """local_label for the night that starts on local date d (local noon to next local noon)."""
+    if not tz_name or not zone_ok(tz_name):
+        return "UTC"
+    return local_label(tz_name, local_jd(d, 12, 0, tz_name), local_jd(d + timedelta(days=1), 12, 0, tz_name), word)
+
+
 def local_jd(d: date, hh: int, mm: int, tz_name: str) -> float:
     """JD (UTC) of a site clock time on a local date. In a daylight-saving gap/overlap, zoneinfo's fold=0 applies."""
     return jd_from_datetime(datetime.combine(d, dtime(hh, mm), tzinfo=zone(tz_name)))
