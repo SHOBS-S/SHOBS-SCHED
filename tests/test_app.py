@@ -238,7 +238,8 @@ def make_fakes():
     ex.night_file_name = lambda program, d: f"SHOBS-SCHED_{program.upper()}_{d}.csv"
     ex.plan_card_text = lambda nights, site, s=None, w=None, targets_by_id=None: "PLAN CARD " + " ".join(
         n.date for n in nights)
-    ex.plan_card_html = lambda nights, site, s=None, w=None, targets_by_id=None: "<html>card</html>"
+    ex.plan_card_html = lambda nights, site, s=None, w=None, targets_by_id=None, plots=None: \
+        "<html>card" + ("".join(f"<img src=\"data:image/png;base64,{len(v)}\">" for v in (plots or {}).values())) + "</html>"
     return {"targets": tg, "planner": pl, "weather": wx, "export": ex}, calls
 
 
@@ -982,8 +983,11 @@ class TestAppWithFakes(Base):
         self.assertEqual(page.msg_var.get().split(".")[0], f"✔ Copied {n} targets for Tue 20 Oct")
         self.assertIn(("2026-10-20", "copy"), page.results)
         path = page.print_card()
+        self.assertTrue(path, page.page_msg_var.get())
         self.assertTrue(path and os.path.exists(path) and path.startswith(settings.cache_dir()))
         self.assertTrue(page.page_msg_var.get().startswith("✔ The plan card is open"))
+        with open(path, encoding="utf-8") as fh:
+            self.assertIn("data:image/png;base64,", fh.read(), "the night plot is on the printed card")
         for v in page.night_vars.values():
             v.set(False)
         self.assertIn("Tick one or more nights", page.card_text())

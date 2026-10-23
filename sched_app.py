@@ -4694,8 +4694,22 @@ class ExportPage:
 
     # ---- Print ----
     def card_plots(self, nights) -> dict | None:
-        """Night plots for the printed card ({night ISO: PNG bytes}); None = none. The lead wires nightplot here."""
-        return None
+        """Night plots for the printed card ({night ISO: PNG bytes}, white print style); None when matplotlib is
+        missing or no night could be drawn (the card then prints exactly as before)."""
+        np_mod = mod("nightplot")
+        if np_mod is None:
+            return None
+        by_id, site, opts = self.app.targets_by_id(), self.app.site, self.app.options
+        plots = {}
+        for n in nights:
+            try:
+                png = np_mod.png_bytes(n, site, by_id, n.weather or {}, opts, print_style=True)
+            except Exception as exc:                 # never let a plot stop the card
+                settings.log(f"card_plots {n.date}: {exc!r}")
+                png = None
+            if png:
+                plots[n.date] = png
+        return plots or None
 
     def print_card(self, open_browser: bool = True) -> str | None:
         ex = mod("export")
