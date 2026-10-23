@@ -275,6 +275,8 @@ class NightPlot:
         self.paths: dict[str, tuple[np.ndarray, np.ndarray]] = {}   # target id → (airmass, altitude) on self.jd
         self.labels: list = []           # (text artist, mid jd, n chars) block label boxes, staggered in layout()
         self.edge_texts: list = []       # (start text, end text, block) airmass numbers
+        self.mer_texts: list = []        # (text, mark, x, airmass) flip / meridian labels, placed by _nudge()
+        self.home: dict = {}             # id(text) → its first (x, y): _nudge() starts from there every time
         self.twilight_texts: list = []   # (text, jd)
         self.band_texts: list = []       # transit times and no-transit notes: top of their band, under the twilight
         self.dew_box = None
@@ -546,6 +548,9 @@ class NightPlot:
             en = self._reg(tid, ax.text(xx[-1], xb[-1] + 0.03, f"{xb[-1]:.2f}", fontsize=7.5, color=tc,
                                         ha="right", va="top", zorder=8, clip_on=True), "text")
         self.edge_texts.append((st, en, b))
+        for t in (st, en):
+            if t is not None:
+                self.home[id(t)] = t.get_position()
         # ▼ only when the meridian is inside the block
         mer = b.meridian
         if mer is None or not (b.start - 0.6 <= mer <= b.end + 0.6):
@@ -559,15 +564,12 @@ class NightPlot:
                     mark = dict(marker="v", ms=8, color=look["flip"], mec=MODE_FILL[mode])
                 else:                                      # | the meridian, no flip needed (alt-az, or ends in time)
                     mark = dict(marker="|", ms=11, mew=1.6, color=look["flip"])
-                self._reg(tid, ax.plot([float(self.x(mer))], [xm], ls="none", zorder=9, clip_on=False, **mark)[0],
-                          "line")
+                mk = self._reg(tid, ax.plot([float(self.x(mer))], [xm], ls="none", zorder=9, clip_on=False,
+                                            **mark)[0], "line")
                 word = "flip" if flip else "meridian"
-                if xm - AIRMASS_TOP > 0.09:                # room above the mark
-                    at = dict(x=float(self.x(mer)), y=xm - 0.03, ha="center", va="bottom")
-                else:                                      # at the top edge: under the line
-                    at = dict(x=float(self.x(mer)), y=xm + 0.11, ha="center", va="top")
-                self._reg(tid, ax.text(at.pop("x"), at.pop("y"), f"{word} {self.hhmm(mer)}", fontsize=7.5,
-                                       color=tc, zorder=9, **at), "text")
+                mt = self._reg(tid, ax.text(float(self.x(mer)), xm - 0.03, f"{word} {self.hhmm(mer)}", fontsize=7.5,
+                                            color=tc, zorder=9, ha="center", va="bottom"), "text")
+                self.mer_texts.append((mt, mk, float(self.x(mer)), xm))
         # the label box
         mid = 0.5 * (b.start + b.end)
         sep = b.moon_sep if b.moon_sep is not None else float(sky.target_moon_sep(ra, dec, mid))
@@ -732,6 +734,9 @@ class NightPlot:
         tw = 7 * 0.6 * 7.5 / 72 * dpi / pph                # hours a label takes
         last = {}
         for t, j in self.twilight_texts:
+            ha0, text0 = self.home.setdefault(id(t), (t.get_ha(), t.get_text()))
+            t.set_ha(ha0)                                  # (_nudge may have moved it to the other side)
+            t.set_text(text0)
             x = (j - self.j0) * 24
             side = t.get_ha()
             row = 0
@@ -751,20 +756,115 @@ class NightPlot:
         self._nudge()
 
     def _nudge(self):
-        """Small collision fixes that need the real text sizes: a block's start/end airmass under a twilight label
-        moves to the other side of its point; a spread number under the "⚠ dew from" box is hidden."""
+        """Collision fixes that need the real text sizes (blocks that start in twilight crowd the top corners):
+          1. a block's start / end airmass under a twilight label or a mark moves to the other side of its point,
+             else lower;
+          2. a flip / meridian label goes to the first free place: above its mark, beside it (right, left), under
+             the line, or lower still — free = inside the plot, clear of the twilight labels, the airmass numbers,
+             every mark and the label boxes;
+          0./3. a twilight label on a mark (first), or still on a number or a flip label (last), moves to another
+             row or to the other side of its time when that is free;
+          4. a spread number under the "⚠ dew from" box is hidden."""
         try:
             r = self.fig.canvas.get_renderer()
         except Exception:
             return
-        tw = [t.get_window_extent(r) for t, _j in self.twilight_texts]
+        ax = self.ax
+        to_px = ax.transData.transform
+        to_data = ax.transData.inverted().transform
+        plot_box = ax.get_window_extent(r)
+
+        def ext(t):
+            return t.get_window_extent(r)
+
+        def shifted(x, y, dx_px, dy_px):
+            px_, py_ = to_px((x, y))
+            return tuple(to_data((px_ + dx_px, py_ + dy_px)))
+
+        def hits(e, boxes):                                # (1.5 px slack: text boxes carry some padding)
+            return any(e.x0 < o.x1 - 1.5 and o.x0 < e.x1 - 1.5 and e.y0 < o.y1 - 1.5 and o.y0 < e.y1 - 1.5
+                       for o in boxes)
+
+        def inside(e):
+            return (e.x0 >= plot_box.x0 - 1 and e.x1 <= plot_box.x1 + 1 and e.y0 >= plot_box.y0 - 1
+                    and e.y1 <= plot_box.y1 + 1)
+
+        ax_px = max(1.0, plot_box.height)
+        row_step = 2.3 * 7.5 * 1.1 / 72 * self.fig.dpi / ax_px
+        rows = (0.995, 0.995 - row_step, 0.995 - 2 * row_step)   # a third row only for this
+
+        def settle_twilight(busy):
+            """Move each twilight label that sits on something in `busy` to its other rows, then to the other
+            side of its time (a dusk label then reads leftwards); keep it where it was when nothing is free."""
+            for k, (t, _j) in enumerate(self.twilight_texts):
+                if not hits(ext(t), busy):
+                    continue
+                y_now, ha_now, text_now = t.get_position()[1], t.get_ha(), t.get_text()
+                rest = [ext(o) for q, (o, _jj) in enumerate(self.twilight_texts) if q != k]
+                word, hm = (s_.strip() for s_ in text_now.split("\n"))
+                flipped = "left" if ha_now == "right" else "right"
+                for ha, y_alt in [(ha_now, y) for y in rows] + [(flipped, y) for y in rows]:
+                    t.set_ha(ha)
+                    t.set_text(f" {word}\n {hm}" if ha == "left" else f"{word} \n{hm} ")
+                    t.set_y(y_alt)
+                    e = ext(t)
+                    if not hits(e, busy) and not hits(e, rest):
+                        break
+                else:
+                    t.set_ha(ha_now)
+                    t.set_text(text_now)
+                    t.set_y(y_now)
+
+        # 0. twilight labels off the flip / meridian marks (the marks cannot move)
+        settle_twilight([m.get_window_extent(r) for _t, m, _x, _y in self.mer_texts])
+        tw = [ext(t) for t, _j in self.twilight_texts]
+        mark_boxes = [m.get_window_extent(r) for _t, m, _x, _y in self.mer_texts]
+        lh = 7.5 * 1.25 / 72 * self.fig.dpi                  # one line of the small text, in pixels
+        # 1. airmass numbers
         for st, en, _b in self.edge_texts:
             for t, normal, other in ((st, "left", "right"), (en, "right", "left")):
                 if t is None or not t.get_visible():
                     continue
-                t.set_ha(normal)
-                if any(t.get_window_extent(r).overlaps(e) for e in tw):
-                    t.set_ha(other)
+                x0, y0 = self.home[id(t)]
+                for ha, dy in ((normal, 0), (other, 0), (normal, -1.2 * lh), (other, -1.2 * lh), (normal, -2.4 * lh),
+                               (other, -2.4 * lh), (normal, -3.6 * lh), (normal, -4.8 * lh)):
+                    t.set_ha(ha)
+                    t.set_position(shifted(x0, y0, 0, dy))
+                    if not hits(ext(t), tw + mark_boxes):
+                        break
+        numbers = [ext(t) for st, en, _b in self.edge_texts for t in (st, en) if t is not None and t.get_visible()]
+        marks = [m.get_window_extent(r) for _t, m, _x, _y in self.mer_texts]
+        boxes = [ext(lab) for lab, *_x in self.labels]
+        # 2. flip / meridian labels
+        placed = []
+        for t, mark, x, y in self.mer_texts:
+            mk = mark.get_window_extent(r)
+            gap = 0.4 * lh
+            spots = (("center", "bottom", 0, mk.height / 2 + gap * 0.5),      # above the mark
+                     ("left", "center", mk.width / 2 + gap, 0),              # right of it
+                     ("right", "center", -(mk.width / 2 + gap), 0),          # left of it
+                     ("center", "top", 0, -(mk.height / 2 + 1.6 * lh)),      # under the line
+                     ("left", "top", mk.width / 2 + gap, -(mk.height / 2 + gap)),
+                     ("center", "top", 0, -(mk.height / 2 + 3.0 * lh)),
+                     ("left", "top", mk.width / 2 + gap, -(mk.height / 2 + 3.0 * lh)),
+                     ("center", "top", 0, -(mk.height / 2 + 4.5 * lh)),
+                     ("left", "top", mk.width / 2 + gap, -(mk.height / 2 + 4.5 * lh)),
+                     ("center", "top", 0, -(mk.height / 2 + 6.0 * lh)))
+            others = tw + numbers + marks + boxes + placed + [ext(bt) for bt in self.band_texts]
+            for ha, va, dx, dy in spots:
+                t.set_ha(ha)
+                t.set_va(va)
+                t.set_position(shifted(x, y, dx, dy))
+                e = ext(t)
+                if inside(e) and not hits(e, others):
+                    break
+            else:                                              # nowhere free: under the line, the least bad
+                t.set_ha("center")
+                t.set_va("top")
+                t.set_position(shifted(x, y, 0, -(mk.height / 2 + 1.6 * lh)))
+            placed.append(ext(t))
+        # 3. twilight labels still sitting on a mark, a number or a flip label: another row or side
+        settle_twilight(numbers + marks + placed)
         if self.dew_box is not None and self.dew_box.get_visible():
             box = self.dew_box.get_window_extent(r)
             for t in self.spread_texts:

@@ -285,6 +285,54 @@ class TestPlot(unittest.TestCase):
                 if t is not None and t.get_visible():
                     self.assertFalse(any(t.get_window_extent(r).overlaps(e) for e in tw), t.get_text())
 
+    def assert_top_texts_apart(self, p, what):
+        """No overlaps among the twilight labels, the airmass numbers, the flip / meridian labels and the marks; the
+        flip / meridian labels stay inside the plot."""
+        r = p.fig.canvas.get_renderer()
+        items = [(f"twilight {t.get_text()!r}", t.get_window_extent(r)) for t, _j in p.twilight_texts]
+        items += [(f"airmass {t.get_text()}", t.get_window_extent(r)) for st, en, _b in p.edge_texts
+                  for t in (st, en) if t is not None and t.get_visible()]
+        items += [(f"label {t.get_text()!r}", t.get_window_extent(r)) for t, _m, _x, _y in p.mer_texts]
+        marks = [(f"mark {t.get_text()!r}", m.get_window_extent(r)) for t, m, _x, _y in p.mer_texts]
+        box = p.ax.get_window_extent(r)
+        for t, _m, _x, _y in p.mer_texts:
+            e = t.get_window_extent(r)
+            self.assertTrue(e.y1 <= box.y1 + 1 and e.y0 >= box.y0 - 1, f"{what}: {t.get_text()} outside the plot")
+        def overlap(a, b):                                     # by more than 1.5 px (text boxes carry padding)
+            return a.x0 < b.x1 - 1.5 and b.x0 < a.x1 - 1.5 and a.y0 < b.y1 - 1.5 and b.y0 < a.y1 - 1.5
+        for k, (na, ea) in enumerate(items):
+            for nb, eb in items[k + 1:] + marks:
+                self.assertFalse(overlap(ea, eb), f"{what}: {na} overlaps {nb}")
+
+    def test_block_starting_in_twilight_texts_apart(self):
+        """Transit blocks start at dusk (John's common case): the real 23 Oct (HAT-P-23 b from 19:38, flip 19:44
+        at airmass 1.05) and 25 Oct (XX Cyg from 20:15) nights, and a made-up block from nautical dusk with a flip
+        30 min later, at the card size and at a small screen size."""
+        for dd in (23, 25):
+            for size in ((10, 5.6), (11.6, 4.8)):
+                p = self.plot(d=date(2026, 10, dd), size=size)
+                self.assert_top_texts_apart(p, f"{dd} Oct {size}")
+        night, site, by_id, _o = golden_night(date(2026, 10, 22))
+        d = date(2026, 10, 22)
+        naut = sky.night_window(d, site, sky.NAUTICAL)[0]
+        lst = float(sky.lst_deg(naut + 30 / 1440, site.lon))
+        star = Target(name="Twilight star", kind="transit", mode="T", ra=lst, dec=site.lat - 8)
+        by = dict(by_id)
+        by[star.id] = star
+        made = NightPlan.from_dict(night.to_dict())
+        made.blocks = [Block(target_id=star.id, name=star.name, mode="T", ra=star.ra, dec=star.dec, start=naut,
+                             end=naut + 2.5 / 24, t1=naut + 0.6 / 24, t4=naut + 1.8 / 24).to_dict()] + \
+            [b for b in night.blocks if b["start"] > naut + 2.6 / 24]
+        mpl = nightplot._load()
+        for size in ((10, 5.6), (11.6, 4.8)):
+            fig = mpl["Figure"](figsize=size, dpi=100)
+            mpl["Agg"](fig)
+            p = nightplot.NightPlot(made, site, by, night.weather, _o, figure=fig).draw()
+            fig.canvas.draw()
+            flips = self.marks(p, "v")
+            self.assertIn(star.id, {tid for _l, tid in flips}, "the made-up block flips")
+            self.assert_top_texts_apart(p, f"made-up {size}")
+
     def test_highlight_restores_every_artist_exactly(self):
         p = self.plot()
         arts = [a for g in p.groups.values() for a in g]
