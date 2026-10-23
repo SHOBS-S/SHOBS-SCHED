@@ -217,8 +217,19 @@ def suggested_when(t: Target) -> float | None:
 
 def row_order(group: str):
     """Sort key of a Targets group: the Suggested groups by date of occurrence (soonest first; undated last, by
-    name), the others by name (rows stay put when ticked)."""
-    if group in ("suggested", "suggested_var"):
+    name), the others by name (rows stay put when ticked). Suggested Variables night by night (John, 23 Oct): each
+    night's timed events first (minima, maxima, full cycles, by time), then that night's any-time fillers."""
+    if group == "suggested_var":
+        def key(t):
+            w = suggested_when(t)
+            if w is None:
+                return (1, "", 0, 0.0, t.name.lower())
+            info = t.suggest_info if isinstance(t.suggest_info, dict) else {}
+            night = str(info.get("night") or "")
+            filler = 1 if info.get("kind") == "any" else 0
+            return (0, night, filler, w, t.name.lower())
+        return key
+    if group == "suggested":
         def key(t):
             w = suggested_when(t)
             return (0, w, t.name.lower()) if w is not None else (1, 0.0, t.name.lower())

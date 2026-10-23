@@ -1320,7 +1320,8 @@ NOT_VARIABLE_TYPES = ("CST", "NON-CV", "VAR", "*", "")       # constant, not a v
 VISUAL_BANDS = ("V", "CV", "Vj", "vis", "VT", "G", "Hp", "g")   # max given in (near-)V light; R, I, W1, Kp... are not
 VAR_SEARCH_MAX_ROWS = 3000
 VAR_SEARCH_MAX_AGE_DAYS = 1.0
-VAR_SEARCH_DEFAULTS = {"families": ["eclipsing", "rrlyr", "dsct"], "uncertain": False, "pmin": None, "pmax": None,
+VAR_SEARCH_DEFAULTS = {"families": ["eclipsing", "rrlyr", "dsct", "long"], "uncertain": False, "pmin": None,
+                       "pmax": None,
                        "punit": "d", "vmin": None, "vmax": None, "min_amp": 0.1, "max_results": 12}
 SHORT_PULSATOR_DAYS = 0.5          # a pulsator this short (or shorter) needs a whole cycle in one night
 FILLER_MIN_RUN_MIN = 60.0          # an any-time star needs at least this long above the limits in the dark

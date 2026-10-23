@@ -82,7 +82,7 @@ class TestTypesAndParams(unittest.TestCase):
 
     def test_params_defaults_and_saved(self):
         p = T.var_search_params({})
-        self.assertEqual(p["families"], ["eclipsing", "rrlyr", "dsct"])
+        self.assertEqual(p["families"], ["eclipsing", "rrlyr", "dsct", "long"], "Miras / SR on by default")
         self.assertEqual((p["vmin"], p["vmax"]), (9.0, 13.0), "V range from Setup's Suggested range")
         self.assertEqual((p["min_amp"], p["max_results"]), (0.1, 12))
         p = T.var_search_params({"suggest_vmin": 8.5, "suggest_vmax": 12.5,
@@ -103,7 +103,7 @@ class TestTypesAndParams(unittest.TestCase):
                      "f_min = 'Y' AND min >= 0.100", "min - max >= 0.100", "Type LIKE 'EA%'", "Epoch > 0",
                      "Type LIKE 'HADS%'", "ORDER BY OID"):
             self.assertIn(part, q)
-        self.assertNotIn("Type = 'M'", q)
+        self.assertIn("Type = 'M'", q, "Miras / SR on by default")
         q = T.var_search_adql(dict(p, families=["long", "other"]), 0, 90, None)
         self.assertNotIn("Type LIKE", q, "'other' = every type: no type filter")
         self.assertNotIn("Type =", q)
@@ -229,7 +229,7 @@ class TestFetch(Base):
         rows, note, _cut = T.fetch_variable_candidates(T.var_search_params({}), SITE, self.WINS)
         self.assertTrue(rows)
         fams = {T.variable_family(r["vtype"])[0] for r in rows}
-        self.assertTrue(fams <= {"eclipsing", "rrlyr", "dsct"}, "ASU rows filtered here by family")
+        self.assertTrue(fams <= {"eclipsing", "rrlyr", "dsct", "long"}, "ASU rows filtered here by family")
         self.assertTrue(all(r["amp"] is not None and r["amp"] >= 0.1 for r in rows))
 
     def test_everything_down(self):
@@ -324,8 +324,9 @@ class TestSuggestedVariablesPage(AppBase):
         ts = [t for t in app.targets if t.suggested and t.kind == "variable"]
         self.assertTrue(all(not t.enabled for t in ts), "unticked")
         by_name = {t.name: t for t in ts}
-        whens = [by_name[n].suggest_info["when"] for n in names]
-        self.assertEqual(whens, sorted(whens), "soonest first")
+        keys = [(by_name[n].suggest_info["night"], by_name[n].suggest_info["kind"] == "any",
+                 by_name[n].suggest_info["when"]) for n in names]
+        self.assertEqual(keys, sorted(keys), "night by night: timed events first, then fillers")
         self.assertTrue(page.find_ind.var.get().startswith("✔ "), page.find_ind.var.get())
         self.assertIn("found, soonest first", page.find_ind.var.get())
         self.assertIn("catalog stars matched", page.msg_var.get())
@@ -388,6 +389,23 @@ class TestSuggestedVariablesPage(AppBase):
         self.pump()
         self.assertTrue(page.find_ind.var.get().startswith("✖ No suggested variables: VizieR did not answer"),
                         page.find_ind.var.get())
+
+    def test_suggested_variables_timed_first_then_fillers_each_night(self):
+        app, page = self.page()
+        now = sky.now_jd()
+        d1, d2 = "2026-10-23", "2026-10-24"
+
+        def mk(name, night, kind, when):
+            return Target(name=name, kind="variable", mode="V", ra=10.0, dec=20.0, suggested=True, enabled=False,
+                          suggest_info={"night": night, "kind": kind, "when": when, "text": name, "score": 1.0})
+        app.targets += [mk("Mira A", d1, "any", now + 0.10), mk("EB late", d1, "timed", now + 0.30),
+                        mk("RR early", d1, "timed", now + 0.20), mk("HADS", d1, "cycle", now + 0.25),
+                        mk("SR B", d1, "any", now + 0.05), mk("EB next", d2, "timed", now + 1.20),
+                        mk("Mira next", d2, "any", now + 1.05),
+                        Target(name="Undated", kind="variable", mode="V", suggested=True, enabled=False)]
+        page.fill()
+        self.assertEqual(self.kids(page, "suggested_var"),
+                         ["RR early", "HADS", "EB late", "SR B", "Mira A", "EB next", "Mira next", "Undated"])
 
     def test_suggested_transits_listed_by_date(self):
         app, page = self.page()
