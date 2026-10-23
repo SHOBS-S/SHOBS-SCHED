@@ -73,6 +73,13 @@ def s1_environment():
     import numpy
     say(f"  Python {sys.version.split()[0]} ({sys.executable})")
     say(f"  numpy {numpy.__version__}")
+    try:
+        import matplotlib
+        from matplotlib.backends import backend_agg  # noqa: F401  (the night plot and its PNG)
+        ok, ver = True, matplotlib.__version__
+    except Exception as exc:
+        ok, ver = False, f"does not load ({exc}); run Create shortcuts.bat again"
+    check(f"matplotlib {ver} (the night plot)", ok)
     import tkinter
     say(f"  Tk {tkinter.TkVersion}")
     from zoneinfo import ZoneInfo

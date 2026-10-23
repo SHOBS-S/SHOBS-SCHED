@@ -21,9 +21,10 @@ settings so you type them once (it never changes SHOBS-P's files).
 3. **Schedule** — builds each night: fixed-time targets first (transits with baseline, timed minima/maxima), then
    campaigns and any-time variables by priority at their best airmass, with twilight, the Moon, your horizon,
    meridian flips (start 10–15 min before the meridian and let the mount flip), overheads and the dew forecast.
-   Each night shows the hourly weather, a dusk-to-dawn block bar with airmass, the nightly table, flats and darks
-   to shoot, what didn't fit and why, and free time. Mark each block Done, Partial or Clouded out; **Re-review**
-   rolls the week forward and puts missed targets back in the pool.
+   Each night shows a night plot (every block's airmass through the night over the twilight shading, with the
+   Moon, transits and meridian flips, and the hourly weather above it; click a block or a table row to pick it
+   out), the nightly table, flats and darks to shoot, what didn't fit and why, and free time. Mark each block
+   Done, Partial or Clouded out; **Re-review** rolls the week forward and puts missed targets back in the pool.
 4. **Export** — copy the ASIAIR coordinate list, or print the plan card.
 
 All times are shown on your **site's clock**, whatever time zone the computer is set to.
@@ -32,8 +33,8 @@ All times are shown on your **site's clock**, whatever time zone the computer is
 
 1. Unzip anywhere (for example `C:\Astro\shobs_sched`).
 2. Double-click **Create shortcuts.bat**. It finds a Python 3.11 or newer with Tkinter (python.org, Anaconda, …),
-   gives SHOBS-SCHED its own environment in `%LOCALAPPDATA%\SHOBS-SCHED`, installs `numpy` and `tzdata`, and puts
-   a SHOBS-SCHED icon on the Desktop and in the Start menu.
+   gives SHOBS-SCHED its own environment in `%LOCALAPPDATA%\SHOBS-SCHED`, installs `numpy`, `tzdata` and
+   `matplotlib`, and puts a SHOBS-SCHED icon on the Desktop and in the Start menu.
 3. **Run self-test.bat** checks the install; `run_windows.bat` starts the app with a console window beside it.
 
 Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_targets.json` and the
@@ -44,6 +45,14 @@ Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_t
 NASA Exoplanet Archive (ephemerides), AAVSO VSX and VizieR B/vsx (variable stars), SIMBAD (names and positions),
 Open-Meteo (weather). Sky brightness from the Moon: Krisciunas & Schaefer (1991, PASP 103, 1033). Sun and Moon
 positions from the Astronomical Almanac's low-precision formulas.
+
+## Credits
+
+The Schedule tab's night plot follows the design of the airmass plot in **TAPIR** (Transit and Ephemeris Prediction
+tool's `plot_airmass.cgi`) by Eric Jensen, Swarthmore College — GPL-3; Jensen, E. 2013, Astrophysics Source Code
+Library, [ascl:1306.007](https://ascl.net/1306.007); <https://github.com/elnjensen/Tapir>: airmass and elevation
+axes, twilight shading with the times across the top, the nautical-twilight ± 1.5 h time span, and the Moon's line
+growing with its phase. SCHED's plot is its own code (matplotlib); no TAPIR code is copied.
 
 ## License
 

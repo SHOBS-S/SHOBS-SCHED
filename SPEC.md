@@ -8,7 +8,8 @@ meridian flips, ASIAIR control). Sibling app: SHOBS-P (photometry; repo SHOBS-S/
 
 ## Ground rules (all workers)
 
-* Python 3.11+ standard library + **numpy** + **tzdata** only (no astropy, no matplotlib, no requests).
+* Python 3.11+ standard library + **numpy** + **tzdata** + **matplotlib** (the night plot, added in round 2) only
+  (no astropy, no requests).
   Network = `urllib.request` with a User-Agent "SHOBS-SCHED/1.0" and timeouts; never block the UI thread.
 * Run tests with **`/usr/bin/python3.12`** (it has numpy, tzdata, tkinter). The default `python3` has no Tk.
   GUI tests: `xvfb-run -a /usr/bin/python3.12 ...`. Tests use `unittest` (no pytest), in `tests/test_<module>.py`,
@@ -269,12 +270,16 @@ Pages:
    Suggested row to plan it or "Keep" to move it to Transits.
 3. **Schedule** — nights spinbox/drop-down 1–7, start date (tonight by default, site clock), Build schedule
    (green; thread + progress; fetches weather via weather.SOURCES[options['weather_source']] first, tolerates
-   failure). One ttk.Notebook tab per night ("Thu 22 Oct"). Each tab top to bottom: (1) **weather strip** (canvas:
-   hourly cloud bars, temperature and dew point lines or numbers, spread, wind; ⚠ at the dew onset; same time axis as
-   the block bar); (2) **block bar** (canvas: dusk-to-dawn band with civil/nautical/astronomical twilight shading,
-   blocks in mode colors with names, a tick at each block target's meridian, the Moon up-time as a thin line) and
-   under each block an **airmass band** on the same axis, light→dark as airmass rises, with the values at start,
-   best and end ("1.42 · 1.08 · 1.31") and ⚠ "high airmass" above the max-airmass setting; (3) the **nightly table**
+   failure). One ttk.Notebook tab per night ("Thu 22 Oct"). Each tab top to bottom: (1)+(2) the **night plot**
+   (nightplot.py, matplotlib, round 2 — replaces the v1 weather-strip and block-bar canvases; design after TAPIR's
+   plot_airmass.cgi, credited in README): airmass 1.0–2.4 (elevation on the right) against the site clock from
+   nautical dusk − 1.5 h to nautical dawn + 1.5 h in whole hours, twilight shading with the times on top, each
+   planned target's whole-night path faint and its block bold in the mode color with the airmass at start and end,
+   a label box per block (name, start–end, Moon distance), ▼ at a flip inside a block, transit t1–t4 and baselines,
+   the Moon dashed (width by phase), the max-airmass line, no-transit windows only where they changed the plan, and
+   a weather strip on the same axis (cloud, temperature, dew point, spread, dew risk); hover shows the values, a row
+   click highlights that target (and a block click selects its row); without matplotlib a ⚠ line instead;
+   (3) the **nightly table**
    (Time, Target, RA/Dec, SHOBS-P mode, Alt — e.g. "62° (X 1.13)" —, Meridian, Exposure, Frames, Notes), rows tinted
    lightly by mode; per selected row: Lock, Remove, Move to night…, Edit times… (typed start/end; such blocks are
    tagged "set by you" and survive rebuilds), and a status drop-down Planned / Done / Partial / Clouded out;

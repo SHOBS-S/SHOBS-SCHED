@@ -6,7 +6,7 @@ Written without f-strings so that an old Python 2 or 3.5 still reports its versi
 """
 import sys
 
-PACKAGES = ("numpy", "tzdata")
+PACKAGES = ("numpy", "tzdata", "matplotlib")
 
 
 def main():

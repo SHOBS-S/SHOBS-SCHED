@@ -6,7 +6,7 @@ seven, and exports the plan for ASIAIR. Four pages, as the numbered steps in the
 
   1 Setup     site, optics and camera, mount, limits, horizon, weather source
   2 Targets   the target list in four groups (Transits, Variables, Campaigns, Suggested)
-  3 Schedule  one tab per night: weather strip, block bar with airmass bands, nightly table, didn't fit, free time
+  3 Schedule  one tab per night: night plot (airmass, twilight, Moon, weather), nightly table, didn't fit, free time
   4 Export    ASIAIR coordinate CSV and the printable plan card
 
 The work is done by targets.py, planner.py, weather.py and export.py; they are imported lazily (mod()), so the app
@@ -39,8 +39,6 @@ from tkinter import font as tkfont
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
-
-import numpy as np  # noqa: E402
 
 import settings  # noqa: E402
 import sky  # noqa: E402
@@ -3118,39 +3116,20 @@ class SchedulePage:
         return True
 
 
-class Axis:
-    """The shared time axis of the weather strip and the block bar (JD → x)."""
-
-    def __init__(self, j0: float, j1: float, x0: float, x1: float):
-        self.j0, self.j1, self.x0, self.x1 = j0, j1, x0, x1
-
-    def x(self, jd: float) -> float:
-        return self.x0 + (jd - self.j0) / (self.j1 - self.j0) * (self.x1 - self.x0)
-
-    def clip(self, x: float) -> float:
-        return min(self.x1, max(self.x0, x))
-
-    def hour_ticks(self, tz: str) -> list[float]:
-        t = sky.to_local(self.j0, tz)
-        first = t.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        jd = sky.jd_from_datetime(first)
-        out = []
-        while jd <= self.j1:
-            out.append(jd)
-            jd += 1.0 / 24.0
-        return out
-
-
 class NightTab:
-    """One night: weather strip, block bar with airmass bands, the nightly table, its actions, and below it flats and
-    darks, didn't fit (with Plan this instead) and free time.
+    """One night: the night plot (nightplot.py: TAPIR-style airmass graph with the weather strip above it), the
+    nightly table, its actions, and below it flats and darks, didn't fit (with Plan this instead) and free time.
 
-    Speed: the contents are built the first time the tab is shown; the canvases draw only while they are on screen,
-    and a resize redraws once after the window settles (80 ms) and only when the size really changed.
+    Speed: the contents are built the first time the tab is shown; the plot is built only while the tab is on screen
+    and kept until the night (or the site, targets, dew setting) changes; a row click only restyles it; a resize
+    re-renders it once after the window settles (80 ms) and only when the size really changed.
 
-    Size: the weather strip and the block bar have a minimum height (in text lines, so they follow the fonts and the
-    display scaling); when the window is taller than the tab's contents they take most of the spare height, up to
-    a maximum, so the graph grows with the window instead of leaving empty space below."""
+    Size: the plot has a minimum height (in text lines, so it follows the fonts and the display scaling); when the
+    window is taller than the tab's contents it takes the spare height, up to a maximum, so the graph grows with the
+    window instead of leaving empty space below.
+
+    Selection: a table row and the plot's block go together both ways (click either); the selected target is drawn
+    bright and thick, every other target fades."""
 
     PLAN_INSTEAD_REASONS = ("collides with", "no free stretch", "no room")
 
@@ -3159,8 +3138,14 @@ class NightTab:
         self.frame = ttk.Frame(page.nb, style="Card.TFrame")
         self.built = False
         self.stale = True
-        self._drawn_w = {"wx": None, "bar": None}     # (width, height) last drawn
-        self._pending = {"wx": None, "bar": None}
+        self.mpl_canvas = None                     # FigureCanvasTkAgg (None without matplotlib)
+        self.plot = None                           # nightplot.NightPlot drawn on it
+        self._plot_key_now = None                  # what the drawn plot shows (rebuild when it changes)
+        self._plot_size = None                     # (width, height) last rendered
+        self._plot_event = None
+        self._pending = None
+        self._syncing = False                      # a plot click is selecting the table row
+        self.stale_plot = True
         self._fit_job = None
         f = self.app.fonts
         self.small, self.norm, self.bold = f["small"], f["norm"], f["bold"]
@@ -3176,6 +3161,21 @@ class NightTab:
         else:
             self.frame.after_idle(self.redraw)
 
+    def _mapped(self):
+        """The plot came on screen: render it at its current size and build it if it was left stale."""
+        if self.mpl_canvas is None:
+            return
+        try:
+            w = self.plot_widget()
+            ev = type("Size", (), {"width": int(w.winfo_width()), "height": int(w.winfo_height())})()
+        except tk.TclError:
+            return
+        if (ev.width, ev.height) != self._plot_size and ev.width > 1 and ev.height > 1:
+            self._plot_event = ev
+            self._plot_resize()
+        if self.stale_plot:
+            self.redraw()
+
     def _build_ui(self):
         app = self.app
         self.built = True
@@ -3189,22 +3189,41 @@ class NightTab:
         follow_wrap(head, inner, 2 * pad)
         self.notes_box = ttk.Frame(inner, style="Card.TFrame")
         self.notes_box.pack(fill=tk.X, padx=pad)
-        hw, hb = self.graph_heights(0, 0)
-        self.wx = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=hw)
-        self.wx.pack(fill=tk.X, padx=pad, pady=(px(app, 4), 0))
-        self.bar = tk.Canvas(inner, background=style.CARD, highlightthickness=0, height=hb)
-        self.bar.pack(fill=tk.X, padx=pad, pady=(px(app, 4), 0))
-        legend = ("Blocks take the color of the SHOBS-P mode they will be reduced in   ·   ▼ the target's meridian   ·   "
-                  "gold curve: Moon altitude   ·   gold outline: locked or set by you   ·   band under a block: airmass, "
-                  "light = low (start · best · end)")
+        # the night plot (matplotlib; a ⚠ line instead when matplotlib is missing)
+        self.plot_box = ttk.Frame(inner, style="Card.TFrame")
+        self.plot_box.pack(fill=tk.X, padx=pad, pady=(px(app, 4), 0))
+        np_mod = mod("nightplot")
+        self.mpl_canvas = np_mod.tk_canvas(self.plot_box) if np_mod is not None else None
+        if self.mpl_canvas is not None:
+            w = self.mpl_canvas.get_tk_widget()
+            w.configure(height=self.graph_heights(0, 0), background=style.CARD)
+            w.pack(fill=tk.X)
+            w.bind("<Configure>", self._plot_configured)            # debounced (replaces matplotlib's own)
+            w.bind("<Map>", lambda _e: self.frame.after(30, self._mapped), add="+")
+            self.mpl_canvas.mpl_connect("resize_event", self._resized)
+            self.mpl_canvas.mpl_connect("motion_notify_event", self._plot_motion)
+            self.mpl_canvas.mpl_connect("button_press_event", self._plot_click)
+            self.mpl_canvas.mpl_connect("figure_leave_event", lambda _e: self.hover_var.set(""))
+        else:
+            text = getattr(np_mod, "MISSING_TEXT", "⚠ Night plot needs matplotlib — run Create shortcuts.bat again")
+            self.plot_missing = ttk.Label(self.plot_box, text=text, style=style.status_style("warn"),
+                                          justify=tk.LEFT)
+            self.plot_missing.pack(anchor="w", fill=tk.X, pady=px(app, 4))
+        self.hover_var = tk.StringVar()
+        ttk.Label(inner, textvariable=self.hover_var, style="Card.TLabel").pack(anchor="w", fill=tk.X, padx=pad,
+                                                                                pady=(px(app, 2), 0))
+        legend = ("Faint line: the target all night  ·  bold: its block, in the color of the SHOBS-P mode it will be "
+                  "reduced in, with the airmass at the start and the end  ·  ▼ meridian flip inside the block  ·  "
+                  "dashed gold: the Moon (thicker = fuller)  ·  green band: the transit, lighter: its baselines  ·  "
+                  "hatched: a no-transit window that changed the plan  ·  gold box edge: locked or set by you  ·  "
+                  "click a block or a row to pick it out; point at the plot for values")
         lg = ttk.Label(inner, text=legend, style="Small.TLabel", justify=tk.LEFT)
-        lg.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 6), px(app, 8)))
+        lg.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 2), px(app, 8)))
         follow_wrap(lg, inner, 2 * pad)
-        self.wx.bind("<Configure>", lambda e: self._configured("wx", e.width, e.height))
-        self.bar.bind("<Configure>", lambda e: self._configured("bar", e.width, e.height))
-        # the graph grows with the window: refit when the visible area or the contents change size
+        # the plot grows with the window: refit when the visible area or the contents change size
         self.body.canvas.bind("<Configure>", lambda _e: self._fit_later(), add="+")
         inner.bind("<Configure>", lambda _e: self._fit_later(), add="+")
+
 
         # nightly table
         cols = (("time", "Time"), ("target", "Target"), ("radec", "RA / Dec (J2000)"), ("mode", "SHOBS-P mode"),
@@ -3273,80 +3292,59 @@ class NightTab:
             self.table_hbar.pack(fill=tk.X)
         self.table_hbar.set(first, last)
 
-    # ---- drawing on demand ----
-    def _canvas(self, which):
-        return self.wx if which == "wx" else self.bar
+    # ---- plot height ----
+    GRAPH_LINES = (32.0, 64.0)          # min, max height of the night plot in text lines
+    GRAPH_SHARE = 1.0                   # share of the spare window height the plot takes
 
-    # ---- graph height ----
-    GRAPH_LINES = {"wx": (10.0, 17.0), "bar": (13.5, 19.5)}   # min, max height in text lines
-    GRAPH_SHARE = 0.8                                       # share of the spare window height the graph takes
-
-    def graph_heights(self, view_h: int, other_h: int) -> tuple[int, int]:
-        """Heights of the weather strip and the block bar for a visible area `view_h` px tall whose other contents
-        take `other_h` px: the minimum, plus most of the spare height, up to the maximum."""
+    def graph_heights(self, view_h: int, other_h: int) -> int:
+        """Height of the night plot for a visible area `view_h` px tall whose other contents take `other_h` px:
+        the minimum, plus the spare height (so the plot fills the window instead of leaving space below), up to the
+        maximum."""
         lh = self.lh
-        (wa, wb), (ba, bb) = self.GRAPH_LINES["wx"], self.GRAPH_LINES["bar"]
-        wmin, bmin, wroom, broom = lh * wa, lh * ba, lh * (wb - wa), lh * (bb - ba)
-        spare = max(0.0, view_h - other_h - wmin - bmin - px(self.app, 4))
-        grow = min(spare * self.GRAPH_SHARE, wroom + broom)
-        return int(wmin + grow * wroom / (wroom + broom)), int(bmin + grow * broom / (wroom + broom))
+        lo, hi = lh * self.GRAPH_LINES[0], lh * self.GRAPH_LINES[1]
+        spare = max(0.0, view_h - other_h - lo - px(self.app, 4))
+        return int(min(hi, lo + spare * self.GRAPH_SHARE))
 
     def _fit_later(self):
         if self._fit_job is None:
             self._fit_job = self.frame.after(30, self.fit_height)
 
+    def plot_widget(self):
+        return self.mpl_canvas.get_tk_widget() if self.mpl_canvas is not None else None
+
     def fit_height(self) -> bool:
-        """Size the two canvases for the visible area; True when a height changed."""
+        """Size the plot for the visible area; True when its height changed."""
         self._fit_job = None
-        if not self.built:
+        w = self.plot_widget() if self.built else None
+        if w is None:
             return False
         try:
             view_h = int(self.body.canvas.winfo_height())
             if view_h < 20:
                 return False
-            hw, hb = int(self.wx.cget("height")), int(self.bar.cget("height"))
-            other = int(self.body.inner.winfo_reqheight()) - hw - hb
-            nw, nb = self.graph_heights(view_h, other)
-            if abs(nw - hw) < 3 and abs(nb - hb) < 3:
+            h = int(w.cget("height"))
+            other = int(self.body.inner.winfo_reqheight()) - h
+            nh = self.graph_heights(view_h, other)
+            if abs(nh - h) < 3:
                 return False
-            self.wx.configure(height=nw)
-            self.bar.configure(height=nb)
+            w.configure(height=nh)
         except tk.TclError:
             return False
         return True
 
-    def _configured(self, which: str, width: int, height: int | None = None):
-        if height is None:
-            height = int(self._canvas(which).cget("height"))
-        if (width, height) == self._drawn_w[which]:
+    def redraw(self):
+        """Draw the plot now if this tab is on screen (else when it is shown)."""
+        if not self.built or self.mpl_canvas is None:
             return
-        if self._pending[which] is not None:
-            try:
-                self.frame.after_cancel(self._pending[which])
-            except tk.TclError:
-                pass
-        self._pending[which] = self.frame.after(80, lambda: self._draw(which))
-
-    def _draw(self, which: str, force: bool = False):
-        self._pending[which] = None
-        if not self.built:
-            return
-        c = self._canvas(which)
         try:
-            if not c.winfo_viewable():
-                self._drawn_w[which] = None          # draw when shown
+            if not self.plot_widget().winfo_viewable():
+                self.stale_plot = True
                 return
-            size = (int(c.winfo_width()), int(c.winfo_height()))
         except tk.TclError:
             return
-        if not force and size == self._drawn_w[which]:
-            return
-        self._drawn_w[which] = size
-        (self.draw_weather if which == "wx" else self.draw_bar)()
+        self.stale_plot = False
+        self.draw_plot()
 
-    def redraw(self):
-        self._draw("wx", force=True)
-        self._draw("bar", force=True)
 
     # ---- data ----
     def night(self) -> NightPlan:
@@ -3492,6 +3490,7 @@ class NightTab:
 
     def _selected(self):
         s = self.selected()
+        self._highlight_from_table()
         if s is None:
             self.detail_var.set("Select a row for its notes and actions.")
             self.detail.configure(style="Hint.TLabel")
@@ -3759,379 +3758,135 @@ class NightTab:
             return f"✖ Still didn't fit: {why or 'no room for it tonight'}."
         return self.page.rebuild_night(self.idx, prefer={tid}, then_msg=message, show=self._act)
 
-    # ---- drawing ----
-    def _axis_range(self, night: NightPlan) -> tuple[float, float]:
-        site = self.app.site
-        d = date.fromisoformat(night.date)
-        info = self.app.night_info(d) or {}
-        a = next((j for j in (info.get("sunset"), night.civil_dusk, info.get("civil_dusk"), night.dusk) if j), None)
-        b = next((j for j in (info.get("sunrise"), night.civil_dawn, info.get("civil_dawn"), night.dawn) if j), None)
-        if a is None or b is None or b <= a:
-            a, b = sky.local_jd(d, 18, 0, site.tz), sky.local_jd(d + timedelta(days=1), 7, 0, site.tz)
-        bl = night.blocks_obj()
-        if bl:
-            a = min(a, min(x.start for x in bl))
-            b = max(b, max(x.end for x in bl))
-        return a - 12 / 1440.0, b + 12 / 1440.0
-
-    def _gutter(self) -> int:
-        labels = ("Cloud", "Temp · dew", "Spread · wind", "Moon 100 %", "Blocks", "Airmass", "Site clock")
-        return max([self.norm.measure(s) for s in labels] + [self.small.measure(self.app.site.tz or "")]) + px(
-            self.app, 14)
-
-    def axis(self, canvas) -> Axis | None:
+    # ---- the night plot ----
+    def plot_inputs(self) -> tuple:
+        """What nightplot draws: (night, site, targets_by_id, weather, options)."""
         night = self.night()
-        if not night.date or not self.app.site.complete():
-            return None
-        w = int(canvas.winfo_width())
-        if w < 50:
-            return None
-        j0, j1 = self._axis_range(night)
-        return Axis(j0, j1, self._gutter(), w - px(self.app, 6))
+        return night, self.app.site, self.app.targets_by_id(), night.weather or {}, self.app.options
 
-    def wx_rows(self, H: float) -> dict:
-        """The weather strip's rows for a canvas H px tall: legend line, cloud bars (ya–yb), temperature / dew
-        lines (yc–yd, with room for the numbers above and below), spread · wind text (ye); the bars and the lines
-        share the height beyond the fixed text rows."""
-        lh = self.lh
-        top, gap, pad_t, row_s, bottom = lh * 1.5, lh * 0.9, lh * 0.8, lh * 1.2, lh * 0.5
-        var = max(lh * 3.0, H - (top + 2 * gap + 2 * pad_t + row_s + bottom))
-        ya = top
-        yb = ya + var * 0.38
-        yc = yb + gap
-        yd = yc + 2 * pad_t + var * 0.62
-        ye = yd + gap + row_s / 2
-        return {"legend": lh * 0.65, "ya": ya, "yb": yb, "yc": yc, "yd": yd, "pad_t": pad_t, "ye": ye,
-                "sep1": (yb + yc) / 2, "sep2": yd + gap * 0.55}
+    def _plot_key(self, night: NightPlan) -> str:
+        """Changes when anything the plot shows changes (the night, the site, the planned targets' positions and
+        rules, the dew-risk spread): the figure is rebuilt only then."""
+        by_id = self.app.targets_by_id()
+        tids = sorted({b.get("target_id", "") for b in night.blocks} |
+                      {d.get("target_id", "") for d in night.didnt_fit})
+        tg = [(t, by_id[t].ra, by_id[t].dec, repr(by_id[t].rules), by_id[t].name) for t in tids if t in by_id]
+        return repr((night.to_dict(), self.app.site.to_dict(), tg, self.app.options.get("dew_spread_c")))
 
-    def bar_rows(self, H: float) -> dict:
-        """The block bar's rows for a canvas H px tall: Moon line, sky band with the blocks (yb0–yb1, takes the
-        height beyond the text rows), airmass band (ya0–ya1), airmass values (yt), hour labels (yh), dark/dawn (yd)."""
-        lh = self.lh
-        ym0 = lh * 1.2                                     # Moon altitude plot: 90° at ym0, 0° at ym1 (numbers above)
-        moon_min = lh * 3.0
-        below = lh * (0.6 + 0.35 + 1.1 + 0.8 + 1.35 + 1.1 + 0.65)
-        extra = max(0.0, H - ym0 - moon_min - below - lh * 2.4)   # Moon plot, band and airmass share extra height
-        ym1 = ym0 + moon_min + extra * 0.3
-        yb0 = ym1 + lh * 0.6
-        yb1 = yb0 + lh * 2.4 + extra * 0.58
-        ya0 = yb1 + lh * 0.35
-        ya1 = ya0 + lh * 1.1 + extra * 0.12
-        yt = ya1 + lh * 0.8
-        yh = yt + lh * 1.35
-        return {"ym": (ym0 + ym1) / 2, "ym0": ym0, "ym1": ym1, "yb0": yb0, "yb1": yb1, "ya0": ya0, "ya1": ya1, "yt": yt, "yh": yh,
-                "yd": yh + lh * 1.1}
-
-    def draw_weather(self):
-        c = self.wx
-        c.delete("all")
-        ax = self.axis(c)
-        if ax is None:
+    def draw_plot(self):
+        """(Re)build the night plot's figure for this night; the table's selected row stays highlighted."""
+        if self.mpl_canvas is None:
             return
-        night, site, lh = self.night(), self.app.site, self.lh
-        H = int(c.cget("height"))
-        wx = night.weather or {}
-        hours = [h for h in (wx.get("hours") or []) if isinstance(h, dict) and h.get("jd")]
-        hours = [h for h in hours if ax.j0 - 1 / 24 <= h["jd"] <= ax.j1 + 1 / 24]
-        gl = self.norm
-        if not hours:
-            note = wx.get("note") or self.page.wx_note
-            msg = "No forecast for this night" + (f" ({note})" if note else
-                                                  " (none fetched yet, or the night is beyond the forecast)")
-            c.create_rectangle(ax.x0, lh * 0.4, ax.x1, H - lh * 0.4, outline=style.LINE, fill="#f7f9fb")
-            c.create_text((ax.x0 + ax.x1) / 2, H / 2, text=msg, fill=style.HINT, font=self.norm)
-            c.create_text(4, H / 2, text="Weather", anchor="w", fill=style.HINT, font=self.norm)
+        night, site, by_id, wx, opts = self.plot_inputs()
+        key = self._plot_key(night)
+        if self.plot is not None and key == self._plot_key_now:
+            self._highlight_from_table()           # the same night: nothing to rebuild
             return
-        r = self.wx_rows(H)
-        ya, yb, yc, yd, ye, pt = r["ya"], r["yb"], r["yc"], r["yd"], r["ye"], r["pad_t"]
-        tu, lu = site.temp_unit or "C", site.length_unit or "m"
-        for ys in (r["sep1"], r["sep2"]):        # faint lines between the rows
-            c.create_line(4, ys, ax.x1, ys, fill="#e9eef2")
-        c.create_text(4, (ya + yb) / 2, text="Cloud", anchor="w", fill=style.HINT, font=self.norm)
-        c.create_text(4, (yc + yd) / 2, text="Temp · dew", anchor="w", fill=style.HINT, font=self.norm)
-        c.create_text(4, ye, text="Spread · wind", anchor="w", fill=style.HINT, font=self.norm)
-        src = wx.get("source") or ""
-        if wx.get("note"):
-            src += f" ({wx['note']})"
-        c.create_text(ax.x1, r["legend"], anchor="e", fill=style.HINT, font=self.norm,
-                      text=f"cloud %  ·  temperature (red) and dew point (blue) °{tu}  ·  spread °{tu} · wind "
-                           f"{wind_unit(lu)}  ·  {src}")
-        c.create_line(ax.x0, yb, ax.x1, yb, fill=style.LINE)
-        pph = ax.x(ax.j0 + 1 / 24) - ax.x(ax.j0)
-        step = max(1, math.ceil((gl.measure("100%") + px(self.app, 8)) / max(1.0, pph)))
-        for k, h in enumerate(hours):
-            xa, xb = ax.clip(ax.x(h["jd"] - 1 / 48)), ax.clip(ax.x(h["jd"] + 1 / 48))
-            if xb - xa < 1:
-                continue
-            cl = float(h.get("cloud") or 0.0)
-            top = yb - (yb - ya) * min(100.0, max(0.0, cl)) / 100.0
-            if cl > 0:
-                c.create_rectangle(xa + 1, top, xb - 1, yb, outline="", fill=style.mix("#dfe6ec", "#6c7a86",
-                                                                                         cl / 100))
-        def conv(t):
-            return None if t is None else (t * 9 / 5 + 32 if tu == "F" else t)
-        temps = [(h["jd"], conv(h.get("temp_c")), conv(h.get("dew_c"))) for h in hours]
-        vals = [v for _j, a, b in temps for v in (a, b) if v is not None]
-        if vals:
-            lo, hi = min(vals), max(vals)
-            if hi - lo < 4:
-                lo, hi = (lo + hi) / 2 - 2, (lo + hi) / 2 + 2
-            yv = lambda v: (yd - pt) - (v - lo) / (hi - lo) * ((yd - pt) - (yc + pt))
-            for idx, color in ((1, style.TEMP), (2, style.DEW)):
-                pts = []
-                for row in temps:
-                    if row[idx] is not None and ax.j0 <= row[0] <= ax.j1:
-                        pts += [ax.x(row[0]), yv(row[idx])]
-                if len(pts) >= 4:
-                    c.create_line(*pts, fill=color, width=max(1, px(self.app, 2)), smooth=False)
-        step = max(1, math.ceil((gl.measure("100% ") + px(self.app, 10)) / max(1.0, pph)))
-        for k, h in enumerate(hours):
-            if k % step or not (ax.j0 <= h["jd"] <= ax.j1):
-                continue
-            x = ax.x(h["jd"])
-            cl = h.get("cloud")
-            if cl is not None:
-                f = min(100.0, max(0.0, float(cl))) / 100.0
-                top = yb - (yb - ya) * f
-                inside = top - 1 < ya + lh * 0.75          # no room above the bar: write inside it
-                yl = top + lh * 0.8 if inside else top - 1
-                c.create_text(x, yl, text=f"{cl:.0f}%", font=self.norm, anchor="s",
-                              fill=style.text_on(style.mix("#dfe6ec", "#6c7a86", f)) if inside else style.TEXT)
-            t, dw = conv(h.get("temp_c")), conv(h.get("dew_c"))
-            if t is not None and vals:
-                c.create_text(x, yv(t) - 2, text=f"{round(t) + 0:.0f}", fill=style.TEMP, font=self.norm,
-                              anchor="s")
-            if dw is not None and vals:
-                c.create_text(x, yv(dw) + 2, text=f"{round(dw) + 0:.0f}", fill=style.DEW, font=self.norm,
-                              anchor="n")
-            sp = h.get("spread_c")
-            if sp is None and h.get("temp_c") is not None and h.get("dew_c") is not None:
-                sp = h["temp_c"] - h["dew_c"]
-            wv = wind_value(h.get("wind_kmh"), lu)
-            txt = (f"{round(sp * 1.8 if tu == 'F' else sp) + 0:.0f}°" if sp is not None else "–") + \
-                  (f" · {round(wv) + 0:.0f}" if wv is not None else "")
-            dew_lim = float(self.app.options.get("dew_spread_c", 2.5))
-            c.create_text(x, ye, text=txt, font=self.norm,
-                          fill=style.WARN_FG if (sp is not None and sp < dew_lim) else style.TEXT)
-        onset = wx.get("dew_onset")
-        if onset and ax.j0 <= onset <= ax.j1:
-            x = ax.x(onset)
-            c.create_line(x, ya - lh * 0.2, x, H, fill=style.WARN_FG, dash=(4, 3), width=max(1, px(self.app, 2)))
-            label = f"⚠ dew from {sky.hhmm(onset, site.tz)}"
-            anchor = "w" if x + gl.measure(label) + 10 < ax.x1 else "e"
-            tid = c.create_text(x + (5 if anchor == "w" else -5), r["legend"], text=label, anchor=anchor,
-                                fill=style.WARN_FG, font=self.bold)
-            bb = c.bbox(tid)
-            if bb:
-                r = c.create_rectangle(bb[0] - 3, bb[1] - 1, bb[2] + 3, bb[3] + 1, fill=style.WARN_BG,
-                                       outline=style.WARN_FG)
-                c.tag_lower(r, tid)
-                # keep the legend line clear of the dew label
-                for item in c.find_overlapping(*bb):
-                    if item not in (tid, r) and c.type(item) == "text" and c.itemcget(item, "anchor") == "e" and \
-                            "cloud %" in c.itemcget(item, "text"):
-                        c.delete(item)
-
-    def draw_bar(self):
-        c = self.bar
-        c.delete("all")
-        ax = self.axis(c)
-        if ax is None:
+        np_mod = mod("nightplot")
+        fig = self.mpl_canvas.figure
+        if not night.date or not site.complete():
+            fig.clear()
+            self.plot = None
+            self._plot_key_now = None
+            self.mpl_canvas.draw_idle()
             return
-        app, night, site, lh = self.app, self.night(), self.app.site, self.lh
-        tz = site.tz
-        r = self.bar_rows(int(c.cget("height")))
-        ym0, ym1 = r["ym0"], r["ym1"]             # Moon altitude plot (90° top, 0° bottom)
-        yb0, yb1 = r["yb0"], r["yb1"]             # sky band with the blocks
-        ya0, ya1 = r["ya0"], r["ya1"]             # airmass bands
-        yt = r["yt"]                              # airmass values
-        yh, ydk = r["yh"], r["yd"]                # hour labels, dark / dawn
-        illum = night.moon_illum
-        c.create_text(4, (ym0 + ym1) / 2 - lh * 0.45, text="Moon" + (f" {illum * 100:.0f} %" if illum is not None
-                                                                      else ""),
-                      anchor="w", fill=style.MOON_TEXT, font=self.bold)
-        c.create_text(4, (ym0 + ym1) / 2 + lh * 0.55, text="altitude °", anchor="w", fill=style.MOON_TEXT,
-                      font=self.small)
-        c.create_text(4, (yb0 + yb1) / 2, text="Blocks", anchor="w", fill=style.HINT, font=self.norm)
-        c.create_text(4, (ya0 + ya1) / 2, text="Airmass", anchor="w", fill=style.AIRMASS, font=self.bold)
-        # sky: day / civil / nautical / astronomical twilight / night, from the Sun's altitude
-        n = max(60, int((ax.x1 - ax.x0) / 2))
-        jds = np.linspace(ax.j0, ax.j1, n + 1)
         try:
-            sun = sky.sun_alt_at(site, jds)
-        except Exception:
-            sun = np.full(jds.shape, -30.0)
+            info = self.app.night_info(date.fromisoformat(night.date))
+            self.plot = np_mod.NightPlot(night, site, by_id, wx, opts, figure=fig, info=info).draw()
+            self._plot_key_now = key
+        except Exception as exc:
+            settings.log(f"night plot: {exc!r}\n{traceback.format_exc()}")
+            fig.clear()
+            fig.text(0.02, 0.5, f"✖ The night plot could not be drawn ({exc}).", color=style.BAD)
+            self.plot = None
+            self._plot_key_now = None
+        self._highlight_from_table()
+        self.mpl_canvas.draw_idle()
 
-        def level(a):
-            return (style.SKY_DAY if a > sky.SUN_RISE_ALT else style.SKY_CIVIL if a > -6 else style.SKY_NAUTICAL
-                    if a > -12 else style.SKY_ASTRO if a > -18 else style.SKY_DARK)
-        run_start, run_col = 0, level(sun[0])
-        for k in range(1, n + 2):
-            col = level(sun[k]) if k <= n else None
-            if col != run_col:
-                c.create_rectangle(ax.x(jds[run_start]), yb0, ax.x(jds[min(k, n)]), yb1, outline="", fill=run_col)
-                run_start, run_col = k, col
-        c.create_rectangle(ax.x0, yb0, ax.x1, yb1, outline=style.LINE)
-        # planning darkness edges (labelled under the hour axis)
-        dark_labels = []
-        for j, lab, anc in ((night.dusk, "dark " + sky.hhmm(night.dusk, tz) if night.dusk else "", "w"),
-                            (night.dawn, sky.hhmm(night.dawn, tz) + " dawn" if night.dawn else "", "e")):
-            if j and ax.j0 <= j <= ax.j1:
-                x = ax.x(j)
-                c.create_line(x, yb0, x, yb1 + lh * 0.25, fill="#8aa0b2", dash=(2, 3))
-                dark_labels.append((x, lab, anc))
-        # Moon altitude: a curve from 0° (bottom) to 90° (top), shaded below, degrees at the hour ticks (John, 22 Oct)
+    def _plot_configured(self, event):
+        """The plot widget changed size: redraw once the window settles (80 ms), and only when the size really
+        changed (matplotlib's own handler would re-render on every step of a drag)."""
+        size = (int(event.width), int(event.height))
+        if size == self._plot_size:
+            return
+        self._plot_event = event
+        if self._pending is not None:
+            try:
+                self.frame.after_cancel(self._pending)
+            except tk.TclError:
+                pass
+        self._pending = self.frame.after(80, self._plot_resize)
+
+    def _plot_resize(self):
+        self._pending = None
+        ev = self._plot_event
+        if ev is None or self.mpl_canvas is None:
+            return
         try:
-            malt = np.asarray(sky.moon_alt_at(site, jds), dtype=float)
-        except Exception:
-            malt = np.full(jds.shape, -90.0)
-        c.create_line(ax.x0, ym1, ax.x1, ym1, fill=style.LINE)
-        for deg in (30, 60):                      # faint 30° / 60° guides
-            yg = ym1 - (ym1 - ym0) * deg / 90.0
-            c.create_line(ax.x0, yg, ax.x1, yg, fill=style.LINE, dash=(1, 4))
-
-        def ym(a):
-            return ym1 - (ym1 - ym0) * min(90.0, max(0.0, float(a))) / 90.0
-        up = malt > sky.MOON_RISE_ALT
-        k = 0
-        any_up = False
-        while k <= n:
-            if up[k]:
-                k0 = k
-                while k <= n and up[k]:
-                    k += 1
-                seg = [(ax.x(jds[q]), ym(malt[q])) for q in range(k0, min(k, n + 1))]
-                if len(seg) >= 2:
-                    poly = [(seg[0][0], ym1)] + seg + [(seg[-1][0], ym1)]
-                    c.create_polygon(*[v for p in poly for v in p], fill=style.MOON_FILL, outline="")
-                    c.create_line(*[v for p in seg for v in p], fill=style.MOON, width=max(2, px(app, 3)),
-                                  smooth=False, capstyle="round", tags=("moonalt",))
-                any_up = True
-            k += 1
-        if any_up:
-            ticks_m = ax.hour_ticks(tz)
-            pph_m = (ax.x1 - ax.x0) / max(1e-6, (ax.j1 - ax.j0) * 24)
-            step = 1 if pph_m > self.small.measure("88°") + px(app, 12) else 2
-            try:
-                at = np.asarray(sky.moon_alt_at(site, np.asarray(ticks_m)), dtype=float) if ticks_m else []
-            except Exception:
-                at = []
-            for q, (jt, a) in enumerate(zip(ticks_m, at)):
-                if q % step or a <= sky.MOON_RISE_ALT:
-                    continue
-                c.create_text(ax.x(jt), ym(a) - lh * 0.15, text=f"{a:.0f}°", anchor="s", fill=style.MOON_TEXT,
-                              font=self.small, tags=("moonnum",))
-        else:
-            c.create_text(ax.x0 + 4, (ym0 + ym1) / 2, text="Moon down all night", anchor="w", fill=style.HINT,
-                          font=self.norm)
-        # blocks
-        by_id = app.targets_by_id()
-        for i, b in self.blocks():
-            xa, xb = ax.clip(ax.x(b.start)), ax.clip(ax.x(b.end))
-            if xb - xa < 2:
-                continue
-            fill, edge = style.mode_color(b.mode, "light"), style.mode_color(b.mode, "dark")
-            locked = b.locked or b.set_by_user
-            pad = lh * 0.18
-            c.create_rectangle(xa, yb0 + pad, xb, yb1 - pad, fill=fill, outline=style.LOCK if locked else edge,
-                               width=max(2, px(app, 3)) if locked else 1, tags=(f"blk{i}",))
-            name = b.name + {"done": " ✔", "clouded": " ✖", "partial": " ½"}.get(b.status, "")
-            txt = self._fit(name, xb - xa - 8, self.bold)
-            if txt:
-                c.create_text((xa + xb) / 2, (yb0 + yb1) / 2, text=txt, fill="#ffffff", font=self.bold,
-                              tags=(f"blk{i}",))
-            c.tag_bind(f"blk{i}", "<Button-1>", lambda _e, k=i: self.select_block(k))
-            # meridian tick
-            if b.meridian and ax.j0 <= b.meridian <= ax.j1:
-                x = ax.x(b.meridian)
-                inside = b.start <= b.meridian <= b.end
-                s = lh * 0.32
-                c.create_polygon(x - s, yb0 - s * 0.2, x + s, yb0 - s * 0.2, x, yb0 + s * 1.1,
-                                 fill=style.MERIDIAN if inside else "#c9a36b", outline=edge)
-                if inside:
-                    c.create_line(x, yb0 + pad, x, yb1 - pad, fill=style.MERIDIAN, width=max(1, px(app, 2)),
-                                  dash=(3, 2))
-            # airmass band
-            self._airmass_band(c, ax, b, by_id.get(b.target_id), xa, xb, ya0, ya1, yt)
-        # hour axis
-        ticks = ax.hour_ticks(tz)
-        pph = (ax.x1 - ax.x0) / max(1e-6, (ax.j1 - ax.j0) * 24)
-        every = 1 if pph > self.norm.measure("00:00") + px(app, 10) else (2 if pph * 2 > self.norm.measure("00")
-                                                                             + px(app, 10) else 3)
-        for k, j in enumerate(ticks):
-            x = ax.x(j)
-            c.create_line(x, yb1, x, yb1 + lh * 0.2, fill=style.CLOCK)
-            lab = sky.hhmm(j, tz)
-            if k % every == 0:
-                c.create_text(x, yh, text=lab if every == 1 else lab[:2], fill=style.CLOCK, font=self.norm)
-        for x, lab, anc in dark_labels:
-            c.create_text(x, ydk, text=lab, anchor=anc, fill=style.SIDE, font=self.bold)
-        c.create_text(4, yh, text="Site clock", anchor="w", fill=style.CLOCK, font=self.bold)
-        c.create_text(4, ydk, text=tz, anchor="w", fill=style.CLOCK, font=self.norm)
-
-    def _fit(self, text: str, width: float, f) -> str:
-        if f.measure(text) <= width:
-            return text
-        while len(text) > 2:
-            text = text[:-1]
-            if f.measure(text + "…") <= width:
-                return text + "…"
-        return ""
-
-    def _airmass_band(self, c, ax, b: Block, t: Target | None, xa, xb, y0, y1, yt):
-        site = self.app.site
-        mx = float(site.max_airmass or 2.0)
-        k = max(2, int((xb - xa) / 3))
-        js = np.linspace(max(b.start, ax.j0), min(b.end, ax.j1), k + 1)
-        xs = None
-        ra, dec = (t.ra, t.dec) if t is not None else (getattr(b, "ra", None), getattr(b, "dec", None))
-        if ra is not None and dec is not None:
-            try:
-                xs = np.asarray(sky.target_airmass(ra, dec, site, js), dtype=float)
-            except Exception:
-                xs = None
-        if xs is None:
-            a, best, e = b.airmass_start, b.airmass_best, b.airmass_end
-            if a is None or e is None:
-                xs = np.full(js.shape, np.nan)
-            else:
-                mid = best if best is not None else min(a, e)
-                xs = np.interp(np.linspace(0, 1, k + 1), [0, 0.5, 1], [a, mid, e])
-        for q in range(k):
-            x0, x1 = ax.x(js[q]), ax.x(js[q + 1])
-            v = xs[q] if np.isfinite(xs[q]) else None
-            c.create_rectangle(x0, y0, x1 + 0.5, y1, outline="", fill=style.airmass_color(v, mx))
-        c.create_rectangle(xa, y0, xb, y1, outline=style.LINE)
-        vals = [v for v in (b.airmass_start, b.airmass_best, b.airmass_end) if v is not None]
-        high = (max(vals) if vals else 0) > mx + 0.005 or bool(np.nanmax(xs) > mx + 0.005 if np.isfinite(xs).any()
-                                                               else False)
-        self._airmass_values(c, b, xa, xb, yt, high)
-
-    def _airmass_values(self, c, b: Block, xa, xb, yt, high: bool):
-        """The airmass numbers under a block, never wider than the block (so neighbors never overlap): start at the
-        left edge, best in the middle, end at the right edge when there is room; else joined; else shorter."""
-        f = self.small
-        inset = f.measure(" ")                   # keeps this block's numbers apart from the neighbor's
-        room = xb - xa - 2 * inset
-        fill = style.WARN_FG if high else style.AIRMASS
-        trio = [b.airmass_start, b.airmass_best, b.airmass_end]
-        gap = f.measure("    ")
-        if not high and all(v is not None for v in trio):
-            texts = [f"{v:.2f}" for v in trio]
-            if sum(f.measure(t) for t in texts) + 2 * gap <= room:
-                c.create_text(xa + inset, yt, text=texts[0], anchor="w", font=f, fill=fill, tags=("am",))
-                c.create_text((xa + xb) / 2, yt, text=texts[1], font=f, fill=fill, tags=("am",))
-                c.create_text(xb - inset, yt, text=texts[2], anchor="e", font=f, fill=fill, tags=("am",))
+            if not self.mpl_canvas.get_tk_widget().winfo_viewable():
+                self._plot_size = None             # resize and draw when shown
                 return
-        full = " · ".join(f"{v:.2f}" for v in trio if v is not None)
-        if high:
-            options = [f"⚠ high airmass  {full}", "⚠ high airmass", "⚠ high", "⚠"]
-        else:
-            options = [full, f"X {b.airmass_best:.2f}" if b.airmass_best else ""]
-        for text in options:
-            if text and f.measure(text) <= room:
-                c.create_text((xa + xb) / 2, yt, text=text, font=f, fill=fill, tags=("am",))
-                break
+        except tk.TclError:
+            return
+        self._plot_size = (int(ev.width), int(ev.height))
+        self.mpl_canvas.resize(ev)                 # sets the figure size and draws (layout() via resize_event)
+        if self.stale_plot:
+            self.redraw()
+
+    def _resized(self, _event=None):
+        if self.plot is not None:
+            self.plot.layout()
+
+    def _plot_xy(self, event):
+        """(x, airmass y or None, on the main plot) for a matplotlib mouse event, or None outside the plot."""
+        p = self.plot
+        if p is None or event.x is None:
+            return None
+        for ax, main in ((p.ax, True), (p.axw, False)):
+            if ax is not None and ax.bbox.contains(event.x, event.y):
+                x, y = ax.transData.inverted().transform((event.x, event.y))
+                return float(x), (float(y) if main else None), main
+        return None
+
+    def _plot_motion(self, event):
+        at = self._plot_xy(event)
+        text = self.plot.hover_text(*at) if at else ""
+        if text != self.hover_var.get():
+            self.hover_var.set(text)
+
+    def _plot_click(self, event):
+        """A click on a block selects its table row (and so highlights it); a click beside the blocks clears it."""
+        if getattr(event, "button", 1) not in (1, None):
+            return
+        at = self._plot_xy(event)
+        if at is None:
+            return
+        self.pick_block(self.plot.block_at(at[0]))
+
+    def pick_block(self, i: int | None):
+        """Select block i's table row (None: no row) from the plot. Guarded: the table's <<TreeviewSelect>> comes
+        back to _selected, which only highlights."""
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            if i is not None and self.table.exists(str(i)):
+                self.table.selection_set(str(i))
+                self.table.see(str(i))
+            else:
+                self.table.selection_remove(*self.table.selection())
+            self._selected()
+        finally:
+            self._syncing = False
+
+    def _highlight_from_table(self):
+        """The selected row's target bright and thick, every other target faded; no row: all normal."""
+        if self.plot is None:
+            return
+        s = self.selected()
+        tid = None if s is None else (s[1].target_id or f"#{s[0]}")
+        if self.plot.set_highlight(tid) and self.mpl_canvas is not None:
+            self.mpl_canvas.draw_idle()
 
 
 ROW_KEYS = {   # nightly-table column → keys tried in export.table_rows' dicts (lower case)
