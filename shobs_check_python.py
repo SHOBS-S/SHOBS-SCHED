@@ -33,6 +33,14 @@ def main():
                 __import__(name)
             except Exception as exc:
                 missing.append("%s (%s)" % (name, exc))
+        if not missing:
+            # matplotlib builds its font cache on first use (5-30 s on Windows): do it here, during setup, not on
+            # the first Schedule tab; and check the Tk backend the night plot is drawn with
+            for name in ("matplotlib.font_manager", "matplotlib.backends.backend_tkagg"):
+                try:
+                    __import__(name)
+                except Exception as exc:
+                    missing.append("%s (%s)" % (name, exc))
         if missing:
             print("Packages that do not load: " + "; ".join(missing))
             return 6

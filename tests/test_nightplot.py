@@ -106,8 +106,11 @@ class TestSpanAndBlackouts(unittest.TestCase):
         one = nightplot.hour_ticks(j0, j1, site.tz, 1)
         two = nightplot.hour_ticks(j0, j1, site.tz, 2)
         self.assertEqual(len(one), 16)
-        self.assertTrue(all(sky.to_local(j, site.tz).hour % 2 == 0 for j in two))
-        self.assertEqual(len(two), 8)
+
+        def hour(j):                                   # the clock hour, rounded (a JD of 18:00 may read 17:59:59.99)
+            return sky.to_local(j + 30 / 86400, site.tz).hour
+        self.assertEqual([hour(j) for j in two], [18, 20, 22, 0, 2, 4, 6, 8])
+        self.assertTrue(all(sky.to_local(j + 30 / 86400, site.tz).minute == 0 for j in one))
 
     def test_blackout_only_when_it_changed_the_plan(self):
         night, site, by_id, _o = golden_night(date(2026, 10, 22), with_weather=False)
@@ -210,14 +213,33 @@ class TestPlot(unittest.TestCase):
         self.assertEqual(len(p.axt.lines), 2)
         self.assertTrue(p.spread_texts)
 
+    def marks(self, p, marker):
+        return [(a, tid) for tid, arts in p.groups.items() for a in arts
+                if hasattr(a, "get_marker") and a.get_marker() == marker]
+
     def test_flip_mark_only_inside_the_block(self):
         p = self.plot()
-        flips = [(line, tid) for tid, arts in p.groups.items() for line in arts
-                 if hasattr(line, "get_marker") and line.get_marker() == "v"]
+        flips = self.marks(p, "v")
         inside = {b.target_id for _i, b in p.blocks
                   if b.start <= sky.target_meridian(*p._coords(b), p.site, 0.5 * (b.start + b.end)) <= b.end}
-        self.assertEqual({tid for _l, tid in flips}, inside)
         self.assertEqual({p.by_id[t].name for t in inside}, {"HD 219134", "K2-29 b"})
+        # K2-29 b ends 4 min past its meridian, inside the 5-min tracking margin: no flip ("stop by 03:38"), only
+        # a neutral meridian tick
+        self.assertEqual({p.by_id[tid].name for _l, tid in flips}, {"HD 219134"})
+        ticks = self.marks(p, "|")
+        self.assertEqual({p.by_id[tid].name for _l, tid in ticks}, {"K2-29 b"})
+        k2 = next(b for _i, b in p.blocks if b.name == "K2-29 b")
+        texts = [t.get_text() for t in p.groups[k2.target_id] if hasattr(t, "get_text")]
+        self.assertTrue(any(t.startswith("meridian ") for t in texts), texts)
+        self.assertFalse(any(t.startswith("flip ") for t in texts), texts)
+        self.assertTrue(any(t.startswith("flip ") for t in (x.get_text() for x in p.ax.texts)))
+        # the rule: GEM and past the meridian by more than past_meridian_min; alt-az never
+        site = p.site
+        b = Block(start=0.0, end=1.0)
+        self.assertFalse(nightplot.needs_flip(b, 1.0 - 4 / 1440, site))
+        self.assertTrue(nightplot.needs_flip(b, 1.0 - 6 / 1440, site))
+        alt = Site.from_dict({**site.to_dict(), "mount": "altaz"})
+        self.assertFalse(nightplot.needs_flip(b, 0.5, alt))
         for line, tid in flips:
             b = next(b for _i, b in p.blocks if b.target_id == tid)
             x = float(line.get_xdata()[0])
@@ -229,8 +251,39 @@ class TestPlot(unittest.TestCase):
         hd.start, hd.end, hd.meridian = hd.start + 1.5 / 24, hd.end + 1.5 / 24, None
         night.blocks = [b.to_dict() for b in bl if b.name in ("HD 219134",)]
         p2 = self.plot(night=night)
-        self.assertFalse([a for arts in p2.groups.values() for a in arts
-                          if hasattr(a, "get_marker") and a.get_marker() == "v"])
+        self.assertFalse(self.marks(p2, "v") + self.marks(p2, "|"))
+
+    def test_band_texts_above_the_label_boxes(self):
+        """Transit times and no-transit notes sit at the top of their band, under the twilight labels, clear of the
+        block label boxes (crowded nights covered them)."""
+        night, site, by_id, _o = golden_night(date(2026, 10, 22), with_weather=True)  # same Targets as plot()
+        import events
+        hd = by_name(by_id, "HD 219134")
+        j0, j1 = nightplot.x_span(date(2026, 10, 22), site)
+        bo = [x for x in events.blackouts(hd, j0, j1) if x["start"] > night.dusk][0]
+        crowd = NightPlan.from_dict(night.to_dict())
+        bl = [b for b in crowd.blocks_obj() if b.target_id != hd.id]
+        bl.append(Block(target_id=hd.id, name=hd.name, mode="V", start=bo["start"] - 0.9 / 24, end=bo["start"]))
+        crowd.blocks = [b.to_dict() for b in sorted(bl, key=lambda b: b.start)]
+        p = self.plot(night=crowd, size=(10, 5.6))
+        self.assertEqual(len(p.band_texts), 2, [t.get_text() for t in p.band_texts])
+        r = p.fig.canvas.get_renderer()
+        tw = [t.get_window_extent(r) for t, _j in p.twilight_texts]
+        for t in p.band_texts:
+            e = t.get_window_extent(r)
+            for lab, *_x in p.labels:
+                self.assertFalse(e.overlaps(lab.get_window_extent(r)), (t.get_text(), lab.get_text()))
+            self.assertFalse(any(e.overlaps(x) for x in tw), t.get_text())
+            self.assertGreater(t.get_position()[1], 0.6, "near the top")
+
+    def test_start_airmass_clear_of_twilight_labels(self):
+        p = self.plot(size=(10, 5.6))
+        r = p.fig.canvas.get_renderer()
+        tw = [t.get_window_extent(r) for t, _j in p.twilight_texts]
+        for st, en, _b in p.edge_texts:
+            for t in (st, en):
+                if t is not None and t.get_visible():
+                    self.assertFalse(any(t.get_window_extent(r).overlaps(e) for e in tw), t.get_text())
 
     def test_highlight_restores_every_artist_exactly(self):
         p = self.plot()
@@ -363,6 +416,24 @@ class TestPlot(unittest.TestCase):
         self.assertLess((time.time() - t0) / 3, 1.5, "one night plot (build + render) well under 1.5 s")
 
 
+@unittest.skipUnless(HAVE_MPL, "matplotlib is not installed")
+class TestWithoutTkBackend(unittest.TestCase):
+    def test_tk_backend_missing_says_so(self):
+        saved = sys.modules.get("matplotlib.backends.backend_tkagg")
+        sys.modules["matplotlib.backends.backend_tkagg"] = None
+        try:
+            self.assertIsNone(nightplot.tk_canvas(None))
+            text = nightplot.missing_text()
+            self.assertTrue(text.startswith("⚠ Night plot: matplotlib is installed but its Tk backend"), text)
+            self.assertIn("Error", text)
+        finally:
+            if saved is None:
+                sys.modules.pop("matplotlib.backends.backend_tkagg", None)
+            else:
+                sys.modules["matplotlib.backends.backend_tkagg"] = saved
+            nightplot.TK_PROBLEM = ""
+
+
 class TestWithoutMatplotlib(unittest.TestCase):
     BLOCK = ("matplotlib", "matplotlib.figure", "matplotlib.backends", "matplotlib.backends.backend_agg",
              "matplotlib.backends.backend_tkagg", "matplotlib.colors", "matplotlib.ticker")
@@ -387,6 +458,7 @@ class TestWithoutMatplotlib(unittest.TestCase):
         site, _o, opts, _t = golden_setup()
         self.assertIsNone(nightplot.png_bytes(n, site, {}, None, opts))
         self.assertIsNone(nightplot.tk_canvas(None))
+        self.assertEqual(nightplot.missing_text(), nightplot.MISSING_TEXT)
         self.assertEqual(nightplot.plan_blackouts(n, {}), [], "the plain helpers still work")
 
 

@@ -76,6 +76,7 @@ def s1_environment():
     try:
         import matplotlib
         from matplotlib.backends import backend_agg  # noqa: F401  (the night plot and its PNG)
+        from matplotlib.backends import backend_tkagg  # noqa: F401  (the Schedule tab's plot)
         ok, ver = True, matplotlib.__version__
     except Exception as exc:
         ok, ver = False, f"does not load ({exc}); run Create shortcuts.bat again"
