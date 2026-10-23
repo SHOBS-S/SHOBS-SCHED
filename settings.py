@@ -4,7 +4,8 @@ Files (in the user's home folder, like SHOBS-P):
   .shobs_sched_settings.json   site, optics, planner options, weather source, display units
   .shobs_sched_targets.json    targets, priorities, campaign rules and goals
   .shobs_sched/                schedule.json, cache/, sched.log
-SHOBS-P's .shobs_p_settings.json is READ (site, optics, observer) and never written: each app owns its settings.
+SHOBS-P's .shobs_p_settings.json is READ (site, optics, observer, its transit finder's limits) and never
+written: each app owns its settings.
 Tests point everything elsewhere with the SHOBS_SCHED_HOME and SHOBS_P_SETTINGS environment variables."""
 from __future__ import annotations
 
@@ -92,7 +93,7 @@ DEFAULT_OPTIONS = {
 def default_settings() -> dict:
     return {"version": APP_VERSION, "site": Site().to_dict(), "optics": Optics().to_dict(),
             "options": dict(DEFAULT_OPTIONS), "observer_code": "", "set_here": [], "shobs_p_read": "",
-            "export_dir": ""}
+            "from_fits": {}, "export_dir": ""}
 
 
 def _windows_downloads() -> str | None:
@@ -216,36 +217,104 @@ def _num(v):
         return None
 
 
+# SHOBS-P's "Tonight's transits" finder limits (its settings' "finder" section) → SCHED's starting values.
+# finder key -> (section, SCHED key, lowest, highest, scale). The finder's depth is in PERCENT, SCHED's a fraction;
+# its "full transit + baseline" filter is SCHED's Suggested filter. "moon" (minimum Moon separation) has no SCHED
+# counterpart (SCHED limits Moon-brightened sky instead); the finder's time strings and switches are its own.
+FINDER_FIELDS = {
+    "min_alt": ("site", "min_alt", 0.0, 89.0, 1.0),
+    "sun_alt": ("site", "sun_alt", -24.0, -6.0, 1.0),
+    "baseline": ("options", "suggest_baseline_min", 0.0, 600.0, 1.0),
+    "vmin": ("options", "suggest_vmin", -2.0, 25.0, 1.0),
+    "vmax": ("options", "suggest_vmax", -2.0, 25.0, 1.0),
+    "depth": ("options", "suggest_min_depth", 0.0, 100.0, 0.01),
+}
+
+
+def finder_values(p: dict | None) -> dict:
+    """SHOBS-P's finder limits as SCHED values ("site.min_alt" → 30.0, "options.suggest_min_depth" → 0.005).
+    Missing, non-numeric or out-of-range values are skipped; a V range with min above max is skipped whole."""
+    f = (p or {}).get("finder")
+    out: dict = {}
+    if not isinstance(f, dict):
+        return out
+    for key, (section, field, lo, hi, scale) in FINDER_FIELDS.items():
+        v = f.get(key)
+        if isinstance(v, bool):
+            continue
+        v = _num(v)
+        if v is None or not (lo <= v <= hi):
+            continue
+        out[f"{section}.{field}"] = round(v * scale, 9)
+    a, b = out.get("options.suggest_vmin"), out.get("options.suggest_vmax")
+    if a is not None and b is not None and a > b:
+        out.pop("options.suggest_vmin")
+        out.pop("options.suggest_vmax")
+    return out
+
+
+def shobs_p_values(p: dict | None) -> dict:
+    """Every value SHOBS-P's settings can give SCHED, as {"section.key": value} ("site.lat" → 35.3, "site.mount" →
+    "GEM", "observer_code" → "JABA", "site.min_alt" → 30.0 from its finder). Empty or unusable values are left out."""
+    p = p or {}
+    out: dict = {}
+    for key, (section, field) in SHOBS_P_FIELDS.items():
+        if key not in p:
+            continue
+        if field in ("name", "tz", "telescope"):
+            val = str(p[key] or "").strip()
+            if not val:
+                continue
+        else:
+            val = _num(p[key])
+            if val is None:
+                continue
+        out[f"{section}.{field}"] = val
+    mount = str(p.get("mount") or "").lower()
+    if mount:
+        out["site.mount"] = "altaz" if ("alt" in mount and "az" in mount) else "GEM"
+    if p.get("observer_code"):
+        out["observer_code"] = str(p["observer_code"])
+    out.update(finder_values(p))
+    return out
+
+
+def protected(s: dict) -> set:
+    """Fields SHOBS-P must not overwrite: typed here ("set here") or read from a FITS frame ("from FITS")."""
+    return set(s.get("set_here") or []) | set(from_fits(s))
+
+
+def from_fits(s: dict) -> dict:
+    """The fields last filled from a FITS frame, {"optics.gain": 100.0, ...} (the value as read: a field typed over
+    since is the user's own and leaves this record)."""
+    ff = s.get("from_fits")
+    return dict(ff) if isinstance(ff, dict) else {}
+
+
 def merge_shobs_p(s: dict) -> tuple[dict, list[str]]:
-    """Fill site/optics from SHOBS-P where SCHED has no value of its own ("set here" values always win).
-    Returns (settings, the field names taken from SHOBS-P). s['shobs_p_read'] records the file's date."""
+    """Fill site/optics/limits from SHOBS-P where SCHED has no value of its own ("set here" and "from FITS" values
+    always win). Returns (settings, the field names taken from SHOBS-P). s['shobs_p_read'] records the file's date.
+    Also undoes an older build's slip: SHOBS-P's telescope name copied into the site name is cleared (logged)."""
     p = read_shobs_p()
     taken: list[str] = []
     if not p:
         s["shobs_p_read"] = ""
         return s, taken
-    set_here = set(s.get("set_here") or [])
-    for key, (section, field) in SHOBS_P_FIELDS.items():
-        if key not in p or f"{section}.{field}" in set_here:
+    keep = protected(s)
+    scope = str(p.get("telescope_name") or "").strip()
+    site = s.setdefault("site", {})
+    if scope and str(site.get("name") or "").strip() == scope and "site.name" not in keep:
+        site["name"] = ""
+        log(f"site name “{scope}” was SHOBS-P's telescope name (copied there by an older build); cleared")
+    for dotted, val in shobs_p_values(p).items():
+        if dotted in keep:
             continue
-        val = p[key]
-        if field in ("name", "tz", "telescope"):
-            val = str(val or "").strip()
-            if not val:
-                continue
+        section, _, field = dotted.partition(".")
+        if not field:
+            s[section] = val
         else:
-            val = _num(val)
-            if val is None:
-                continue
-        s.setdefault(section, {})[field] = val
-        taken.append(f"{section}.{field}")
-    mount = str(p.get("mount") or "").lower()
-    if mount and "site.mount" not in set_here:
-        s["site"]["mount"] = "altaz" if ("alt" in mount and "az" in mount) else "GEM"
-        taken.append("site.mount")
-    if p.get("observer_code") and "observer_code" not in set_here:
-        s["observer_code"] = str(p["observer_code"])
-        taken.append("observer_code")
+            s.setdefault(section, {})[field] = val
+        taken.append(dotted)
     try:
         stamp = os.path.getmtime(shobs_p_settings_path())
         s["shobs_p_read"] = datetime.fromtimestamp(stamp).strftime("%Y-%m-%d")

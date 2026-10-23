@@ -45,13 +45,37 @@ import numpy as np  # noqa: E402
 import settings  # noqa: E402
 import sky  # noqa: E402
 import style  # noqa: E402
-from models import (MODE_NAMES, PRIORITIES, STATUS_LABELS, Block, NightPlan, Planet, Schedule,  # noqa: E402
-                    Target)
+from models import (MODE_NAMES, PRIORITIES, STATUS_LABELS, Block, NightPlan, Optics, Planet,  # noqa: E402
+                    Schedule, Site, Target)
 from style import px  # noqa: E402
 
 STEPS = ("Setup", "Targets", "Schedule", "Export")
 GROUPS = (("transit", "Transits"), ("variable", "Variables"), ("campaign", "Campaigns"), ("suggested", "Suggested"))
 DARKNESS = (("Astronomical (Sun −18°)", -18.0), ("Nautical (Sun −12°)", -12.0))
+
+
+def darkness_label(sun_alt) -> str:
+    """The Setup drop-down's text for a planning Sun altitude: the two named darknesses, or "Sun −15°" for another
+    value (SHOBS-P's finder may use one)."""
+    try:
+        v = float(sun_alt)
+    except (TypeError, ValueError):
+        return DARKNESS[0][0]
+    for label, val in DARKNESS:
+        if abs(val - v) < 1e-6:
+            return label
+    return f"Sun {fmt_num(v, 1).replace('-', '−')}°"
+
+
+def darkness_value(label: str) -> float:
+    if label in dict(DARKNESS):
+        return dict(DARKNESS)[label]
+    m = re.search(r"[-−]?\d+(?:\.\d+)?", str(label or ""))
+    try:
+        v = float(m.group(0).replace("−", "-")) if m else -18.0
+    except ValueError:
+        v = -18.0
+    return v if -24.0 <= v <= -6.0 else -18.0
 MODE_CHOICES = (("Variables (V)", "V"), ("Transits (T)", "T"), ("Discovery (D)", "D"))
 # what a star that is not (only) a known planet or VSX variable becomes: (label, kind, mode)
 KIND_CHOICES = (("Campaign, reduced in Variables (V)", "campaign", "V"),
@@ -681,19 +705,9 @@ class App(tk.Tk):
                      + (f"; SHOBS-P settings read ({', '.join(taken)})" if taken else ""))
 
     def _shobs_p_values(self) -> dict:
-        """SHOBS-P's own value of each field it can share ("site.lat" → 35.303), to tell an override from a value
-        typed back to SHOBS-P's."""
-        p = self.shobs_p or {}
-        out = {}
-        for key, (sec, field) in settings.SHOBS_P_FIELDS.items():
-            if key in p:
-                v = str(p[key] or "").strip() if field in ("name", "tz", "telescope") else settings._num(p[key])
-                if v not in (None, ""):
-                    out[f"{sec}.{field}"] = v
-        mount = str(p.get("mount") or "").lower()
-        if mount:
-            out["site.mount"] = "altaz" if ("alt" in mount and "az" in mount) else "GEM"
-        return out
+        """SHOBS-P's own value of each field it can share ("site.lat" → 35.303, "site.min_alt" → 30 from its
+        transit finder), to tell an override from a value typed back to SHOBS-P's."""
+        return settings.shobs_p_values(self.shobs_p)
 
     @property
     def site(self):
@@ -966,6 +980,11 @@ class SetupPage:
         return ttk.LabelFrame(parent, text=title, style="Group.TLabelframe", padding=(px(self.app, 12),
                                                                                        px(self.app, 6)))
 
+    def _tag(self, f, key):
+        """The small gray source tag beside a field ("from SHOBS-P", "from FITS", "set here"; none = default)."""
+        self.tags[key] = ttk.Label(f, text="", style="Tag.TLabel")
+        self.vars[key].trace_add("write", lambda *_a: self._tags_later())
+
     def _entry(self, box, row, label, key, unit="", width=10, tag=True):
         ttk.Label(box, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=px(self.app, 2))
         var = tk.StringVar()
@@ -977,11 +996,10 @@ class SetupPage:
         u = ttk.Label(f, text=unit, style="Hint.TLabel")
         u.pack(side=tk.LEFT, padx=(px(self.app, 4), 0))
         if tag:
-            t = ttk.Label(f, text="set here", style="Tag.TLabel")
-            self.tags[key] = t
+            self._tag(f, key)
         return e, u
 
-    def _radios(self, box, row, label, key, choices):
+    def _radios(self, box, row, label, key, choices, tag=False):
         ttk.Label(box, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=px(self.app, 2))
         var = tk.StringVar()
         self.vars[key] = var
@@ -990,7 +1008,15 @@ class SetupPage:
         for text, value in choices:
             ttk.Radiobutton(f, text=text, value=value, variable=var, style="Card.TRadiobutton").pack(
                 side=tk.LEFT, padx=(0, px(self.app, 10)))
+        if tag:
+            self._tag(f, key)
         return var
+
+    def _hint(self, box, row, text):
+        """A gray explanation under a field, wrapping with the box."""
+        h = ttk.Label(box, text=text, style="Hint.TLabel", justify=tk.LEFT, wraplength=px(self.app, 420))
+        h.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, px(self.app, 4)))
+        return h
 
     def _site_group(self, g):
         box = self._box(g, "Site")
@@ -1004,9 +1030,10 @@ class SetupPage:
         f.grid(row=4, column=1, sticky="w", padx=px(self.app, 6), pady=px(self.app, 2))
         self.tz_box = ttk.Combobox(f, textvariable=self.vars["site.tz"], values=settings.all_zones(), width=26)
         self.tz_box.pack(side=tk.LEFT)
-        self.tags["site.tz"] = ttk.Label(f, text="set here", style="Tag.TLabel")
-        self.tz_hint = ttk.Label(box, text="", style="Hint.TLabel")
+        self._tag(f, "site.tz")
+        self.tz_hint = ttk.Label(box, text="", style="Hint.TLabel", justify=tk.LEFT, wraplength=px(self.app, 320))
         self.tz_hint.grid(row=5, column=1, sticky="w", padx=px(self.app, 6))
+        self.vars["site.tz"].trace_add("write", lambda *_a: self._tz_hint())
         self._radios(box, 6, "Temperatures", "site.temp_unit", (("°C", "C"), ("°F", "F")))
         self._radios(box, 7, "Lengths", "site.length_unit", (("m", "m"), ("ft", "ft")))
         self.vars["site.temp_unit"].trace_add("write", lambda *_: self._units_changed())
@@ -1015,7 +1042,7 @@ class SetupPage:
 
     def _optics_group(self, g):
         box = self._box(g, "Telescope and camera")
-        self._entry(box, 0, "Telescope", "optics.telescope", width=24)
+        self._entry(box, 0, "Telescope", "optics.telescope", width=20)
         self._entry(box, 1, "Aperture", "optics.aperture_mm", "mm")
         self._entry(box, 2, "Focal length", "optics.focal_mm", "mm")
         self._entry(box, 3, "Pixel size", "optics.pixel_um", "µm")
@@ -1027,10 +1054,12 @@ class SetupPage:
                      width=4).pack(side=tk.LEFT)
         self.scale_hint = ttk.Label(f, text="", style="Hint.TLabel")
         self.scale_hint.pack(side=tk.LEFT, padx=(px(self.app, 8), 0))
+        self._tag(f, "optics.binning")
         for k in ("optics.focal_mm", "optics.pixel_um", "optics.binning"):
             self.vars[k].trace_add("write", lambda *_: self._scale_hint())
-        self._entry(box, 5, "Camera", "optics.camera", width=24)
-        self._radios(box, 6, "Sensor", "optics.color", (("Color (one-shot color)", "color"), ("Mono", "mono")))
+        self._entry(box, 5, "Camera", "optics.camera", width=20)
+        self._radios(box, 6, "Sensor", "optics.color", (("Color (one-shot)", "color"), ("Mono", "mono")),
+                     tag=True)
         self._entry(box, 7, "Gain setting", "optics.gain")
         self._entry(box, 8, "e⁻ per ADU", "optics.e_per_adu", "e⁻/ADU")
         self._entry(box, 9, "Full well", "optics.full_well_e", "e⁻")
@@ -1046,12 +1075,24 @@ class SetupPage:
             warn = ttk.Label(f, text="⚠ estimate", style="Warn.TLabel")
             var.trace_add("write", lambda *_a, v=var, w=warn: self._est_tag(v, w))
             self._est_tag(var, warn)
-        self._entry(box, 13, "Per-frame overhead", "optics.frame_overhead_s",
-                    "s (download, save); empty = 3 s", width=6, tag=False)
-        self._entry(box, 14, "Usual camera angle", "optics.camera_angle_deg",
-                    "° (rotator) for ASIAIR; empty = 0", width=6, tag=False)
-        self._entry(box, 15, "Defocus widens stars ×", "options.defocus_fwhm_factor",
-                    "(“defocus” targets)", width=6, tag=False)
+        self._entry(box, 13, "Per-frame overhead\n(download/save, all targets)", "optics.frame_overhead_s",
+                    "s; empty = 3 s", width=6)
+        self._hint(box, 14, "Added to EVERY target's exposure: the camera's download and save time only (about 3 s on "
+                            "an ASIAIR). A target's own “Seconds between frames” (Edit on the Targets page) is its "
+                            "whole frame-to-frame interval and wins for that target.")
+        self._entry(box, 15, "Usual camera angle (rotator)", "optics.camera_angle_deg", "°; empty = 0", width=6)
+        self._entry(box, 16, "Defocus widens stars ×", "options.defocus_fwhm_factor",
+                    "(“defocus” targets)", width=6)
+        f = ttk.Frame(box, style="Card.TFrame")
+        f.grid(row=17, column=0, columnspan=2, sticky="w", pady=(px(self.app, 6), px(self.app, 2)))
+        ttk.Button(f, text="Read from a FITS frame…", command=self.read_fits).pack(side=tk.LEFT)
+        ttk.Label(f, text="fills the camera fields from its header", style="Hint.TLabel").pack(
+            side=tk.LEFT, padx=(px(self.app, 8), 0))
+        self.fits_var = tk.StringVar()
+        self.fits_msg = ttk.Label(box, textvariable=self.fits_var, style="Card.TLabel", justify=tk.LEFT,
+                                  wraplength=px(self.app, 440))
+        self.fits_msg.grid(row=18, column=0, columnspan=2, sticky="w")
+        self.fits_msg.grid_remove()
         return box
 
     def _est_tag(self, var, warn):
@@ -1062,16 +1103,20 @@ class SetupPage:
 
     def _mount_group(self, g):
         box = self._box(g, "Mount and limits")
-        self._radios(box, 0, "Mount", "site.mount", (("German equatorial (flips)", "GEM"), ("Alt-az", "altaz")))
+        self._radios(box, 0, "Mount", "site.mount", (("Equatorial (flips)", "GEM"), ("Alt-az", "altaz")),
+                     tag=True)
         self._entry(box, 1, "Tracks past the meridian", "site.past_meridian_min", "min before it must flip")
         self._entry(box, 2, "Minimum altitude", "site.min_alt", "°")
         self._entry(box, 3, "Maximum airmass", "site.max_airmass", "")
         ttk.Label(box, text="Darkness to plan in", style="Card.TLabel").grid(row=4, column=0, sticky="w",
                                                                              pady=px(self.app, 2))
         self.vars["site.sun_alt"] = tk.StringVar()
-        ttk.Combobox(box, textvariable=self.vars["site.sun_alt"], values=[d for d, _v in DARKNESS],
-                     state="readonly", width=24).grid(row=4, column=1, sticky="w",
-                                                      padx=px(self.app, 6), pady=px(self.app, 2))
+        f = ttk.Frame(box, style="Card.TFrame")
+        f.grid(row=4, column=1, sticky="w", padx=px(self.app, 6), pady=px(self.app, 2))
+        self.dark_box = ttk.Combobox(f, textvariable=self.vars["site.sun_alt"], values=[d for d, _v in DARKNESS],
+                                     state="readonly", width=24)
+        self.dark_box.pack(side=tk.LEFT)
+        self._tag(f, "site.sun_alt")
         return box
 
     def _horizon_group(self, g):
@@ -1142,12 +1187,11 @@ class SetupPage:
         elev = float(site.get("elevation_m") or 0.0)
         v["site.elevation_m"].set(fmt_num(elev / 0.3048 if lu == "ft" else elev, 1))
         tz = site.get("tz") or ""
+        self._tz_guessed = not tz
         if not tz:
             tz = settings.guess_tz()
-            self.tz_hint.configure(text="Guessed from this computer's clock; check it and Save.")
-        else:
-            self.tz_hint.configure(text="")
         v["site.tz"].set(tz)
+        self._tz_hint()
         for k in ("aperture_mm", "focal_mm", "pixel_um", "gain", "e_per_adu", "full_well_e", "linear_limit_adu"):
             v[f"optics.{k}"].set(fmt_num(op.get(k)))
         v["optics.binning"].set(str(int(op.get("binning") or 1)))
@@ -1163,8 +1207,9 @@ class SetupPage:
         v["site.past_meridian_min"].set(fmt_num(site.get("past_meridian_min", 5.0)))
         v["site.min_alt"].set(fmt_num(site.get("min_alt", 30.0)))
         v["site.max_airmass"].set(fmt_num(site.get("max_airmass", 2.0)))
-        sa = float(site.get("sun_alt", -18.0))
-        v["site.sun_alt"].set(DARKNESS[1][0] if sa > -15 else DARKNESS[0][0])
+        sa = darkness_label(site.get("sun_alt", -18.0))
+        self.dark_box.configure(values=[d for d, _v in DARKNESS] + ([sa] if sa not in dict(DARKNESS) else []))
+        v["site.sun_alt"].set(sa)
         self.horizon.delete("1.0", tk.END)
         self.horizon.insert("1.0", "\n".join(f"{fmt_num(a, 2)} {fmt_num(h, 2)}" for a, h in site.get("horizon") or []))
         v["site.horizon_north"].set(site.get("horizon_north") or "true")
@@ -1177,28 +1222,151 @@ class SetupPage:
         v["options.dew_spread_c"].set(fmt_num(spread * 1.8 if tu == "F" else spread, 1))
         v["options.dew_sensitive_end"].set(bool(opts.get("dew_sensitive_end", True)))
         self._loading = False
+        self.fits_pending = {}
         self._units_changed()
         self._scale_hint()
+        self._loaded_text = {k: str(var.get()).strip() for k, var in self.vars.items()}
         self._show_provenance()
         self._snapshot = self.form_state()
+
+    # ---- where each value came from ----
+    FORM_TO_SETTING = {"optics.color": "optics.color_camera"}
+    SETTING_TO_FORM = {"optics.color_camera": "optics.color"}
+
+    def _text_of(self, key: str, value) -> str:
+        """The text the form shows for a value of this field (to tell a FITS value from one typed over it)."""
+        if key == "optics.color":
+            return "color" if value else "mono"
+        if key == "optics.binning":
+            return str(int(value or 1))
+        if key == "site.sun_alt":
+            return darkness_label(value)
+        return fmt_num(value) if not isinstance(value, str) else value.strip()
+
+    def source_of(self, key: str) -> str:
+        """Where the value now in this Setup field came from: "from FITS", "set here", "from SHOBS-P" or "" (default,
+        or nothing yet). A value typed over another becomes "set here" at once."""
+        dotted = self.FORM_TO_SETTING.get(key, key)
+        cur = str(self.vars[key].get()).strip()
+        fits = dict(settings.from_fits(self.app.settings))
+        fits.update(getattr(self, "fits_pending", {}) or {})
+        if dotted in fits and cur == self._text_of(key, fits[dotted]):
+            return "from FITS"
+        loaded = getattr(self, "_loaded_text", {}).get(key)
+        if loaded is not None and cur != loaded:
+            return "set here"
+        if dotted in set(self.app.settings.get("set_here") or []):
+            return "set here"
+        if dotted in set(self.app.p_taken or []):
+            return "from SHOBS-P"
+        return ""
+
+    def _tags_later(self):
+        if getattr(self, "_loading", False) or getattr(self, "_tags_pending", False):
+            return
+        self._tags_pending = True
+        try:
+            self.frame.after_idle(self._show_tags)
+        except tk.TclError:
+            self._tags_pending = False
+
+    def _show_tags(self):
+        self._tags_pending = False
+        for key, tag in self.tags.items():
+            try:
+                text = self.source_of(key)
+                if text:
+                    tag.configure(text=text)
+                    if not tag.winfo_manager():
+                        tag.pack(side=tk.LEFT, padx=(px(self.app, 6), 0))
+                else:
+                    tag.pack_forget()
+            except tk.TclError:
+                pass
 
     def _show_provenance(self):
         app = self.app
         if app.shobs_p is not None and app.p_taken:
             when = app.settings.get("shobs_p_read") or "?"
-            set_msg(self.prov_var, self.prov, f"✔ Site, optics and camera read from SHOBS-P (settings of {when}). "
-                                              "Change them there, or override here.")
-            here = set(app.settings.get("set_here") or [])
-            for key, tag in self.tags.items():
-                if key in here:
-                    tag.pack(side=tk.LEFT, padx=(px(self.app, 6), 0))
-                else:
-                    tag.pack_forget()
+            text = (f"✔ Site, optics and camera read from SHOBS-P (settings of {when}). "
+                    "Change them there, or override here.")
+            finder = [d for d in app.p_taken if d in settings.finder_values(app.shobs_p)]
+            if finder:
+                text += (" The minimum altitude, darkness and the Suggested-transits filter start from its "
+                         "Tonight's-transits finder.")
+            set_msg(self.prov_var, self.prov, text + " Tags: from SHOBS-P, from FITS, set here.")
         else:
-            self.prov_var.set("Enter your site and equipment once. SHOBS-P, if you add it later, can share these.")
+            self.prov_var.set("Enter your site and equipment once (or read the camera from a FITS frame). SHOBS-P, "
+                              "if you add it later, can share these.")
             self.prov.configure(style="Card.TLabel")
-            for tag in self.tags.values():
-                tag.pack_forget()
+        self._show_tags()
+
+    def _fits_shown(self, key: str, value) -> str:
+        """A FITS value in the summary's words ("2901 mm", "Color")."""
+        if key == "optics.color":
+            return "Color" if value in (True, "color") else "Mono"
+        text = self._text_of(key, value) if not isinstance(value, str) else value
+        if not text:
+            return "empty"
+        unit = {"optics.pixel_um": " µm", "optics.focal_mm": " mm", "optics.camera_angle_deg": "°",
+                "optics.e_per_adu": " e⁻/ADU"}.get(key, "")
+        return text + unit
+
+    def read_fits(self, path: str | None = None):
+        """Fill the camera and optics fields from a FITS frame's header (only the header is read). The values are
+        tagged "from FITS" and win over SHOBS-P's once saved; the summary lists what changed (old → new)."""
+        fh = mod("fits_header")
+        if fh is None:
+            set_msg(self.fits_var, self.fits_msg, missing("fits_header"))
+            self.fits_msg.grid()
+            return None
+        if path is None:
+            path = filedialog.askopenfilename(
+                parent=self.app, title="A FITS frame from this camera and telescope",
+                filetypes=[("FITS frames", "*.fits *.fit *.fts *.FITS *.FIT *.FTS"), ("All files", "*.*")])
+        if not path:
+            return None
+        name = os.path.basename(path)
+        try:
+            vals, notes, absent = fh.read_camera_values(path)
+        except fh.FitsError as exc:
+            set_msg(self.fits_var, self.fits_msg, f"✖ {name} could not be read: {exc}. Nothing changed.")
+            self.fits_msg.grid()
+            return None
+        changed, same = [], []
+        self.fits_pending = dict(getattr(self, "fits_pending", {}) or {})
+        for dotted, label, _kw in fh.FIELDS:
+            if dotted not in vals:
+                continue
+            key = self.SETTING_TO_FORM.get(dotted, dotted)
+            new = self._text_of(key, vals[dotted])
+            old = str(self.vars[key].get()).strip()
+            if old != new:
+                old_shown = self._fits_shown(key, old) if old else "empty"
+                changed.append(f"{label}: {old_shown} → {self._fits_shown(key, vals[dotted])}")
+                self.vars[key].set(new)
+            else:
+                same.append(label)
+            self.fits_pending[dotted] = vals[dotted]
+        gone = [f"{kw} ({label})" for _d, label, kw in fh.FIELDS if kw in absent]
+        cam = vals.get("optics.camera")
+        lines = [f"Read the header of {name}" + (f" ({cam})" if cam else "") + ". Press Save to keep these values."]
+        if changed:
+            lines.append("Changed:")
+            lines += ["    " + c for c in changed]
+        if same:
+            lines.append("Already the same: " + ", ".join(same) + ".")
+        lines += [n + "." for n in notes]
+        if gone:
+            lines.append("Not in this frame: " + ", ".join(gone) + ".")
+        lines[0] = ("⚠ " if gone else "✔ ") + lines[0]
+        self._fits_lines = lines
+        set_msg(self.fits_var, self.fits_msg, "\n".join(lines))
+        self.fits_msg.grid()
+        settings.log(f"FITS header read from {name}: " + (", ".join(changed) or "nothing changed")
+                     + (f"; not in the frame: {', '.join(absent)}" if absent else ""))
+        self._show_tags()
+        return vals
 
     def _units_changed(self):
         if getattr(self, "_loading", False):
@@ -1220,6 +1388,21 @@ class SetupPage:
         self._shown_len, self._shown_temp = lu, tu
         self.elev_unit.configure(text="ft" if lu == "ft" else "m")
         self.spread_unit.configure(text="°F" if tu == "F" else "°C")
+
+    def _tz_hint(self):
+        """Under the time zone: what every time in SHOBS-SCHED will read as ("Local time (UTC−4) now"), and whether
+        the zone is only a guess."""
+        tz = str(self.vars["site.tz"].get()).strip()
+        if not sky.zone_ok(tz):
+            text = "Not a zone name: pick one from the list."
+        else:
+            text = f"Times show as {sky.local_label(tz)} now"
+            text += ("; guessed from this computer's clock: check it and Save." if getattr(self, "_tz_guessed", False)
+                     else ".")
+        try:
+            self.tz_hint.configure(text=text)
+        except tk.TclError:
+            pass
 
     def _scale_hint(self):
         try:
@@ -1305,7 +1488,7 @@ class SetupPage:
         site["min_alt"] = ma if ma is not None else 30.0
         mx = num("site.max_airmass", "Maximum airmass", 1.0, 8.0, required=False)
         site["max_airmass"] = mx if mx is not None else 2.0
-        site["sun_alt"] = dict(DARKNESS).get(v["site.sun_alt"].get(), -18.0)
+        site["sun_alt"] = darkness_value(v["site.sun_alt"].get())
         pts, err = parse_horizon(self.horizon.get("1.0", tk.END))
         if err:
             errors.append(err)
@@ -1329,29 +1512,48 @@ class SetupPage:
             set_msg(self.msg_var, self.msg, f"✖ Not saved: {errors[0]}{more}")
             return False
         s = self.app.settings
-        new = {"site": site, "optics": op}
+        new = {"site": site, "optics": op, "options": opts}
+
+        def unmark(dotted):
+            s["set_here"] = [x for x in (s.get("set_here") or []) if x != dotted]
+
+        # values read from a FITS frame stay "from FITS" (and win over SHOBS-P) while the field still holds the
+        # frame's value; a value typed over one is the user's own ("set here")
+        fits = settings.from_fits(s)
+        fits.update(getattr(self, "fits_pending", {}) or {})
+        for dotted, val in list(fits.items()):
+            sec, _, key = dotted.partition(".")
+            if _same(val, new.get(sec, {}).get(key)):
+                unmark(dotted)
+            else:
+                del fits[dotted]
+                settings.mark_set_here(s, dotted)
+        s["from_fits"] = fits
+        self.fits_pending = {}
         for dotted, theirs in self.app.p_values.items():
+            sec, _, key = dotted.partition(".")
+            if sec not in new or dotted in fits:
+                continue
+            if _same(theirs, new[sec].get(key)):      # typed back to SHOBS-P's value: follow SHOBS-P again
+                unmark(dotted)
+            else:
+                settings.mark_set_here(s, dotted)
+        # any other Setup value that is not the default is the user's own ("set here"): a SHOBS-P installed later
+        # must not overwrite it (only fields still at their defaults or empty get filled from SHOBS-P)
+        shared = ({f"{sec}.{fld}" for sec, fld in settings.SHOBS_P_FIELDS.values()} | {"site.mount"}
+                  | {f"{sec}.{fld}" for sec, fld, *_r in settings.FINDER_FIELDS.values()})
+        fields = shared | {self.FORM_TO_SETTING.get(k, k) for k in self.tags}
+        defaults = {"site": Site().to_dict(), "optics": Optics().to_dict(), "options": dict(settings.DEFAULT_OPTIONS)}
+        for dotted in fields:
+            if dotted in self.app.p_values or dotted in fits:
+                continue
             sec, _, key = dotted.partition(".")
             if sec not in new:
                 continue
-            mine = new[sec].get(key)
-            if isinstance(theirs, (int, float)) and isinstance(mine, (int, float)):
-                same = abs(float(theirs) - float(mine)) < 1e-6 * max(1.0, abs(float(theirs)))
+            val = new[sec].get(key)
+            if val in (None, "") or (isinstance(val, str) and not val.strip()) or _same(val, defaults[sec].get(key)):
+                unmark(dotted)
             else:
-                same = theirs == mine
-            if same:      # typed back to SHOBS-P's value: follow SHOBS-P again
-                s["set_here"] = [x for x in (s.get("set_here") or []) if x != dotted]
-            else:
-                settings.mark_set_here(s, dotted)
-        # a value typed here while SHOBS-P has none (or isn't installed) is the user's own: a SHOBS-P installed
-        # later must not overwrite it (only empty fields get filled from SHOBS-P)
-        shared = {f"{sec}.{fld}" for sec, fld in settings.SHOBS_P_FIELDS.values()} | {"site.mount"}
-        for dotted in shared:
-            if dotted in self.app.p_values:
-                continue
-            sec, _, key = dotted.partition(".")
-            val = new.get(sec, {}).get(key)
-            if val not in (None, "") and not (isinstance(val, str) and not val.strip()):
                 settings.mark_set_here(s, dotted)
         s["site"], s["optics"] = site, op
         s["options"] = opts
@@ -1359,8 +1561,15 @@ class SetupPage:
             set_msg(self.msg_var, self.msg, "✖ Not saved: the settings file is not writable.")
             return False
         settings.log("settings saved")
-        self.tz_hint.configure(text="")
+        self._tz_guessed = False
+        self._tz_hint()
+        self._loaded_text = {k: str(var.get()).strip() for k, var in self.vars.items()}
         self._show_provenance()
+        if getattr(self, "_fits_lines", None) and self.fits_var.get():
+            lines = list(self._fits_lines)
+            lines[0] = lines[0].replace("Press Save to keep these values.", "Saved.")
+            self._fits_lines = lines
+            set_msg(self.fits_var, self.fits_msg, "\n".join(lines))
         self.app.settings_changed()
         self._snapshot = self.form_state()
         set_msg(self.msg_var, self.msg, "✔ Saved.")
@@ -1374,6 +1583,8 @@ class SetupPage:
 
     def dirty_form(self) -> bool:
         snap = getattr(self, "_snapshot", None)
+        if getattr(self, "fits_pending", None):          # a FITS frame read, even one that changed no value
+            return True
         return snap is not None and self.form_state() != snap
 
     def leave(self, closing: bool = False) -> bool:
@@ -1551,8 +1762,19 @@ class TargetsPage:
         keep = [i for i in sel if tree.exists(i)]
         if keep:
             tree.selection_set(keep)
+        self._next_heading(when)
         fit_columns(tree, self.headings, cap=300, stretch="next", extra=self.FIT)
         self.show_detail()
+
+    def _next_heading(self, when: float):
+        """ "Next useful event, Local time (UTC−4)": the events' clock times are the site's, over the 30 nights they
+        are searched (a daylight-saving change inside them reads "UTC−4 → UTC−5")."""
+        site = self.app.site
+        text = "Next useful event"
+        if site.complete():
+            text += f", {sky.local_label(site.tz, when, when + 30.0)}"
+        self.headings["next"] = text
+        self.tree.heading("next", text=text)
 
     def row_values(self, t: Target, when: float, today: date) -> tuple:
         src = f"✔ {t.source}" if t.source else "typed"
@@ -2127,6 +2349,10 @@ class EditTargetDialog:
     def __init__(self, app: App, target: Target, on_save=None, modal: bool = True):
         self.app = app
         self.t = Target.from_dict(target.to_dict())
+        if (self.t.kind == "transit") != (self.t.mode == "T"):
+            # an older target file can pair a group with the wrong mode (a variable in T): the group (the Targets
+            # page row, and how it is planned) decides, so an unchanged Save is never refused
+            self.t.mode = "T" if self.t.kind == "transit" else ("V" if self.t.mode == "T" else self.t.mode)
         self.on_save = on_save
         self.win, outer = _dialog(app, f"Edit {target.name}")
         self.foot = foot = ttk.Frame(outer, style="Card.TFrame")
@@ -2185,8 +2411,13 @@ class EditTargetDialog:
         row("V magnitude", "vmag", fmt_num(t.vmag, 2), "", 8)
         head("Observing")
         row("Exposure", "exposure_s", fmt_num(t.exposure_s), "s (empty = SCHED estimates one)", 8)
-        row("Seconds between frames", "cycle_s", fmt_num(t.cycle_s),
-            "s, whole cycle (empty = exposure + overhead)", 8)
+        row("Seconds between frames\n(full interval, this target)", "cycle_s", fmt_num(t.cycle_s),
+            "s (empty = exposure + Setup's per-frame overhead)", 8)
+        ttk.Label(body, text="The whole frame-to-frame interval (exposure + download/save) for this target only; it "
+                             "wins over Setup's per-frame overhead, which is added to every other target's exposure.",
+                  style="Hint.TLabel", justify=tk.LEFT, wraplength=px(app, 460)).grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(0, px(app, 4)))
+        r += 1
         row("Block length", "block_min", fmt_num(t.block_min), "min (flexible targets)", 8)
         row("Shortest useful block", "min_block_min", fmt_num(t.min_block_min), "min", 8)
         row("Goal", "goal_per_week", str(int(t.goal_per_week or 0)), "nights a week (0 = no goal)", 8)
@@ -2195,8 +2426,9 @@ class EditTargetDialog:
             "° (empty = the site's)", 8)
         row("Moon at least", "min_moon_sep", fmt_num((rules.get("min_moon_sep") or {}).get("value")),
             "° away (empty = no limit)", 8)
+        tz = app.site.tz
         row("Only between", "window", (rules.get("window") or {}).get("value") or "",
-            "HH:MM-HH:MM site clock (empty = any time)", 12)
+            f"HH:MM-HH:MM, {sky.local_label(tz)}; empty = any time", 12)
         # the ephemeris (always built; shown while the group is Transit, so Edit can move a star into Transits)
         pl = (t.planet or {}) if t.kind == "transit" else {}
         self.eph_widgets = head("Ephemeris")
@@ -2292,7 +2524,14 @@ class EditTargetDialog:
             win.minsize(w, min(h, px(self.app, 320)))
             if win.winfo_ismapped():
                 w, h = max(w, win.winfo_width()), max(h, win.winfo_height())
-            win.geometry(f"{w}x{h}")
+                if (w, h) == (win.winfo_width(), win.winfo_height()):
+                    return                       # no growth: leave it where the user put it
+            # (re-)centred over the main window, so a dialog that grew stays in view
+            app = self.app
+            x = app.winfo_rootx() + max(0, (app.winfo_width() - w) // 2)
+            y = app.winfo_rooty() + max(0, (app.winfo_height() - h) // 3)
+            x, y = min(max(0, x), max(0, sw - w)), min(max(0, y), max(0, sh - h - 40))
+            win.geometry(f"{w}x{h}+{x}+{y}")
         except tk.TclError:
             pass
 
@@ -2375,9 +2614,13 @@ class EditTargetDialog:
         self.pl_vars = {}
         if info is None:
             self.host_info = None
-            why = (problem or "no answer").strip().rstrip(".")
-            self.pl_ind.finish(f"✖ Couldn't reach the NASA Exoplanet Archive to list this star's planets ({why}). "
-                               "Type a planet below instead.", linger_ms=0)
+            why = (problem or "no answer").strip()
+            if re.search(r"[.!?]\s", why) or why[:1].isupper():     # a whole sentence of its own: not in brackets
+                why = why if why.endswith((".", "!", "?")) else why + "."
+                text = f"✖ Couldn't reach the NASA Exoplanet Archive to list this star's planets. {why}"
+            else:
+                text = f"✖ Couldn't reach the NASA Exoplanet Archive to list this star's planets ({why.rstrip('.')})."
+            self.pl_ind.finish(text + " Type a planet below instead.", linger_ms=0)
             self._fit()
             return
         self.host_info = info
@@ -2654,7 +2897,8 @@ class EditTargetDialog:
                     parse_hhmm(a)
                     parse_hhmm(b)
                 except ValueError:
-                    raise ValueError("Only between: type two site clock times, e.g. 21:00-02:30.")
+                    raise ValueError(f"Only between: type two clock times in {sky.local_label(self.app.site.tz)}, "
+                                     "e.g. 21:00-02:30.")
                 rules.append({"kind": "window", "value": v["window"].replace("–", "-").replace(" ", "")})
             rules.extend(self.no_transit)
             t.rules = rules
@@ -2702,6 +2946,15 @@ class EditTargetDialog:
             self.on_save(t)
         self.win.destroy()
         return True
+
+
+def _same(a, b) -> bool:
+    """Two settings values alike: numbers within a part in a million (a value shown rounded and typed back is the
+    same value), anything else equal."""
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool) \
+            and not isinstance(b, bool):
+        return abs(float(a) - float(b)) < 1e-6 * max(1.0, abs(float(a)))
+    return a == b
 
 
 def _close(a, b) -> bool:

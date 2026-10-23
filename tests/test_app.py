@@ -277,6 +277,12 @@ class Base(unittest.TestCase):
             self.app.update()
             time.sleep(0.02)
 
+    def tag(self, setup, key) -> str:
+        """The source tag shown beside a Setup field ("" = none shown)."""
+        self.app.update()
+        t = setup.tags[key]
+        return str(t.cget("text")) if t.winfo_manager() else ""
+
     def pump(self):
         self.app.jobs.wait(300)
         for _ in range(3):
@@ -289,7 +295,7 @@ class TestAppWithFakes(Base):
         app = self.open()
         self.assertEqual(app.page_index, 0, "a fresh home opens on Setup")
         setup = app.pages[0]
-        self.assertTrue(setup.prov_var.get().startswith("Enter your site and equipment once."))
+        self.assertTrue(setup.prov_var.get().startswith("Enter your site and equipment once"))
         self.assertTrue(setup.vars["site.tz"].get(), "a time zone guess is preselected")
         for i in range(4):
             app.show_page(i)
@@ -365,19 +371,20 @@ class TestAppWithFakes(Base):
         setup = app.pages[0]
         self.assertTrue(setup.prov_var.get().startswith("✔ Site, optics and camera read from SHOBS-P (settings of"))
         self.assertEqual(setup.vars["site.lat"].get(), "35.303")
-        self.assertFalse(setup.tags["site.lat"].winfo_manager())
+        self.assertEqual(self.tag(setup, "site.lat"), "from SHOBS-P")
+        self.assertEqual(self.tag(setup, "site.max_airmass"), "", "an untouched default has no tag")
         setup.vars["site.lat"].set("35.31")
         setup.vars["site.tz"].set("America/New_York")
         self.assertTrue(setup.save(), setup.msg_var.get())
         saved = settings.load_settings()
         self.assertIn("site.lat", saved["set_here"])
         self.assertNotIn("site.lon", saved["set_here"])
-        self.assertTrue(setup.tags["site.lat"].winfo_manager(), "the overridden field shows its 'set here' tag")
+        self.assertEqual(self.tag(setup, "site.lat"), "set here", "the overridden field shows its 'set here' tag")
         # typing SHOBS-P's own value back follows SHOBS-P again
         setup.vars["site.lat"].set("35.303")
         self.assertTrue(setup.save())
         self.assertNotIn("site.lat", settings.load_settings()["set_here"])
-        self.assertFalse(setup.tags["site.lat"].winfo_manager())
+        self.assertEqual(self.tag(setup, "site.lat"), "from SHOBS-P")
         with open(p, encoding="utf-8") as fh:
             self.assertNotIn("set_here", fh.read(), "SHOBS-P's file is never written")
 

@@ -592,17 +592,19 @@ _STAR_PREFIX = re.compile(r"^(?:\*\*|\*|V\*|NAME|EM\*)\s+", re.IGNORECASE)
 
 def host_name_variants(name: str) -> list[str]:
     """Spellings the Archive might use for a host star name: "HD219134" → "HD 219134"; "wasp-12" → "WASP-12";
-    SIMBAD's "* 51 Peg" → "51 Peg". The name as typed first, at most four."""
+    SIMBAD's "* 51 Peg" → "51 Peg". The Archive's usual spelling first (it is the one that answers, so an offline
+    lookup costs one call, not two), the name as typed last; at most four. The first one is also the cache key."""
     clean = _STAR_PREFIX.sub("", _clean(name))
     if not clean:
         return []
-    out = [clean]
+    out = []
     m = re.match(r"^([A-Za-z]+(?:-[Pp])?)[- ]?(\d.*)$", clean)
     if m:
         word, rest = m.group(1), m.group(2)
         prefix = _PREFIXES.get(word.lower(), word.upper() if len(word) <= 3 else word)
         seps = ["-", " "] if prefix in _HYPHEN_SURVEYS else [" ", "-"]
         out += [prefix + sep + rest for sep in seps]
+    out.append(clean)
     return list(dict.fromkeys(out))[:4]
 
 
@@ -674,8 +676,9 @@ def host_planets(name: str, ra=None, dec=None, vmag=None, refresh: bool = False)
     "position" or "" = no known planets), "planets": [host_planet_entry ...] transiting first, "note"} — cached a
     week like the planet lookups; LookupError_ when the Archive does not answer and nothing is cached."""
     clean = _clean(name)
-    if clean:
-        key = f"nea:host:{_key_name(_STAR_PREFIX.sub('', clean))}"
+    spellings = host_name_variants(clean) if clean else []
+    if spellings:                    # keyed on the normalized name: "HD219134" and "hd 219134" share one copy
+        key = f"nea:host:{_key_name(spellings[0])}"
     elif ra is not None and dec is not None:
         key = f"nea:host:@{float(ra):.4f},{float(dec):+.4f}"
     else:
@@ -692,12 +695,6 @@ def host_planets(name: str, ra=None, dec=None, vmag=None, refresh: bool = False)
     planets.sort(key=lambda e: (not e["usable"], not e["transits"], e["name"]))
     return {"host": data.get("host") or "", "matched": data.get("matched") or "", "planets": planets,
             "note": note}
-
-
-def planet_letter(text: str) -> str:
-    """"b" / " C " → "b": a bare planet letter typed for this star's planet; "" for anything else."""
-    s = _clean(text)
-    return s.lower() if re.fullmatch(r"[b-zB-Z]", s) else ""
 
 
 # ---- variables: AAVSO VSX, VizieR B/vsx ---------------------------------------------------------------------------
