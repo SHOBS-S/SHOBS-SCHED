@@ -1066,7 +1066,9 @@ class TestHostPlanets(Base):
             (["from ps where pl_name = 'HD 219134 c'"], "targets_nea_ps_hd219134c.csv")]
 
     def test_host_name_variants(self):
-        self.assertEqual(T.host_name_variants("HD219134")[:2], ["HD219134", "HD 219134"])
+        self.assertEqual(T.host_name_variants("HD219134"), ["HD 219134", "HD-219134", "HD219134"],
+                         "the Archive's spelling first, as typed last")
+        self.assertEqual(T.host_name_variants("wasp-12")[0], "WASP-12")
         self.assertIn("WASP-12", T.host_name_variants("wasp 12"))
         self.assertEqual(T.host_name_variants("* 51 Peg"), ["51 Peg"])
         self.assertIn("HAT-P-23", T.host_name_variants("hat-p 23"))
@@ -1143,11 +1145,16 @@ class TestHostPlanets(Base):
         self.assertIn("using the copy from", info["note"])
         self.assertEqual(len(info["planets"]), 6)
 
-    def test_planet_letter(self):
-        self.assertEqual(T.planet_letter(" C "), "c")
-        self.assertEqual(T.planet_letter("b"), "b")
-        self.assertEqual(T.planet_letter("a"), "")
-        self.assertEqual(T.planet_letter("bc"), "")
+    def test_normalized_spelling_first_and_one_cache_entry(self):
+        r = self.route([(["hostname = 'HD 219134'"], "targets_nea_hostrows_hd219134.csv")] + self.HOST)
+        info = T.host_planets("HD219134")
+        self.assertEqual(info["host"], "HD 219134")
+        hosts = [u for u in r.calls if "hostname =" in u]
+        self.assertEqual(len(hosts), 1, "the normalized spelling answers first: no wasted as-typed call")
+        n = len(r.calls)
+        for spelling in ("HD 219134", "hd 219134", "HD-219134"):
+            T.host_planets(spelling)
+        self.assertEqual(len(r.calls), n, "every spelling of the star shares one cached copy")
 
 
 def tearDownModule():
