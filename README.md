@@ -16,8 +16,11 @@ settings so you type them once (it never changes SHOBS-P's files).
 2. **Targets** — one list in four groups: **Transits** (ephemerides from the NASA Exoplanet Archive, the most
    precise published one for the coming weeks, with the predicted mid-transit uncertainty), **Variables** (light
    elements from the AAVSO VSX, or VizieR's copy of it), **Campaigns** (long-running targets and Discovery fields
-   with priorities, weekly goals and rules such as "no data while a planet transits"), and **Suggested** (other
-   good transits for your site in the nights ahead). Add any target by name.
+   with priorities, weekly goals and rules such as "no data while a planet transits"), **Suggested Transits**
+   (other good transits for your site in the nights ahead) and **Suggested Variables** ("Find suggested
+   variables…": eclipsing minima, RR Lyrae maxima, short pulsators with a whole cycle in the dark, and long-period
+   fillers from VSX, by type, period, brightness and amplitude); both Suggested groups list the soonest first.
+   Add any target by name.
 3. **Schedule** — builds each night: fixed-time targets first (transits with baseline, timed minima/maxima), then
    campaigns and any-time variables by priority at their best airmass, with twilight, the Moon, your horizon,
    meridian flips (start 10–15 min before the meridian and let the mount flip), overheads and the dew forecast.

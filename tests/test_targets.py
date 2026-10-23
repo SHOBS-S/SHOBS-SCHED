@@ -685,7 +685,7 @@ class TestSuggest(Base):
         self.assertEqual(len(names), len(set(names)))               # each planet once
         for t in res:
             self.assertEqual((t.kind, t.mode, t.suggested, t.enabled), ("transit", "T", True, False))
-            self.assertRegex(t.notes, r"^\w{3} \d{1,2} \w{3}: ingress \d\d:\d\d, egress \d\d:\d\d \(site clock\)")
+            self.assertRegex(t.notes, r"^\w{3} \d{1,2} \w{3}: ingress \d\d:\d\d, egress \d\d:\d\d, Local time \(UTC[−+]\d+\)")
             self.assertTrue(t.planet_obj().ok())
             self.assertLessEqual(t.suggest_info["moon_penalty"], settings.DEFAULT_OPTIONS["suggest_moon_penalty_max"])
         scores = [t.suggest_info["score"] for t in res]
@@ -698,7 +698,10 @@ class TestSuggest(Base):
         res = T.suggest_transits(SITE, OPTICS, opts, NIGHTS, catalog=small_catalog())
         h = next(t for t in res if t.name == "HAT-P-23 b")
         self.assertEqual(h.suggest_info["night"], "2026-10-23")
-        m = re.match(r"Fri 23 Oct: ingress (\d\d:\d\d), egress (\d\d:\d\d) \(site clock\)$", h.notes)
+        for t in res:                       # listed by the soonest good transit (≤ the best-scored one)
+            self.assertLessEqual(t.suggest_info["when"], t.suggest_info["t1"] + 1e-9)
+            self.assertRegex(t.suggest_info["text"], r"^\w{3} \d{1,2} \w{3} \d\d:\d\d–\d\d:\d\d \(full\)$")
+        m = re.match(r"Fri 23 Oct: ingress (\d\d:\d\d), egress (\d\d:\d\d), Local time \(UTC−4\)$", h.notes)
         self.assertIsNotNone(m, h.notes)
         gold = GOLDEN["nights"][4]["transits"]["HAT-P-23 b"]
         self.assertLessEqual(minutes_apart(m.group(1), gold[0]), 2)
