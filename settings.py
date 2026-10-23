@@ -95,7 +95,7 @@ def default_settings() -> dict:
     return {"version": APP_VERSION, "site": Site().to_dict(), "optics": Optics().to_dict(),
             "options": dict(DEFAULT_OPTIONS), "observer_code": "", "set_here": [], "shobs_p_read": "",
             "from_fits": {}, "from_finder": {}, "export_dir": "",
-            # Export page: the ASIAIR folder ("" = Downloads); night plots on the printed card
+            # OBSPlan page: the ASIAIR folder ("" = Downloads); night plots on the printed card
             "asiair_dir": "", "card_plots": True}
 
 

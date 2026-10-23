@@ -25,7 +25,7 @@ settings so you type them once (it never changes SHOBS-P's files).
    Moon, transits and meridian flips, and the hourly weather above it; click a block or a table row to pick it
    out), the nightly table, flats and darks to shoot, what didn't fit and why, and free time. Mark each block
    Done, Partial or Clouded out; **Re-review** rolls the week forward and puts missed targets back in the pool.
-4. **Export** — the plan card itself, on screen: print it (with or without the night plots), or send one night at a
+4. **OBSPlan** — the plan card itself, on screen: print it (with or without the night plots), or send one night at a
    time to **ASIAIR** (a CSV for its Plan import, saved to Downloads or a folder that syncs to your tablet/phone) or
    to **NINA** (a target list for the Sequencer's *Import targets*).
 
