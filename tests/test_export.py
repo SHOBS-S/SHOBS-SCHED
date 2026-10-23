@@ -218,7 +218,7 @@ class TestPlanCard(unittest.TestCase):
         self.assertIn("<h3>Darks</h3><ul><li>To shoot: 0.75 s × 20</li>", page)
         self.assertIn("<li>One set at the night", page)              # "Flats:" prefix not repeated
         self.assertIn("a meridian flip&#x27;s 180° turn", page)
-        self.assertIn("SHOBS-SCHED · site clock (America/New_York)", page)
+        self.assertIn("SHOBS-SCHED · all times Local time (UTC−4) <span class=\"zone\">(America/New_York)</span>", page)
         self.assertIn("observer JABA", page)
         self.assertIn("Tue 20 Oct 2026", page)
         # self-contained: no external scripts, stylesheets or images
@@ -230,7 +230,7 @@ class TestPlanCard(unittest.TestCase):
         text = export.plan_card_text([self.n20, self.n22], SITE, {}, self.weather, self.by_id)
         for s in ("TOI-2046 b", "HD 219134", "K2-29 b", "Evil <script>alert(1)</script> & Co",
                   "20:15–00:30", "~240 (~135 in transit)", "Free 02:10–03:00", "Didn't fit, and why:",
-                  "SHOBS-SCHED · site clock (America/New_York)", "Dark 20:08–06:16 (astronomical)"):
+                  "SHOBS-SCHED · all times Local time (UTC−4) (America/New_York)", "Dark 20:08–06:16 (astronomical)"):
             self.assertIn(s, text)
 
     def test_no_dark_and_empty(self):
@@ -238,7 +238,8 @@ class TestPlanCard(unittest.TestCase):
         page = export.plan_card_html([n], Site(lat=69.65, lon=18.96, tz="Europe/Oslo"), {})
         self.assertIn("No dark time tonight", page)
         self.assertIn("No blocks planned", page)
-        self.assertIn("site clock (Europe/Oslo)", page)
+        self.assertIn("all times Local time (UTC+2)", page)
+        self.assertIn("Times: Local time (UTC+2)", page)
         self.assertIn("No nights selected", export.plan_card_text([], SITE, {}))
 
     def test_offline_weather_line(self):
@@ -289,7 +290,7 @@ class TestReviewFixes(unittest.TestCase):
 
     def test_footer_unknown_zone(self):
         bad = Site(lat=35.0, lon=-80.0, tz="Mars/Olympus")
-        self.assertIn("site clock (Mars/Olympus) ⚠ unknown time zone, times in UTC",
+        self.assertIn("all times UTC ⚠ unknown time zone (Mars/Olympus)",
                       export.plan_card_text([], bad, {}))
         self.assertNotIn("unknown time zone", export.plan_card_text([], SITE, {}))
 
@@ -318,6 +319,177 @@ class TestReviewFixes(unittest.TestCase):
         data = text.encode("utf-8")
         self.assertFalse(data.startswith(b"\xef\xbb\xbf"))
         self.assertIn("º".encode("utf-8"), data)
+
+
+class TestNightFiles(unittest.TestCase):
+    """Export page item 7: one night per file for ASIAIR and NINA, folder fallback, NINA's format."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sched_files_")
+        self.downloads = os.path.join(self.tmp, "Downloads")
+        os.makedirs(self.downloads)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_names(self):
+        self.assertEqual(export.night_file_name("asiair", "2026-10-20"), "SHOBS-SCHED_ASIAIR_2026-10-20.csv")
+        self.assertEqual(export.night_file_name("nina", date(2026, 10, 31)), "SHOBS-SCHED_NINA_2026-10-31.csv")
+
+    def test_asiair_file_is_one_night_and_unchanged_format(self):
+        text = export.night_file_text("asiair", oct22_night(), BY_ID, SITE, optics=OPTICS)
+        self.assertEqual(text, export.asiair_csv([oct22_night()], BY_ID, SITE, optics=OPTICS) + "\n")
+        self.assertNotIn("TOI-2046 b", text, "only that night's targets")
+        self.assertEqual([ln.split(", ")[0] for ln in text.splitlines()[1:]], ["HD 219134", "K2-29 b"])
+        path, note = export.write_night_file(text, export.night_file_name("asiair", "2026-10-22"), self.downloads,
+                                             self.downloads)
+        self.assertEqual(note, "")
+        self.assertEqual(path, os.path.join(self.downloads, "SHOBS-SCHED_ASIAIR_2026-10-22.csv"))
+        with open(path, "rb") as fh:
+            data = fh.read()
+        self.assertFalse(data.startswith(b"\xef\xbb\xbf"), "no byte-order mark")
+        self.assertEqual(data.decode("utf-8"), text)
+
+    def test_chosen_folder_used(self):
+        cloud = os.path.join(self.tmp, "iCloud Drive", "ASIAIR")
+        os.makedirs(cloud)
+        path, note = export.write_night_file("x\n", "a.csv", cloud, self.downloads)
+        self.assertEqual((path, note), (os.path.join(cloud, "a.csv"), ""))
+        self.assertEqual(os.listdir(cloud), ["a.csv"], "the write probe leaves nothing behind")
+
+    def test_missing_folder_falls_back(self):
+        gone = os.path.join(self.tmp, "gone")
+        path, note = export.write_night_file("x\n", "a.csv", gone, self.downloads)
+        self.assertEqual(path, os.path.join(self.downloads, "a.csv"))
+        self.assertTrue(note.startswith("⚠") and "is missing" in note and self.downloads in note, note)
+        path, note = export.write_night_file("x\n", "b.csv", "", self.downloads)
+        self.assertEqual((path, note), (os.path.join(self.downloads, "b.csv"), ""), "no folder chosen: Downloads")
+
+    def test_unwritable_folder_falls_back(self):
+        locked = os.path.join(self.tmp, "locked")
+        os.makedirs(locked)
+        real = export.folder_writable
+        export.folder_writable = lambda f: f != locked and real(f)
+        try:
+            path, note = export.write_night_file("x\n", "a.csv", locked, self.downloads)
+        finally:
+            export.folder_writable = real
+        self.assertEqual(path, os.path.join(self.downloads, "a.csv"))
+        self.assertIn("cannot be written", note)
+        # the probe passes but the write itself fails: still the fallback
+        import builtins
+        real_open = builtins.open
+
+        def bad_open(p, *a, **k):
+            if str(p).startswith(locked + os.sep) and "probe" not in str(p):
+                raise PermissionError(13, "Permission denied")
+            return real_open(p, *a, **k)
+        builtins.open = bad_open
+        try:
+            path, note = export.write_night_file("x\n", "c.csv", locked, self.downloads)
+        finally:
+            builtins.open = real_open
+        self.assertEqual(path, os.path.join(self.downloads, "c.csv"))
+        self.assertIn("cannot be written", note)
+        # both fail: the error reaches the caller
+        with self.assertRaises(OSError):
+            export.write_night_file("x\n", "d.csv", os.path.join(self.tmp, "no1"), os.path.join(self.tmp, "no2"))
+
+    @staticmethod
+    def nina_dms(text: str) -> float:
+        """AstroUtil.DMSToDegrees as NINA writes it: the numbers by regex, '-' anywhere = negative."""
+        nums = [float(x) for x in re.findall(r"[0-9.]+", text)]
+        v = nums[0] + (nums[1] / 60 if len(nums) > 1 else 0) + (nums[2] / 3600 if len(nums) > 2 else 0)
+        return -v if "-" in text else v
+
+    def test_nina_format(self):
+        op = Optics.from_dict(OPTICS.to_dict())
+        op.camera_angle_deg = 210.5
+        south = Target(id="s", name="Foo, “Bär”", ra=83.8221, dec=-5.3911)
+        n = oct20_night()
+        n.blocks.append(Block(target_id="s", name=south.name, start=at(date(2026, 10, 20), 3, 0),
+                              end=at(date(2026, 10, 20), 4, 0)).to_dict())
+        by_id = dict(BY_ID, s=south)
+        text = export.night_file_text("nina", n, by_id, SITE, optics=op)
+        self.assertEqual(text, export.nina_csv([n], by_id, SITE, optics=op))
+        self.assertTrue(text.endswith("\r\n"))
+        rows = list(csv.reader(io.StringIO(text, newline="")))
+        # CsvHelper matches NINA's header names lower-cased and trimmed
+        self.assertEqual([h.lower().strip() for h in rows[0][:4]], ["pane", "ra", "dec", "position angle (east)"])
+        self.assertEqual([r[0] for r in rows[1:]], ["TOI-2046 b", "HD 219134", "Foo, “Bär”"])
+        for r in rows[1:]:
+            self.assertEqual(len(r), 9)
+            self.assertEqual(r[3], "210.50")
+        hd = rows[2]
+        self.assertAlmostEqual(self.nina_dms(hd[1]) * 15, TARGETS["HD 219134"].ra, delta=0.01)
+        self.assertAlmostEqual(self.nina_dms(hd[2]), TARGETS["HD 219134"].dec, delta=0.001)
+        self.assertAlmostEqual(self.nina_dms(rows[3][2]), -5.3911, delta=0.001)
+        self.assertIn('"Foo, “Bär”"', text, "a name with a comma is quoted")
+        self.assertNotIn(", ", text.splitlines()[1].split('"')[0], "no space after the separators")
+        self.assertEqual(export.nina_name("A\tB\n"), "A B")
+
+
+class TestLabelsAndPlots(unittest.TestCase):
+    """Item 6 labels on the card; the optional night plot."""
+
+    def test_dst_night_new_york(self):
+        n = NightPlan(date="2026-10-31", dusk=sky.local_jd(date(2026, 10, 31), 19, 50, TZ),
+                      dawn=sky.local_jd(date(2026, 11, 1), 5, 30, TZ))
+        self.assertEqual(export.night_clock_label(n, SITE), "Local time (UTC−4 → UTC−5)")
+        page = export.plan_card_html([n], SITE, {})
+        self.assertIn("Times: Local time (UTC−4 → UTC−5)", page)
+        self.assertIn("all times Local time (UTC−4 → UTC−5)", page)
+        self.assertNotIn("site clock", page)
+        text = export.plan_card_text([n], SITE, {})
+        self.assertIn("Times: Local time (UTC−4 → UTC−5)", text)
+        self.assertIn("(America/New_York)", text, "the zone name stays in small text")
+        # a run across the change: the footer spans it, each night has its own
+        nn = [NightPlan(date="2026-10-30"), n, NightPlan(date="2026-11-02")]
+        self.assertEqual(export.nights_clock_label(nn, SITE), "Local time (UTC−4 → UTC−5)")
+        self.assertEqual(export.night_clock_label(nn[0], SITE), "Local time (UTC−4)")
+        self.assertEqual(export.night_clock_label(nn[2], SITE), "Local time (UTC−5)")
+
+    def test_non_us_zones(self):
+        berlin = Site(lat=52.5, lon=13.4, tz="Europe/Berlin")
+        self.assertEqual(export.night_clock_label(NightPlan(date="2026-10-24"), berlin),
+                         "Local time (UTC+2 → UTC+1)")
+        self.assertEqual(export.night_clock_label(NightPlan(date="2026-11-10"), berlin), "Local time (UTC+1)")
+        tokyo = Site(lat=35.68, lon=139.69, tz="Asia/Tokyo")
+        self.assertIn("Times: Local time (UTC+9)", export.plan_card_html([NightPlan(date="2026-10-24")], tokyo, {}))
+        india = Site(lat=19.0, lon=72.8, tz="Asia/Kolkata")
+        self.assertEqual(export.night_clock_label(NightPlan(date="2026-10-24"), india), "Local time (UTC+5:30)")
+        bad = Site(lat=35.0, lon=-80.0, tz="Mars/Olympus")
+        self.assertEqual(export.night_clock_label(NightPlan(date="2026-10-24"), bad), "UTC")
+
+    def test_card_sections_match_card(self):
+        sec = export.card_sections(oct20_night(), SITE, {}, None, BY_ID)
+        self.assertEqual(sec["iso"], "2026-10-20")
+        self.assertEqual(sec["clock"], "Local time (UTC−4)")
+        self.assertEqual([r["target"] for r in sec["rows"]], ["TOI-2046 b", "HD 219134"])
+        self.assertEqual([h for h, _ in sec["lists"]], ["Flats", "Darks", "Didn't fit, and why", "Free time"])
+
+    def test_plots_embedded(self):
+        import base64
+        png = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15"
+               b"\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02\xfe\xa7V\x81\xb5\x00\x00\x00\x00IEND"
+               b"\xaeB`\x82")
+        nights = [oct20_night(), oct22_night()]
+        plain = export.plan_card_html(nights, SITE, {}, None, BY_ID)
+        self.assertEqual(export.plan_card_html(nights, SITE, {}, None, BY_ID, plots=None), plain)
+        self.assertEqual(export.plan_card_html(nights, SITE, {}, None, BY_ID, plots={}), plain)
+        page = export.plan_card_html(nights, SITE, {}, None, BY_ID, plots={"2026-10-20": png})
+        self.assertEqual(page.count("<img "), 1, "only the night that has a plot")
+        b64 = base64.b64encode(png).decode("ascii")
+        self.assertIn(f'<figure class="plot"><img src="data:image/png;base64,{b64}"', page)
+        # under the 20th's heading and facts, before its table
+        i20, iimg = page.index("<h2>Tue 20 Oct 2026</h2>"), page.index("<figure")
+        self.assertLess(i20, iimg)
+        self.assertLess(iimg, page.index("<table", i20))
+        self.assertLess(iimg, page.index("<h2>Thu 22 Oct 2026</h2>"))
+        self.assertIn(".plot { margin: 4pt 0; break-inside: avoid; page-break-inside: avoid; }", page)
+        self.assertIsNone(re.search(r"<(script|link)\b", page))
+        self.assertNotIn("http", page, "still self-contained")
 
 
 if __name__ == "__main__":

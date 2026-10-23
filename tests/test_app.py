@@ -213,6 +213,23 @@ def make_fakes():
         return "\n".join(["Pane, RA, DEC"] + [f"{r['name']}, 1, 2" for r in rows])
 
     ex.table_rows, ex.asiair_csv, ex.asiair_targets = table_rows, asiair_csv, asiair_targets
+
+    def night_file_text(program, night, targets_by_id, site=None, optics=None):
+        rows, _ = asiair_targets([night], targets_by_id, site)
+        head = "Pane,RA,DEC" if program == "nina" else "Pane, RA, DEC"
+        return "\n".join([head] + [f"{r['name']}, 1, 2" for r in rows]) + "\n"
+
+    def write_night_file(text, name, folder, fallback):
+        note = ""
+        if not (folder and os.path.isdir(folder)):
+            note = f"⚠ The chosen folder {folder} is missing, so the file went to {fallback} instead." if folder else ""
+            folder = fallback
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        return path, note
+    ex.night_file_text, ex.write_night_file = night_file_text, write_night_file
+    ex.night_file_name = lambda program, d: f"SHOBS-SCHED_{program.upper()}_{d}.csv"
     ex.plan_card_text = lambda nights, site, s=None, w=None, targets_by_id=None: "PLAN CARD " + " ".join(
         n.date for n in nights)
     ex.plan_card_html = lambda nights, site, s=None, w=None, targets_by_id=None: "<html>card</html>"
@@ -301,7 +318,7 @@ class TestAppWithFakes(Base):
         self.assertTrue(sch.msg_var.get().startswith("✖ Enter your site"))
         sch.build()
         self.assertTrue(sch.ind.var.get().startswith("✖ Enter your site"))
-        self.assertIn("Tick one or more", app.pages[3].preview.get("1.0", "end"))
+        self.assertIn("No schedule yet", app.pages[3].card_text())
 
     # ---- round-2 review regressions ----
     def test_edit_unchanged_save_keeps_ephemeris(self):
@@ -882,48 +899,65 @@ class TestAppWithFakes(Base):
             x0, _y0, x1, _y1 = tab.bar.bbox(item)
             self.assertTrue(any(xa - 2 <= x0 and x1 <= xb + 2 for xa, xb in blocks), (x0, x1, blocks))
 
-    def test_save_csv_downloads_remembered_folder_and_path(self):
+    def _sandbox_downloads(self):
+        downloads = os.path.join(self.tmp, "Downloads")
+        os.makedirs(downloads, exist_ok=True)
+        real = settings.downloads_dir
+        settings.downloads_dir = lambda: downloads
+        self.addCleanup(lambda: setattr(settings, "downloads_dir", real))
+        return downloads
+
+    def test_export_night_files_folder_and_fallback(self):
         self.golden_home()
         app = self.open()
         self.build(n=1)
         app.show_page(3)
         page = app.pages[3]
-        downloads = os.path.join(self.tmp, "Downloads")
-        os.makedirs(downloads)
-        real_dl, real_ask = settings.downloads_dir, self.sa.filedialog.asksaveasfilename
-        asked = []
-        reply = {"path": ""}
-
-        def ask(**kw):
-            asked.append(kw)
-            return reply["path"]
-        settings.downloads_dir = lambda: downloads
-        self.sa.filedialog.asksaveasfilename = ask
+        downloads = self._sandbox_downloads()
+        page.refresh()
+        iso = "2026-10-20"
+        self.assertIn(iso, page.nights_ui)
+        self.assertEqual(set(page.nights_ui[iso]["buttons"]), {"asiair", "nina", "copy"},
+                         "per night: Export to ASIAIR, Export to NINA, Copy")
+        self.assertIn(downloads, page.folder_var.get(), "no folder chosen: Downloads")
+        # ASIAIR: to Downloads, full path in a ✔ line, Open folder / Open in Notepad, contents behind a toggle
+        page.nights_ui[iso]["buttons"]["asiair"].invoke()
+        path = page.results[(iso, "asiair")]["path"]
+        self.assertEqual(path, os.path.join(downloads, "SHOBS-SCHED_ASIAIR_2026-10-20.csv"))
+        self.assertTrue(os.path.exists(path))
+        msg = page.nights_ui[iso]["asiair"]["label"].cget("text")
+        self.assertTrue(msg.startswith("✔ ASIAIR: saved"), msg)
+        self.assertIn(path, msg)
+        self.assertEqual(page.open_folder(path), downloads)
+        self.assertEqual(page.open_in_notepad(path), path)
+        self.assertIsNone(page.nights_ui[iso]["asiair"]["contents"], "no raw text box by default")
+        self.assertTrue(page.toggle_contents(iso, "asiair"))
+        shown = page.nights_ui[iso]["asiair"]["contents"].get("1.0", "end")
+        self.assertTrue(shown.startswith("Pane, RA, DEC"), shown)
+        self.assertFalse(page.toggle_contents(iso, "asiair"))
+        # a chosen folder (e.g. iCloud) is remembered and used
+        cloud = os.path.join(self.tmp, "iCloudDrive")
+        os.makedirs(cloud)
+        real_ask = self.sa.filedialog.askdirectory
+        self.sa.filedialog.askdirectory = lambda **kw: cloud
         try:
-            self.assertEqual(settings.export_dir(app.settings), downloads, "first time: the Downloads folder")
-            page.save_csv()                                   # cancelled: nothing written, nothing remembered
-            self.assertEqual(asked[-1]["initialdir"], downloads)
-            self.assertEqual(asked[-1]["initialfile"], "SHOBS-SCHED_ASIAIR_2026-10-20.csv")
-            self.assertFalse(app.settings.get("export_dir"))
-            self.assertFalse(page.open_btn.winfo_manager())
-            other = os.path.join(self.tmp, "plans")
-            os.makedirs(other)
-            reply["path"] = os.path.join(other, "SHOBS-SCHED_ASIAIR_2026-10-20.csv")
-            page.save_csv()
-            self.assertTrue(os.path.exists(reply["path"]))
-            msg = page.msg_var.get()
-            self.assertTrue(msg.startswith("✔ Saved"), msg)
-            self.assertIn(reply["path"], msg, "the full path is shown")
-            self.assertTrue(page.open_btn.winfo_manager(), "Open folder appears after a save")
-            self.assertEqual(page.open_folder(), other)
-            self.assertEqual(settings.load_settings()["export_dir"], other, "the folder is remembered")
-            page.save_csv()
-            self.assertEqual(asked[-1]["initialdir"], other, "next time the dialog opens there")
-            shutil.rmtree(other)
-            self.assertEqual(settings.export_dir(app.settings), downloads, "a vanished folder falls back")
+            self.assertEqual(page.choose_folder(), cloud)
         finally:
-            settings.downloads_dir = real_dl
-            self.sa.filedialog.asksaveasfilename = real_ask
+            self.sa.filedialog.askdirectory = real_ask
+        self.assertEqual(settings.load_settings()["asiair_dir"], cloud)
+        self.assertEqual(page.export_night(iso, "asiair"), os.path.join(cloud, "SHOBS-SCHED_ASIAIR_2026-10-20.csv"))
+        # NINA goes to Downloads
+        self.assertEqual(page.export_night(iso, "nina"), os.path.join(downloads, "SHOBS-SCHED_NINA_2026-10-20.csv"))
+        self.assertTrue(page.msg_var.get().startswith("✔ NINA: saved"), page.msg_var.get())
+        # the folder vanished: ⚠ and the file goes to Downloads
+        shutil.rmtree(cloud)
+        page.refresh()
+        self.assertIn("not found", page.folder_var.get())
+        p2 = page.export_night(iso, "asiair")
+        self.assertEqual(p2, os.path.join(downloads, "SHOBS-SCHED_ASIAIR_2026-10-20.csv"))
+        self.assertTrue(page.msg_var.get().startswith("⚠ ASIAIR: saved"), page.msg_var.get())
+        page.use_downloads()
+        self.assertEqual(settings.load_settings()["asiair_dir"], "")
 
     def test_downloads_dir_fallbacks(self):
         real = os.path.expanduser
@@ -947,18 +981,23 @@ class TestAppWithFakes(Base):
         self.build(n=1)
         app.show_page(3)
         page = app.pages[3]
-        self.assertIn("PLAN CARD 2026-10-20", page.preview.get("1.0", "end"))
+        text = page.card_text()
+        self.assertIn("Tue 20 Oct", text, "the on-screen card shows the night")
+        self.assertIn("Time", text)
+        self.assertIn("Notes", text)
+        self.assertIn("Times: Local time (UTC−4)", text)
         page.copy_csv()
         clip = app.clipboard_get()
         self.assertTrue(clip.startswith("Pane, RA, DEC"))
         n = len(clip.splitlines()) - 1
-        self.assertEqual(page.msg_var.get().split(".")[0], f"✔ Copied {n} targets")
+        self.assertEqual(page.msg_var.get().split(".")[0], f"✔ Copied {n} targets for Tue 20 Oct")
+        self.assertIn(("2026-10-20", "copy"), page.results)
         path = page.print_card()
         self.assertTrue(path and os.path.exists(path) and path.startswith(settings.cache_dir()))
-        out = os.path.join(self.tmp, "x.csv")
-        self.assertTrue(page.write_csv(out, clip))
+        self.assertTrue(page.page_msg_var.get().startswith("✔ The plan card is open"))
         for v in page.night_vars.values():
             v.set(False)
+        self.assertIn("Tick one or more nights", page.card_text())
         page.copy_csv()
         self.assertTrue(page.msg_var.get().startswith("⚠ Tick one or more nights"))
 
@@ -1575,7 +1614,23 @@ class TestAppWithRealModules(Base):
         app.pages[3].copy_csv()
         self.assertTrue(app.pages[3].msg_var.get().startswith("✔ Copied"), app.pages[3].msg_var.get())
         self.assertTrue(app.clipboard_get().startswith("Pane, RA, DEC"))
-        self.assertIn("SHOBS-SCHED", app.pages[3].preview.get("1.0", "end"))
+        self.assertIn("All times Local time (UTC−4)", app.pages[3].card_text())
+        # per night, real files: ASIAIR (format unchanged) and NINA (CSV for NINA's Import targets)
+        downloads = os.path.join(self.tmp, "Downloads")
+        os.makedirs(downloads)
+        real_dl = settings.downloads_dir
+        settings.downloads_dir = lambda: downloads
+        try:
+            iso = app.pages[3].chosen()[0].date
+            pa = app.pages[3].export_night(iso, "asiair")
+            pn = app.pages[3].export_night(iso, "nina")
+        finally:
+            settings.downloads_dir = real_dl
+        with open(pa, encoding="utf-8") as fh:
+            self.assertTrue(fh.read().startswith("Pane, RA, DEC, Position Angle (East)"))
+        with open(pn, encoding="utf-8", newline="") as fh:
+            self.assertTrue(fh.read().startswith("Pane,RA,DEC,Position Angle (East)"))
+        self.assertTrue(os.path.basename(pn).startswith("SHOBS-SCHED_NINA_"))
         # the usual camera angle goes into the list, and the page says so
         app.settings["optics"]["camera_angle_deg"] = 30.0
         app.pages[3].update_preview()
