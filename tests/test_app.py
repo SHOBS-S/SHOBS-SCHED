@@ -978,6 +978,61 @@ class TestAppWithFakes(Base):
         app.settings["export_dir"] = other
         self.assertEqual(os.path.dirname(page.export_night(b, "nina")), os.path.join(self.tmp, "Downloads"))
 
+    def test_obsplan_name_stale_bar_and_past_schedule(self):
+        self.golden_home()
+        app = self.open()
+        tz = app.site.tz
+        real = sky.now_jd
+        sky.now_jd = lambda: sky.local_jd(date(2026, 10, 20), 21, 0, tz)      # the evening of Tue 20 Oct
+        app._info_cache.clear()
+        try:
+            self.assertEqual(self.sa.STEPS[3], "OBSPlan")
+            self.build(start=date(2026, 10, 20), n=2)
+            self._sandbox_downloads()
+            app.show_page(3)
+            page = app.pages[3]
+            self.assertEqual(app.title_var.get(), "OBSPlan")
+            self.assertFalse(page.warn_lbl.winfo_manager(), "a fresh plan: no ⚠ bar")
+            self.assertTrue(page.export_night("2026-10-20", "asiair"))
+            self.assertTrue(page.msg_var.get().startswith("✔ ASIAIR"))
+            # Setup changed since the build: ⚠ bar, Print and Export still run but say ⚠
+            app.settings_changed()
+            app.show_page(3)
+            self.assertTrue(page.warn_lbl.winfo_manager())
+            self.assertEqual(page.warn_var.get(), page.STALE)
+            self.assertEqual(page.warn_lbl.cget("style"), "Warn.TLabel")
+            path = page.export_night("2026-10-20", "nina")
+            self.assertTrue(path and os.path.exists(path))
+            self.assertTrue(page.msg_var.get().startswith("⚠ Plan out of date"), page.msg_var.get())
+            self.assertIn(path, page.msg_var.get())
+            self.assertTrue(page.print_card())
+            self.assertTrue(page.page_msg_var.get().startswith("⚠ Plan out of date"), page.page_msg_var.get())
+            # rebuilt: the bar goes
+            self.build(start=date(2026, 10, 20), n=2)
+            app.show_page(3)
+            self.assertFalse(page.warn_lbl.winfo_manager())
+            # three days later every night has passed: Schedule and OBSPlan both say so, tabs marked (past)
+            sky.now_jd = lambda: sky.local_jd(date(2026, 10, 23), 21, 0, tz)
+            app._info_cache.clear()
+            app.show_page(2)
+            sch = app.pages[2]
+            self.assertEqual(sch.msg_var.get(), "⚠ Last built for Wed 21 Oct (past): press Build schedule.")
+            self.assertEqual([sch.nb.tab(t.frame, "text").endswith("(past)") for t in sch.tabs], [True, True])
+            self.assertTrue(sch.tabs[0].past_lbl.winfo_manager())
+            self.assertIn("Last built for Wed 21 Oct (past)", sch.tabs[0].past_lbl.cget("text"))
+            app.show_page(3)
+            self.assertIn("Last built for Wed 21 Oct (past)", page.warn_var.get())
+            # one night still ahead: the schedule is live; only the past night is marked
+            sky.now_jd = lambda: sky.local_jd(date(2026, 10, 21), 21, 0, tz)
+            app._info_cache.clear()
+            app.show_page(2)
+            self.assertFalse(sch.msg_var.get().startswith("⚠ Last built"))
+            self.assertEqual([sch.nb.tab(t.frame, "text").endswith("(past)") for t in sch.tabs], [True, False])
+            app.show_page(3)
+            self.assertFalse(page.warn_lbl.winfo_manager())
+        finally:
+            sky.now_jd = real
+
     def test_export_nights_flow_and_plots_tick(self):
         self.golden_home()
         app = self.open()

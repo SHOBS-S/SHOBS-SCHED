@@ -493,6 +493,26 @@ class TestLabelsAndPlots(unittest.TestCase):
         self.assertIsNone(re.search(r"<(script|link)\b", page))
         self.assertNotIn("http", page, "still self-contained")
 
+    def test_plot_page_then_table_page(self):
+        """With a plot: page 1 = heading, facts, plot; page 2 = the whole table and the lists (kept together).
+        A night without a plot is laid out as before."""
+        nights = [oct20_night(), oct22_night()]
+        page = export.plan_card_html(nights, SITE, {}, None, BY_ID, plots={"2026-10-20": b"\x89PNG fake"})
+        s20 = page[page.index('<section class="night with-plot">'):page.index("</section>") + 10]
+        self.assertTrue(s20.index('<div class="plotpage">') < s20.index("<h2>") < s20.index("<figure")
+                        < s20.index('</div><div class="tablepage">') < s20.index("<table")
+                        < s20.index("<h3>Flats</h3>"))
+        self.assertIn('<p class="cont">Tue 20 Oct 2026 · Times: Local time (UTC−4)</p>', s20)
+        self.assertTrue(s20.endswith("</div></div></section>"))
+        self.assertEqual(page.count('class="night with-plot"'), 1)
+        self.assertEqual(page.count('<section class="night">'), 1, "the 22nd has no plot: as before")
+        for rule in (".plotpage { break-after: page;", ".tablepage { break-inside: avoid;",
+                     ".night.with-plot:not(:first-of-type) { break-before: page;", "tr, .list { break-inside: avoid;"):
+            self.assertIn(rule, page)
+        plain = export.plan_card_html(nights, SITE, {}, None, BY_ID)
+        self.assertNotIn("plotpage", plain.split("</style>")[1])
+        self.assertNotIn("tablepage", plain.split("</style>")[1])
+
 
 if __name__ == "__main__":
     unittest.main()

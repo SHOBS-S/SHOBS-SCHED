@@ -609,7 +609,11 @@ td.notes { font-size: 10pt; }
 .list ul { margin: 0; padding-left: 16pt; }
 .empty { font-style: italic; }
 .plot { margin: 4pt 0; break-inside: avoid; page-break-inside: avoid; }
-.plot img { display: block; width: 100%; height: auto; max-height: 115mm; object-fit: contain; }
+.plot img { display: block; width: 100%; height: auto; max-height: 150mm; object-fit: contain; }
+.night.with-plot:not(:first-of-type) { break-before: page; page-break-before: always; }
+.plotpage { break-after: page; page-break-after: always; }
+.tablepage { break-inside: avoid; page-break-inside: avoid; }
+.cont { font-size: 12pt; font-weight: 700; margin: 0 0 2pt; }
 footer .zone { font-size: 8pt; color: #333; }
 footer { break-before: avoid; page-break-before: avoid; margin-top: 8pt; border-top: 0.75pt solid #000; padding-top: 3pt; font-size: 9pt; }
 @media print { body { padding: 0; max-width: none; font-size: 10pt; } h1 { font-size: 16pt; } h2 { font-size: 14pt; }
@@ -636,16 +640,21 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
         out.append('<p class="empty">No nights selected.</p>')
     for n in ns:
         f = _night_facts(n, site, weather_by_date, settings_dict)
-        out.append('<section class="night">')
+        png = (plots or {}).get(str(n.date)[:10])
+        # with a plot: page 1 = heading, facts and the plot; page 2 = the whole table and the lists
+        out.append('<section class="night with-plot">' if png else '<section class="night">')
+        if png:
+            out.append('<div class="plotpage">')
         out.append(f"<h2>{e(f['date'])}</h2>")
         out.append(f'<p class="facts"><b>{e(f["dark"])}</b> · {e(f["moon"])} · Times: {e(f["clock"])}</p>')
         if f["weather"]:
             out.append(f'<p class="facts">{e(f["weather"])}</p>')
-        png = (plots or {}).get(str(n.date)[:10])
         if png:
             b64 = base64.b64encode(bytes(png)).decode("ascii")
             out.append(f'<figure class="plot"><img src="data:image/png;base64,{b64}" '
                        f'alt="Night plot, {e(f["date"])}"></figure>')
+            out.append('</div><div class="tablepage">')
+            out.append(f'<p class="cont">{e(f["date"])} · Times: {e(f["clock"])}</p>')
         rows = table_rows(n, site, targets_by_id)
         if rows:
             cols = ("c-time", "c-target", "c-radec", "c-mode", "c-alt", "c-mer", "c-exp", "c-frames", "c-notes")
@@ -676,7 +685,7 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
             if items:
                 out.append(f'<div class="list"><h3>{e(head)}</h3><ul>'
                            + "".join(f"<li>{e(x)}</li>" for x in items) + "</ul></div>")
-        out.append("</div></section>")
+        out.append("</div>" + ("</div>" if png else "") + "</section>")
     foot, zone_name = _footer(site, ns)
     out.append(f'<footer>{e(foot)} <span class="zone">({e(zone_name)})</span></footer></body></html>')
     return "\n".join(out)

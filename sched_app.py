@@ -7,7 +7,7 @@ seven, and exports the plan for ASIAIR. Four pages, as the numbered steps in the
   1 Setup     site, optics and camera, mount, limits, horizon, weather source
   2 Targets   the target list in four groups (Transits, Variables, Campaigns, Suggested)
   3 Schedule  one tab per night: night plot (airmass, twilight, Moon, weather), nightly table, didn't fit, free time
-  4 Export    ASIAIR coordinate CSV and the printable plan card
+  4 OBSPlan   the plan card (print it), per-night ASIAIR and NINA files
 
 The work is done by targets.py, planner.py, weather.py and export.py; they are imported lazily (mod()), so the app
 still opens when one of them is missing and says which part cannot run. Lookups, builds and forecasts run in
@@ -47,7 +47,7 @@ from models import (MODE_NAMES, PRIORITIES, STATUS_LABELS, Block, NightPlan, Opt
                     Schedule, Site, Target)
 from style import px  # noqa: E402
 
-STEPS = ("Setup", "Targets", "Schedule", "Export")
+STEPS = ("Setup", "Targets", "Schedule", "OBSPlan")
 GROUPS = (("transit", "Transits"), ("variable", "Variables"), ("campaign", "Campaigns"), ("suggested", "Suggested"))
 DARKNESS = (("Astronomical (Sun −18°)", -18.0), ("Nautical (Sun −12°)", -12.0))
 
@@ -3081,6 +3081,24 @@ class SchedulePage:
         self.nb.bind("<<NotebookTabChanged>>", lambda _e: self._tab_changed())
         self.tabs: list[NightTab] = []
         self._start_dates: list[date] = []
+        self._past_key = None                     # which nights were past when the tabs were made
+
+    # ---- past nights ----
+    def past_flags(self) -> list[bool]:
+        """Per saved night: True when it is before tonight's night (site zone)."""
+        tonight = self.app.tonight().isoformat()
+        return [str(n.get("date", "")) < tonight for n in self.app.schedule.nights]
+
+    def all_past(self) -> bool:
+        flags = self.past_flags()
+        return bool(flags) and all(flags)
+
+    def past_note(self) -> str:
+        """'⚠ Last built for Thu 22 Oct (past): press Build schedule.' when every night has passed, else ''."""
+        if not self.all_past():
+            return ""
+        last = self.app.schedule.nights[-1].get("date", "")
+        return f"⚠ Last built for {night_label(last, self.app.site)} (past): press Build schedule."
 
     # ---- controls ----
     def _nights_changed(self):
@@ -3135,6 +3153,8 @@ class SchedulePage:
                                             "time zone); then build.")
         elif self.setup_stale and app.schedule.nights:
             set_msg(self.msg_var, self.msg, self.STALE)
+        elif self.all_past():
+            set_msg(self.msg_var, self.msg, self.past_note())
         elif (app.schedule.nights and app.schedule.nights[0].get("date", "") < app.tonight().isoformat()) \
                 or not self.msg_var.get() or self.msg_var.get() == self.STALE or \
                 self.msg_var.get().startswith("✖ Enter your site"):
@@ -3147,7 +3167,8 @@ class SchedulePage:
                 set_msg(self.msg_var, self.msg, "⚠ No targets are ticked to plan (☑ on the Targets page).")
             else:
                 set_msg(self.msg_var, self.msg, "")
-        if self.dirty:
+        key = tuple(self.past_flags())
+        if self.dirty or key != self._past_key:           # a night passed since the tabs were made
             self.rebuild_tabs()
             self.dirty = False
 
@@ -3165,6 +3186,7 @@ class SchedulePage:
     def rebuild_tabs(self, select: int | None = None):
         """One (empty) tab per night; a tab builds its contents the first time it is shown."""
         cur = select if select is not None else (self.current_index() or 0)
+        self._past_key = tuple(self.past_flags())
         for tab in self.tabs:
             tab.frame.destroy()
         self.tabs = []
@@ -3512,6 +3534,9 @@ class NightTab:
         follow_wrap(head, inner, 2 * pad)
         self.notes_box = ttk.Frame(inner, style="Card.TFrame")
         self.notes_box.pack(fill=tk.X, padx=pad)
+        # a past night: a ⚠ line above the plot
+        self.past_lbl = ttk.Label(inner, text="", style=style.status_style("warn"), justify=tk.LEFT)
+        follow_wrap(self.past_lbl, inner, 2 * pad)
         # the night plot (matplotlib; a ⚠ line instead when matplotlib is missing)
         self.plot_box = ttk.Frame(inner, style="Card.TFrame")
         self.plot_box.pack(fill=tk.X, padx=pad, pady=(px(app, 4), 0))
@@ -3534,8 +3559,8 @@ class NightTab:
                                           justify=tk.LEFT)
             self.plot_missing.pack(anchor="w", fill=tk.X, pady=px(app, 4))
         self.hover_var = tk.StringVar()
-        ttk.Label(inner, textvariable=self.hover_var, style="Card.TLabel").pack(anchor="w", fill=tk.X, padx=pad,
-                                                                                pady=(px(app, 2), 0))
+        self.hover_lbl = ttk.Label(inner, textvariable=self.hover_var, style="Card.TLabel")
+        self.hover_lbl.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 2), 0))
         legend = ("Faint line: the target all night  ·  bold: its block, in the color of the SHOBS-P mode it will be "
                   "reduced in, with the airmass at the start and the end  ·  ▼ flip inside the block; | meridian, no flip "
                   "needed  ·  "
@@ -3679,17 +3704,37 @@ class NightTab:
         n = self.app.schedule.nights[self.idx]
         warn = (any(b.get("cautions") for b in n.get("blocks", [])) or n.get("didnt_fit")
                 or any(str(x).startswith(("✖", "⚠")) for x in n.get("notes", []) or []))
-        return ("⚠ " if warn else "") + night_label(n.get("date", ""), self.app.site)
+        past = " (past)" if str(n.get("date", "")) < self.app.tonight().isoformat() else ""
+        return ("⚠ " if warn else "") + night_label(n.get("date", ""), self.app.site) + past
 
     def blocks(self) -> list[tuple[int, Block]]:
         bl = self.night().blocks_obj()
         return sorted(enumerate(bl), key=lambda p: p[1].start)
+
+    def show_past(self):
+        """A night before tonight: a ⚠ line above the plot (the plot stays: it is the record of that night). When
+        every night of the schedule has passed, the line says to build a new schedule."""
+        app, pad = self.app, px(self.app, 10)
+        night = self.app.schedule.nights[self.idx]
+        past = str(night.get("date", "")) < app.tonight().isoformat()
+        allpast = self.page.all_past()
+        if past:
+            text = self.page.past_note() if allpast else (
+                f"⚠ {night_label(night.get('date', ''), app.site)} has passed: this tab is the record of that night "
+                "(mark what happened, then Re-review schedule).")
+            self.past_lbl.configure(text=text)
+            if not self.past_lbl.winfo_manager():
+                self.past_lbl.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 4), 0), before=self.plot_box)
+        else:
+            self.past_lbl.pack_forget()
+        return past
 
     def fill(self):
         if not self.built:
             self.stale = True
             return
         self.stale = False
+        self.show_past()
         app, night, site = self.app, self.night(), self.app.site
         tz = site.tz
         info = app.night_info(date.fromisoformat(night.date)) if night.date else None
@@ -4274,13 +4319,13 @@ def own_row(b: Block, site, targets_by_id: dict) -> dict:
             "exposure": exp, "frames": frames, "notes": "; ".join(str(n) for n in b.notes)}
 
 
-# ---- 4 Export -------------------------------------------------------------------------------------------------------
+# ---- 4 OBSPlan ------------------------------------------------------------------------------------------------------
 
 class ExportPage:
-    """4 Export: the plan card itself, on screen (one scrolling page for the ticked nights, laid out like the printed
-    card), Print (the HTML card in the browser), and per night Export to ASIAIR / Export to NINA (a CSV file each;
+    """4 OBSPlan (John's name for the printed plan; the class keeps its v1.0 name): the plan card itself, on screen
+    (one scrolling page for the ticked nights, laid out like the printed card), Print (the HTML card in the browser), and per night Export to ASIAIR / Export to NINA (a CSV file each;
     both programs plan one night at a time)."""
-    title = "Export"
+    title = "OBSPlan"
     subtitle = ("The plan card for the ticked nights. Print it, or send one night at a time to ASIAIR or NINA: "
                 "their imports take the targets' positions only; times, exposures and notes stay on the card.")
     PROGRAMS = (("asiair", "ASIAIR"), ("nina", "NINA"))
@@ -4294,8 +4339,14 @@ class ExportPage:
         self.app = app
         self.dirty = True
         self.frame = ttk.Frame(parent, style="Card.TFrame")
+        # ⚠ bar: plan out of date (Setup or targets changed since the build) and / or every night past
+        self.warn_var = tk.StringVar()
+        self.warn_lbl = ttk.Label(self.frame, textvariable=self.warn_var, style=style.status_style("warn"),
+                                  justify=tk.LEFT, padding=(px(app, 8), px(app, 4)))
+        follow_wrap(self.warn_lbl, self.frame, px(app, 30))
         top = ttk.Frame(self.frame, style="Card.TFrame")
         top.pack(fill=tk.X)
+        self._top = top
         ttk.Label(top, text="Nights", style="Bold.TLabel").pack(anchor="w")
         self.checks = ttk.Frame(top, style="Card.TFrame")
         self.checks.pack(fill=tk.X, pady=(px(app, 2), px(app, 6)))
@@ -4481,8 +4532,41 @@ class ExportPage:
         self.set_folder("")
 
     # ---- the on-screen plan card ----
+    STALE = ("⚠ Plan out of date: Setup or targets changed since it was built. Press Build schedule on the "
+             "Schedule page before printing or exporting.")
+
+    def stale(self) -> bool:
+        """The schedule was built before Setup or the targets last changed (frames and exposures are stored at
+        build time)."""
+        return bool(self.app.schedule.nights) and bool(getattr(self.app.pages[2], "setup_stale", False))
+
+    def plan_warning(self) -> str:
+        lines = []
+        past = getattr(self.app.pages[2], "past_note", lambda: "")()
+        if past:
+            lines.append(past)
+        if self.stale():
+            lines.append(self.STALE)
+        return "\n".join(lines)
+
+    def _show_warn(self):
+        text = self.plan_warning()
+        self.warn_var.set(text)
+        if text and not self.warn_lbl.winfo_manager():
+            self.warn_lbl.pack(fill=tk.X, anchor="w", pady=(0, px(self.app, 6)), before=self._top)
+        elif not text:
+            self.warn_lbl.pack_forget()
+
+    def _stale_mark(self, msg: str) -> str:
+        """Print / Export status while the plan is out of date: the action still runs, the line says ⚠."""
+        if not self.stale() or not msg:
+            return msg
+        rest = msg[2:] if msg[:2] in ("✔ ", "⚠ ") else msg
+        return f"⚠ Plan out of date (Setup or targets changed since the build). {rest}"
+
     def update_preview(self):
         """Draw the plan card for the ticked nights (kept under this name: the night ticks call it)."""
+        self._show_warn()
         self.angle_var.set(self.angle_text())
         self._show_folder()
         for w in self.card.winfo_children():
@@ -4773,7 +4857,7 @@ class ExportPage:
         ang = self.angle_text().replace("ASIAIR and NINA lists: position", "Position")
         if ang:
             msg += " " + ang
-        msg = (f"⚠ {msg} " + " ".join(warn)) if warn else f"✔ {msg}"
+        msg = self._stale_mark((f"⚠ {msg} " + " ".join(warn)) if warn else f"✔ {msg}")
         self._result(iso, program, msg, path, text)
         settings.log(f"{name} file for {iso} saved to {path} ({n} rows)")
         return path
@@ -4823,7 +4907,7 @@ class ExportPage:
         ang = self.angle_text().replace("ASIAIR and NINA lists: position", "Position")
         if ang:
             msg += " " + ang
-        self._result(iso, "copy", msg)
+        self._result(iso, "copy", self._stale_mark(msg))
         settings.log(f"ASIAIR CSV copied for {iso} ({n} rows)")
 
     # ---- opening files and folders (never in tests) ----
@@ -4929,7 +5013,7 @@ class ExportPage:
                 self._msg(f"✖ The browser did not open ({why}). The plan card is saved at {path}: open it "
                           "yourself and print it from there.")
                 return path
-        self._msg("✔ The plan card is open in your browser; print it from there.")
+        self._msg(self._stale_mark("✔ The plan card is open in your browser; print it from there."))
         return path
 
 
