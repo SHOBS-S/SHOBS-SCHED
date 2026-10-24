@@ -899,7 +899,8 @@ class App(tk.Tk):
         # the copyright and sources line under the status line (as SHOBS-P's; the full list: Credits and sources)
         self.credits_line = ttk.Label(status, text=cr.STATUS_LINE if cr else "© Shiloh Hill Observatory",
                                       style="Status.TLabel", foreground=style.SIDE_HINT)
-        self.credits_line.pack(anchor="w", padx=px(self, 12), pady=(0, px(self, 4)))
+        self.credits_line.pack(anchor="w", fill=tk.X, padx=px(self, 12), pady=(0, px(self, 4)))
+        follow_wrap(self.credits_line, status, px(self, 24))
 
         outer = ttk.Frame(self)
         outer.pack(fill=tk.BOTH, expand=True)
@@ -966,6 +967,8 @@ class App(tk.Tk):
             if not self.pages[0].leave():
                 return
         self.on_credits = False
+        if hasattr(self, "credits_button"):
+            self.credits_button.configure(style="Step.TButton")
         self.page_index = i
         page = self.pages[i]
         self.title_var.set(page.title)
@@ -990,6 +993,7 @@ class App(tk.Tk):
         self.subtitle_var.set(page.subtitle)
         for b in self.step_buttons:
             b.configure(style="Step.TButton")
+        self.credits_button.configure(style="StepOn.TButton")
         page.frame.tkraise()
 
     def set_status(self, text: str):

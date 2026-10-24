@@ -6,9 +6,8 @@ COPYRIGHT = "© 2026 Shiloh Hill Observatory"
 LICENSE_LINE = ("SHOBS-SCHED is free software under the GNU General Public License, version 3 or later; it comes "
                 "with NO WARRANTY. See the LICENSE file.")
 # The status-bar line (as SHOBS-P's): copyright, what it is built on, its data, and where the full list is.
-STATUS_LINE = ("© Shiloh Hill Observatory    Built on Python, NumPy, Matplotlib, tzdata    "
-               "Data: NASA Exoplanet Archive, AAVSO VSX, VizieR and SIMBAD (CDS), Open-Meteo    "
-               "Night plot after TAPIR (E. Jensen)    Full list: Credits and sources (sidebar)")
+STATUS_LINE = ("© Shiloh Hill Observatory    Data: NASA Exoplanet Archive, AAVSO VSX, CDS (VizieR, SIMBAD), "
+               "Open-Meteo    Night plot after TAPIR    Full list: Credits and sources")
 
 # A DOI (Zenodo) or ASCL ID once SCHED has one; the Credits page shows "How to cite" only when one is set.
 CITATION_DOI = ""
