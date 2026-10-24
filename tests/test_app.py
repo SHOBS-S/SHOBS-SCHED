@@ -1284,9 +1284,15 @@ class TestAppWithFakes(Base):
         self.calls["catalog_note"] = "the catalog did not answer; using the saved copy from 9 days ago"
         page.find_suggested()
         self.pump()
-        self.assertIn("Catalog: The catalog did not answer; using the saved copy from 9 days ago.",
+        self.assertIn("Planet list: The catalog did not answer; using the saved copy from 9 days ago.",
                       page.find_ind.var.get())
         self.assertTrue(page.find_ind.var.get().startswith("⚠"))
+        # a saved copy within its week is normal, not a caution (John 24 Oct)
+        self.calls["catalog_note"] = "saved copy from 2 days ago"
+        page.find_suggested()
+        self.pump()
+        self.assertTrue(page.find_ind.var.get().startswith("✔ "), page.find_ind.var.get())
+        self.assertIn("(planet list: saved copy from 2 days ago; refreshed weekly)", page.find_ind.var.get())
 
     def test_setup_change_marks_schedule_stale_and_rows_stay_put(self):
         self.golden_home()

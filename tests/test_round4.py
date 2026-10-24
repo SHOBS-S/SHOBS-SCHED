@@ -145,6 +145,7 @@ class TestRound4Page(Base):
         side = " ".join(texts(app.side, []))
         self.assertNotIn("SHOBS-P", side)
         self.assertNotIn("Discovery", side)
+        self.assertNotIn("BLOCK COLORS", side, "no color legend in the sidebar (John 24 Oct)")
         self.assertIn("Credits and sources", side)
         for i in (1, 2, 3):
             app.show_page(i)

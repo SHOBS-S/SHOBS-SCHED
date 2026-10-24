@@ -923,13 +923,7 @@ class App(tk.Tk):
         self.credits_button = ttk.Button(side, text="Credits and sources", style="Step.TButton",
                                          command=self.show_credits)
         self.credits_button.pack(side=tk.BOTTOM, fill=tk.X, padx=px(self, 10), pady=(0, px(self, 4)))
-        legend = ttk.Frame(side, style="Side.TFrame")
-        legend.pack(side=tk.BOTTOM, fill=tk.X, padx=px(self, 10), pady=(0, px(self, 6)))
-        ttk.Label(legend, text="BLOCK COLORS", style="SideHead.TLabel").pack(
-            anchor="w", padx=px(self, 6), pady=(0, px(self, 3)))
-        for key in ("T", "V", "D"):                      # by target type (no photometry-program modes; 1.1.0)
-            ttk.Label(legend, text=f"   {style.MODE_COLORS[key]['name']}", style=f"Mode{key}.TLabel").pack(
-                fill=tk.X, pady=1)
+        # (no color legend in the sidebar: John 24 Oct; the Schedule page's plot legend says what the colors mean)
 
         right = ttk.Frame(outer)
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -2701,13 +2695,19 @@ class TargetsPage:
         self.app.targets_changed(planned=False)          # only unticked suggestions came and went
         self.fill()
         self._start_next_events()
+        n = len(self.suggestion_nights())
+        nights = "tonight" if n == 1 else f"the next {n} nights"
         text = (f"{len(added)} suggested transit{'s' if len(added) != 1 else ''} found, soonest first."
-                if added else "Done: no new full transits fit these nights.")
-        if note:
-            note = note.strip().rstrip(".")
-            self.find_ind.finish(f"⚠ {text} Catalog: {note[:1].upper() + note[1:]}.", linger_ms=0)
+                if added else f"Done: no new full transits fit {nights} (planets already listed are not "
+                              "suggested again).")
+        note = str(note or "").strip().rstrip(".")
+        # the planet list is refreshed weekly (the timings are not: each suggestion gets the most precise published
+        # ephemeris, fetched now); only an Archive that did not answer is a caution (John 24 Oct: "stale?")
+        if "did not answer" in note:
+            self.find_ind.finish(f"⚠ {text} Planet list: {note[:1].upper() + note[1:]}.", linger_ms=0)
         else:
-            self.find_ind.finish("✔ " + text)
+            extra = (f" (planet list: {note}; refreshed weekly)" if note.startswith("saved copy") else "")
+            self.find_ind.finish("✔ " + text + extra, linger_ms=0 if extra else 6000)
 
     # ---- suggested variables ----
     def ask_variable_search(self):
