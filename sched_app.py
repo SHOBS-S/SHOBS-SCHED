@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """SHOBS-SCHED — Shiloh Hill Observatory Scheduler (the app).
 
-Plans each night's targets for the three SHOBS-P modes (Variables, Transits, Discovery), for one night or a rolling
-seven, and exports the plan for ASIAIR. Four pages, as the numbered steps in the blue sidebar:
+Plans each night's targets (transits, variable stars and campaigns), for one night or a rolling seven, and exports
+the plan for ASIAIR and NINA. Four pages, as the numbered steps in the blue sidebar:
 
   1 Setup     site, optics and camera, mount, limits, horizon, weather source
-  2 Targets   the target list in five groups (Transits, Variables, Campaigns, Suggested Transits, Suggested
-              Variables)
+  2 Targets   the target list in three boxes (Campaigns, Transits, Variables), each row with its next event in the
+              planned nights; the Plan tick decides what is built
   3 Schedule  one tab per night: night plot (airmass, twilight, Moon, weather), nightly table, didn't fit, free time
+  Credits and sources (sidebar button): copyright, license and every source SCHED uses
   4 OBSPlan   the plan card (print it), per-night ASIAIR and NINA files
 
 The work is done by targets.py, planner.py, weather.py and export.py; they are imported lazily (mod()), so the app
@@ -45,14 +46,13 @@ import settings  # noqa: E402
 import sky  # noqa: E402
 import style  # noqa: E402
 from models import (MODE_NAMES, PRIORITIES, STATUS_LABELS, Block, NightPlan, Optics, Planet,  # noqa: E402
-                    Schedule, Site, Target)
+                    Schedule, Site, Target, TYPE_NAMES, block_type_code, type_name)
 from style import px  # noqa: E402
 
 STEPS = ("Setup", "Targets", "Schedule", "OBSPlan")
-# group keys are saved nowhere (a target's group comes from kind + suggested), so old target files load unchanged:
-# "suggested" stays the Suggested Transits key, "suggested_var" is new
-GROUPS = (("transit", "Transits"), ("variable", "Variables"), ("campaign", "Campaigns"),
-          ("suggested", "Suggested Transits"), ("suggested_var", "Suggested Variables"))
+# the Targets page boxes (1.1.0, John 24 Oct): a target's box is its type (kind); suggested, hand-added and kept
+# targets share it, and the Plan tick decides what is built. Group keys are saved nowhere, so old files load unchanged.
+GROUPS = (("campaign", "Campaigns"), ("transit", "Transits"), ("variable", "Variables"))
 DARKNESS = (("Astronomical (Sun −18°)", -18.0), ("Nautical (Sun −12°)", -12.0))
 
 
@@ -80,12 +80,16 @@ def darkness_value(label: str) -> float:
     return v if -24.0 <= v <= -6.0 else -18.0
 MODE_CHOICES = (("Variables (V)", "V"), ("Transits (T)", "T"), ("Discovery (D)", "D"))
 # what a star that is not (only) a known planet or VSX variable becomes: (label, kind, mode)
-KIND_CHOICES = (("Campaign, reduced in Variables (V)", "campaign", "V"),
-                ("Variable star (V)", "variable", "V"),
-                ("Discovery field (D)", "campaign", "D"),
-                ("Transit target, ephemeris typed later (T)", "transit", "T"))
+KIND_CHOICES = (("Campaign (a star you visit on many nights)", "campaign", "V"),
+                ("Variable star", "variable", "V"),
+                ("Star field (a campaign)", "campaign", "D"),
+                ("Transit target (type its ephemeris later)", "transit", "T"))
 _KIND_LEGACY = {"Variables (V)": ("campaign", "V"), "Discovery (D)": ("campaign", "D"),
-                "Transits (T)": ("transit", "T")}
+                "Transits (T)": ("transit", "T"),
+                # the v1.0 / early 1.1.0 labels (they named SHOBS-P's modes)
+                "Campaign, reduced in Variables (V)": ("campaign", "V"), "Variable star (V)": ("variable", "V"),
+                "Discovery field (D)": ("campaign", "D"),
+                "Transit target, ephemeris typed later (T)": ("transit", "T")}
 STAR_ITSELF = "The star itself (a campaign or a variable)"
 GROUP_CHOICES = (("Transit", "transit"), ("Variable", "variable"), ("Campaign", "campaign"))
 
@@ -99,7 +103,7 @@ def kind_mode_of(label: str):
 
 def planet_pick(name: str) -> str:
     """The "which mode?" choice for one of a star's transiting planets."""
-    return f"{name}: transiting planet, as a Transits target (T)"
+    return f"{name}: transiting planet (a transit target)"
 
 
 def and_list(names) -> str:
@@ -135,8 +139,12 @@ def lookup_star_planets(tg, name: str, ra=None, dec=None, vmag=None):
         return None, str(exc) or exc.__class__.__name__
 
 
-STATUS_CHOICES = tuple(STATUS_LABELS.values())          # Planned / Done / Partial / Clouded out
-STATUS_KEY = {v: k for k, v in STATUS_LABELS.items()}
+# the Status drop-down: a blank entry on top clears a mark (back to planned, unmarked; John 24 Oct), then
+# Done / Partial / Clouded out
+STATUS_CHOICES = ("",) + tuple(v for k, v in STATUS_LABELS.items() if k != "planned")
+STATUS_KEY = {v: k for k, v in STATUS_LABELS.items() if k != "planned"}
+STATUS_KEY[""] = "planned"
+STATUS_KEY[STATUS_LABELS["planned"]] = "planned"
 
 
 # ---- the worker modules, imported lazily ----------------------------------------------------------------------------
@@ -200,8 +208,8 @@ def span_text(a, b, tz) -> str:
 
 
 def group_of(t: Target) -> str:
-    if t.suggested:
-        return "suggested_var" if t.kind == "variable" else "suggested"
+    """The Targets box a target sits in: its type (1.1.0: suggested, hand-added and kept targets share one box; the
+    Plan tick decides what is built)."""
     return t.kind if t.kind in ("transit", "variable", "campaign") else "variable"
 
 
@@ -215,27 +223,50 @@ def suggested_when(t: Target) -> float | None:
     return w if math.isfinite(w) else None
 
 
-def row_order(group: str, now: float | None = None):
-    """Sort key of a Targets group: the Suggested groups by date of occurrence (soonest first; undated last, by
-    name — a date already past counts as undated), the others by name (rows stay put when ticked). Suggested
-    Variables night by night (John, 23 Oct): each night's timed events first (minima, maxima, full cycles, by time),
-    then that night's any-time fillers (and stars whose event time is too uncertain to promise)."""
-    def dated(t):
+def _jd(v) -> float | None:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
+
+
+def row_order(group: str, now: float | None = None, events_by_id: dict | None = None):
+    """Sort key of a Targets box (John, 23–24 Oct): Transits soonest transit first (by ingress); Variables night by
+    night, each night's timed minima / maxima first (by time), then its any-time stars; rows with no event in the
+    planned nights last, by name; Campaigns by name (rows stay put when ticked). events_by_id = {target id:
+    targets.next_events(...)}; a row whose event is not known yet falls back on its suggestion's own date."""
+    evs = events_by_id or {}
+
+    def fallback(t):
         w = suggested_when(t)
-        return None if (w is None or (now is not None and w < now)) else w
-    if group == "suggested_var":
+        if w is None or (now is not None and w < now):
+            return None
+        info = t.suggest_info if isinstance(t.suggest_info, dict) else {}
+        return {"night": str(info.get("night") or ""), "t": w, "t1": w,
+                "any": bool(info.get("kind") == "any" or info.get("time_uncertain"))}
+
+    def event(t):
+        ev = evs.get(t.id)
+        if not isinstance(ev, dict) or "none" in ev or "text" in ev:
+            return fallback(t) if not isinstance(ev, dict) else None
+        return ev
+
+    def night_iso(ev):
+        d = ev.get("night")
+        return d.isoformat() if isinstance(d, date) else str(d or "")
+    if group == "variable":
         def key(t):
-            w = dated(t)
-            if w is None:
+            ev = event(t)
+            w = _jd(ev.get("t")) if ev else None
+            if ev is None or w is None:
                 return (1, "", 0, 0.0, t.name.lower())
-            info = t.suggest_info if isinstance(t.suggest_info, dict) else {}
-            night = str(info.get("night") or "")
-            filler = 1 if (info.get("kind") == "any" or info.get("time_uncertain")) else 0
-            return (0, night, filler, w, t.name.lower())
+            return (0, night_iso(ev), 1 if ev.get("any") else 0, w, t.name.lower())
         return key
-    if group == "suggested":
+    if group == "transit":
         def key(t):
-            w = dated(t)
+            ev = event(t)
+            w = _jd(ev.get("t1")) if ev else None
             return (0, w, t.name.lower()) if w is not None else (1, 0.0, t.name.lower())
         return key
     return lambda t: (0, 0.0, t.name.lower())
@@ -863,7 +894,12 @@ class App(tk.Tk):
         status = ttk.Frame(self, style="Status.TFrame")
         status.pack(side=tk.BOTTOM, fill=tk.X)
         self.status_label = ttk.Label(status, textvariable=self.status_var, style="Status.TLabel")
-        self.status_label.pack(anchor="w", padx=px(self, 12), pady=px(self, 4))
+        self.status_label.pack(anchor="w", padx=px(self, 12), pady=(px(self, 4), 0))
+        cr = mod("credits")
+        # the copyright and sources line under the status line (as SHOBS-P's; the full list: Credits and sources)
+        self.credits_line = ttk.Label(status, text=cr.STATUS_LINE if cr else "© Shiloh Hill Observatory",
+                                      style="Status.TLabel", foreground=style.SIDE_HINT)
+        self.credits_line.pack(anchor="w", padx=px(self, 12), pady=(0, px(self, 4)))
 
         outer = ttk.Frame(self)
         outer.pack(fill=tk.BOTH, expand=True)
@@ -873,7 +909,7 @@ class App(tk.Tk):
         ttk.Label(side, text="Shiloh Hill\nObservatory\nScheduler", style="SideTitle.TLabel", justify=tk.LEFT).pack(
             anchor="w", padx=px(self, 16), pady=(px(self, 18), px(self, 2)))
         ttk.Label(side, text="(SHOBS-SCHED)", style="SideHint.TLabel").pack(anchor="w", padx=px(self, 16))
-        ttk.Label(side, text="Plans each night for\nVariables, Transits\nand Discovery", style="SideHint.TLabel",
+        ttk.Label(side, text="Plans each night's\ntransits, variable stars\nand campaigns", style="SideHint.TLabel",
                   justify=tk.LEFT).pack(anchor="w", padx=px(self, 16), pady=(px(self, 8), px(self, 12)))
         ttk.Label(side, text="STEPS", style="SideHead.TLabel").pack(anchor="w", padx=px(self, 16))
         self.step_buttons = []
@@ -883,12 +919,15 @@ class App(tk.Tk):
             self.step_buttons.append(b)
         ttk.Label(side, text=f"Version {settings.APP_VERSION}", style="SideHint.TLabel").pack(
             side=tk.BOTTOM, anchor="w", padx=px(self, 16), pady=px(self, 10))
+        self.credits_button = ttk.Button(side, text="Credits and sources", style="Step.TButton",
+                                         command=self.show_credits)
+        self.credits_button.pack(side=tk.BOTTOM, fill=tk.X, padx=px(self, 10), pady=(0, px(self, 4)))
         legend = ttk.Frame(side, style="Side.TFrame")
         legend.pack(side=tk.BOTTOM, fill=tk.X, padx=px(self, 10), pady=(0, px(self, 6)))
-        ttk.Label(legend, text="BLOCK COLORS (SHOBS-P MODE)", style="SideHead.TLabel").pack(
+        ttk.Label(legend, text="BLOCK COLORS", style="SideHead.TLabel").pack(
             anchor="w", padx=px(self, 6), pady=(0, px(self, 3)))
-        for key in ("V", "T", "D"):
-            ttk.Label(legend, text=f"{key}   {MODE_NAMES[key]}", style=f"Mode{key}.TLabel").pack(
+        for key in ("T", "V", "D"):                      # by target type (no photometry-program modes; 1.1.0)
+            ttk.Label(legend, text=f"   {style.MODE_COLORS[key]['name']}", style=f"Mode{key}.TLabel").pack(
                 fill=tk.X, pady=1)
 
         right = ttk.Frame(outer)
@@ -907,7 +946,10 @@ class App(tk.Tk):
                       ExportPage(self, holder)]
         for p in self.pages:
             p.frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.credits_page = CreditsPage(self, holder)
+        self.credits_page.frame.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.page_index = None
+        self.on_credits = False
 
     def _place_window(self):
         try:
@@ -919,9 +961,11 @@ class App(tk.Tk):
             pass
 
     def show_page(self, i: int):
-        if getattr(self, "page_index", None) == 0 and i != 0 and hasattr(self, "pages"):
+        if (getattr(self, "page_index", None) == 0 and i != 0 and hasattr(self, "pages")
+                and not getattr(self, "on_credits", False)):           # (left already on the way to Credits)
             if not self.pages[0].leave():
                 return
+        self.on_credits = False
         self.page_index = i
         page = self.pages[i]
         self.title_var.set(page.title)
@@ -934,6 +978,19 @@ class App(tk.Tk):
         except Exception as exc:
             settings.log(f"page {page.title}: {exc!r}\n{traceback.format_exc()}")
             self.set_status(f"✖ The {page.title} page hit a problem: {exc}")
+
+    def show_credits(self):
+        """The Credits and sources page (not a step: Back returns to the page you came from)."""
+        if getattr(self, "page_index", None) == 0 and not getattr(self, "on_credits", False):
+            if not self.pages[0].leave():
+                return
+        self.on_credits = True
+        page = self.credits_page
+        self.title_var.set(page.title)
+        self.subtitle_var.set(page.subtitle)
+        for b in self.step_buttons:
+            b.configure(style="Step.TButton")
+        page.frame.tkraise()
 
     def set_status(self, text: str):
         self.status_var.set(text)
@@ -1738,22 +1795,99 @@ def read_horizon_csv(path: str) -> tuple[list, str]:
 
 # ---- 2 Targets ------------------------------------------------------------------------------------------------------
 
+class TargetTable:
+    """One box of the Targets page (Campaigns, Transits or Variables): a table with its own scroll bars and mouse
+    wheel (1.1.0, John 24 Oct: the one shared list's scroll bars did not scroll). The Plan tick is the first column
+    (no mode square)."""
+
+    def __init__(self, page: "TargetsPage", parent, group: str, cols: tuple, height: int):
+        self.page, self.group = page, group
+        app = page.app
+        self.cols = cols
+        self.headings = dict(cols)
+        self.box = ttk.LabelFrame(parent, text="", style="Group.TLabelframe", padding=(px(app, 6), px(app, 2)))
+        tf = ttk.Frame(self.box, style="Card.TFrame")
+        tf.pack(fill=tk.BOTH, expand=True)
+        self.tree = ttk.Treeview(tf, columns=[c for c, _h in cols], show="headings", selectmode="extended",
+                                 height=height)
+        for c, h in cols:
+            centre = c in ("plan", "vmag")
+            self.tree.heading(c, text=h, anchor="center" if centre else "w")
+            self.tree.column(c, anchor="center" if centre else "w")
+        self.vbar = ttk.Scrollbar(tf, orient=tk.VERTICAL, command=self.tree.yview)
+        self.hbar = ttk.Scrollbar(tf, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=self.vbar.set, xscrollcommand=self.hbar.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.vbar.grid(row=0, column=1, sticky="ns")
+        self.hbar.grid(row=1, column=0, sticky="ew")
+        tf.rowconfigure(0, weight=1)
+        tf.columnconfigure(0, weight=1)
+        self.hint = ttk.Label(tf, text="", style="Hint.TLabel")
+        self.tree.tag_configure("off", foreground=style.HINT)
+        self.tree.bind("<Button-1>", lambda e: page._click(self, e), add="+")
+        self.tree.bind("<Double-1>", lambda e: page._double(self, e))
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: page._selected(self))
+        # the wheel scrolls THIS list (Windows / macOS <MouseWheel>, X11 buttons 4 and 5)
+        self.tree.bind("<MouseWheel>", self._wheel)
+        self.tree.bind("<Button-4>", lambda e: self._wheel(e, -1))
+        self.tree.bind("<Button-5>", lambda e: self._wheel(e, 1))
+
+    def _wheel(self, event, units=None):
+        try:
+            if units is None:
+                d = int(getattr(event, "delta", 0))
+                if d == 0:
+                    return "break"
+                units = -1 if d > 0 else 1
+                if sys.platform == "win32" and abs(d) >= 120:
+                    units = -int(d / 120) * 2
+            self.tree.yview_scroll(units, "units")
+        except tk.TclError:
+            pass
+        return "break"
+
+    def colref(self, name: str) -> str:
+        return f"#{[c for c, _h in self.cols].index(name) + 1}"
+
+    def show_hint(self, text: str):
+        """The empty box's hint over the table area ("none yet: press Find suggested transits")."""
+        if text:
+            self.hint.configure(text=text)
+            self.hint.place(relx=0.0, rely=0.0, x=px(self.page.app, 8), y=px(self.page.app, 30))
+        else:
+            self.hint.place_forget()
+
+
 class TargetsPage:
     title = "Targets"
-    subtitle = ("What you want to observe. Click ☐ to plan a target (☑ = planned), click its Priority to change it, "
-                "select a row for its details, and double-click it to edit. The square beside a name is its SHOBS-P "
-                "mode color.")
-    COLS = (("plan", "Plan"), ("vmag", "V"), ("radec", "RA / Dec (J2000)"), ("priority", "Priority"),
-            ("next", "Next useful event"), ("source", "Source"))
-    FIT = {"#0": 360, "next": 420, "source": 320}
+    subtitle = ("What you want to observe. Tick Plan (☑) to plan a target, click its Priority to change it, select a "
+                "row for its details, and double-click it to edit. Each list shows the next event in the planned "
+                "nights; drag the bar between Transits and Variables to share the room.")
+    # (key, heading) per box; Plan always first (John 24 Oct)
+    COLS = {
+        "campaign": (("plan", "Plan"), ("name", "Name"), ("vmag", "V"), ("next", "Next useful event"),
+                     ("week", "This week"), ("priority", "Priority"), ("radec", "RA / Dec (J2000)"),
+                     ("source", "Source")),
+        "transit": (("plan", "Plan"), ("name", "Name"), ("vmag", "V"), ("period", "Period"), ("night", "Night"),
+                    ("ingress", "Ingress"), ("mid", "Mid"), ("egress", "Egress"), ("priority", "Priority"),
+                    ("radec", "RA / Dec (J2000)"), ("source", "Source")),
+        "variable": (("plan", "Plan"), ("name", "Name"), ("vmag", "V"), ("vtype", "Type"), ("period", "Period"),
+                     ("night", "Night"), ("event", "Next min / max"), ("priority", "Priority"),
+                     ("radec", "RA / Dec (J2000)"), ("source", "Source")),
+    }
+    STRETCH = {"campaign": "next", "transit": "source", "variable": "event"}
+    FIT = {"name": 260, "next": 420, "source": 320, "event": 300, "night": 260}
+    EMPTY = {"transit": "none yet: Add a planet, or press Find suggested transits",
+             "variable": "none yet: Add a variable star, or press Find suggested variables",
+             "campaign": "none: a campaign is a star or field you visit on many nights"}
 
     def __init__(self, app: App, parent):
         self.app = app
         self.dirty = True
-        self.next_text: dict[str, str] = {}
-        self._next_key = None
+        self.events: dict[str, dict] = {}          # target id → targets.next_events(...) for the planned nights
+        self._events_key = None
         self._tc_cache: dict = {}
-        self._badges = {m: style.badge_image(app, m) for m in ("V", "T", "D")}
+        self._selecting = False
         self.frame = ttk.Frame(parent, style="Card.TFrame")
         top = ttk.Frame(self.frame, style="Card.TFrame")
         top.pack(fill=tk.X, pady=(0, px(app, 6)))
@@ -1772,8 +1906,9 @@ class TargetsPage:
         bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(px(app, 6), 0))
         ttk.Button(bottom, text="Edit…", command=self.edit_selected).pack(side=tk.LEFT)
         ttk.Button(bottom, text="Remove", command=self.remove_selected).pack(side=tk.LEFT, padx=px(app, 6))
-        ttk.Button(bottom, text="Keep (move to Transits / Variables)", command=self.keep_selected).pack(side=tk.LEFT)
-        style.green_button(bottom, "Find suggested transits", self.find_suggested).pack(side=tk.RIGHT)
+        ttk.Button(bottom, text="Keep (a suggestion stays when you Find again)", command=self.keep_selected).pack(
+            side=tk.LEFT)
+        style.green_button(bottom, "Find suggested transits…", self.ask_transit_search).pack(side=tk.RIGHT)
         style.green_button(bottom, "Find suggested variables…", self.ask_variable_search).pack(
             side=tk.RIGHT, padx=(0, px(app, 8)))
         # the searches' spinner and result on a line of their own above the buttons (a long message never squeezes
@@ -1791,104 +1926,208 @@ class TargetsPage:
         self.detail.pack(side=tk.BOTTOM, fill=tk.X, anchor="w", pady=(px(app, 6), 0))
         follow_wrap(self.detail, self.frame, px(app, 20))
 
-        tf = ttk.Frame(self.frame, style="Card.TFrame")
-        tf.pack(fill=tk.BOTH, expand=True)
-        cols = [c for c, _h in self.COLS]
-        self.tree = ttk.Treeview(tf, columns=cols, show="tree headings", selectmode="extended")
-        self.headings = {"#0": "Name", **dict(self.COLS)}
-        self.tree.heading("#0", text="Name", anchor="w")
-        for c, h in self.COLS:
-            self.tree.heading(c, text=h, anchor="w" if c not in ("plan", "vmag") else "center")
-            self.tree.column(c, anchor="center" if c in ("plan", "vmag") else "w")
-        vb = ttk.Scrollbar(tf, orient=tk.VERTICAL, command=self.tree.yview)
-        hb = ttk.Scrollbar(tf, orient=tk.HORIZONTAL, command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vb.set, xscrollcommand=hb.set)
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        vb.grid(row=0, column=1, sticky="ns")
-        hb.grid(row=1, column=0, sticky="ew")
-        tf.rowconfigure(0, weight=1)
-        tf.columnconfigure(0, weight=1)
-        self.tree.tag_configure("group", font=style.font(10, "bold"), background="#eef3f7", foreground=style.SIDE)
-        self.tree.tag_configure("off", foreground=style.HINT)
-        self.tree.tag_configure("suggested", foreground="#3c4a52")
-        self.tree.bind("<Button-1>", self._click, add="+")
-        self.tree.bind("<Double-1>", self._double)
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self.show_detail())
+        # Campaigns: a short box on top; Transits and Variables share the rest, with a bar to drag between them
+        self.tables: dict[str, TargetTable] = {}
+        self.tables["campaign"] = TargetTable(self, self.frame, "campaign", self.COLS["campaign"], height=3)
+        self.tables["campaign"].box.pack(fill=tk.X, pady=(0, px(app, 4)))
+        self.paned = ttk.PanedWindow(self.frame, orient=tk.VERTICAL)
+        self.paned.pack(fill=tk.BOTH, expand=True)
+        for key in ("transit", "variable"):
+            tbl = TargetTable(self, self.paned, key, self.COLS[key], height=6)
+            self.tables[key] = tbl
+            self.paned.add(tbl.box, weight=1)
         self._editor = None
+
+    @property
+    def tree(self):
+        """The table holding the current selection (else Transits): old callers' single table."""
+        for tbl in self.tables.values():
+            if tbl.tree.selection():
+                return tbl.tree
+        return self.tables["transit"].tree
+
+    def table_of(self, tid: str) -> "TargetTable | None":
+        for tbl in self.tables.values():
+            if tbl.tree.exists(tid):
+                return tbl
+        return None
+
+    def select_target(self, tid: str):
+        """Select one target's row (its box scrolled to it); the other boxes' selections are cleared."""
+        tbl = self.table_of(tid)
+        if tbl is None:
+            return
+        self._selecting = True
+        try:
+            for other in self.tables.values():
+                if other is not tbl and other.tree.selection():
+                    other.tree.selection_remove(*other.tree.selection())
+            tbl.tree.selection_set(tid)
+            tbl.tree.see(tid)
+        finally:
+            self._selecting = False
+        self.show_detail()
+
+    def _selected(self, tbl: "TargetTable"):
+        """A selection in one box clears the others (one target's details at a time; Edit/Remove/Keep act on what is
+        selected)."""
+        if not self._selecting and tbl.tree.selection():
+            self._selecting = True
+            try:
+                for other in self.tables.values():
+                    if other is not tbl and other.tree.selection():
+                        other.tree.selection_remove(*other.tree.selection())
+            finally:
+                self._selecting = False
+        self.show_detail()
 
     # ---- table ----
     def refresh(self):
         self.fill()
         self._start_next_events()
 
-    def _open_state(self):
-        st = {}
-        for key, _n in GROUPS:
-            iid = f"grp:{key}"
-            if self.tree.exists(iid):
-                st[key] = bool(self.tree.item(iid, "open"))
-        return st
+    def nights(self) -> list[date]:
+        return self.suggestion_nights()
 
     def fill(self):
-        tree, app = self.tree, self.app
-        opened = self._open_state()
-        sel = [i for i in tree.selection()]
-        tree.delete(*tree.get_children())
+        app = self.app
         when = sky.now_jd()
         today = app.tonight()
         by_group: dict[str, list[Target]] = {k: [] for k, _n in GROUPS}
         for t in app.targets:
             by_group[group_of(t)].append(t)
+        clock = ""
+        site = app.site
+        nights = self.nights()
+        if site.complete() and nights:
+            d0, d1 = nights[0], nights[-1]
+            a = sky.night_window(d0, site)
+            b = sky.night_window(d1, site)
+            if a and b:
+                clock = sky.local_label(site.tz, a[0], b[1])
+        span = (f"{len(nights)} planned night{'s' if len(nights) != 1 else ''}" if nights else "")
         for key, name in GROUPS:
+            tbl = self.tables[key]
+            tree = tbl.tree
+            sel = list(tree.selection())
+            top = tree.yview()[0] if tree.get_children() else 0.0
+            tree.delete(*tree.get_children())
             rows = by_group[key]
             planned = sum(1 for t in rows if t.enabled)
             label = f"{name}  ({len(rows)}{f', {planned} planned' if rows else ''})"
-            hint = "" if rows else {"suggested": "none yet: press Find suggested transits",
-                                    "suggested_var": "none yet: press Find suggested variables",
-                                    "campaign": "none: a campaign is a star or field you visit on many nights",
-                                    }.get(key, "none")
-            vals = ["", "", "", "", hint, ""]       # the hint sits in the wide "Next useful event" column
-            tree.insert("", tk.END, iid=f"grp:{key}", text=label, values=vals, open=opened.get(key, True),
-                        tags=("group",))
-            for t in sorted(rows, key=row_order(key, when)):      # rows stay put when ticked; Suggested by date
-                tags = []
-                if not t.enabled:
-                    tags.append("off")
-                tree.insert(f"grp:{key}", tk.END, iid=t.id, text=" " + t.name, image=self._badges.get(t.mode, ""),
-                            values=self.row_values(t, when, today), tags=tuple(tags))
-        keep = [i for i in sel if tree.exists(i)]
-        if keep:
-            tree.selection_set(keep)
-        self._next_heading(when)
-        fit_columns(tree, self.headings, cap=300, stretch="next", extra=self.FIT)
+            if key != "campaign" and span:
+                label += f"   ·   next event in the {span}" + (f", {clock}" if clock else "")
+            elif key == "campaign" and clock:
+                label += f"   ·   {clock}"
+            tbl.box.configure(text=label)
+            tbl.show_hint("" if rows else self.EMPTY[key])
+            for t in sorted(rows, key=row_order(key, when, self.events)):   # rows stay put when ticked
+                tree.insert("", tk.END, iid=t.id, values=self.row_values(t, when, today),
+                            tags=() if t.enabled else ("off",))
+            keep = [i for i in sel if tree.exists(i)]
+            if keep:
+                self._selecting = True
+                try:
+                    tree.selection_set(keep)
+                finally:
+                    self._selecting = False
+            if top:
+                tree.yview_moveto(top)
+            fit_columns(tree, tbl.headings, cap=300, stretch=self.STRETCH[key], extra=self.FIT)
         self.show_detail()
 
-    def _next_heading(self, when: float):
-        """ "Next useful event, Local time (UTC−4)": the events' clock times are the site's, over the 30 nights they
-        are searched (a daylight-saving change inside them reads "UTC−4 → UTC−5")."""
-        site = self.app.site
-        text = "Next useful event"
-        if site.complete():
-            text += f", {sky.local_label(site.tz, when, when + 30.0)}"
-        self.headings["next"] = text
-        self.tree.heading("next", text=text)
-
-    def row_values(self, t: Target, when: float, today: date) -> tuple:
+    def _source_text(self, t: Target, when: float) -> str:
         src = f"✔ {t.source}" if t.source else "typed"
+        if t.suggested:
+            src = f"suggested · {t.source or 'SCHED'}"
         pl = t.planet_obj()
         if pl and t.kind == "transit":
             tc = self.tc_text(t, pl, when)
             if tc.startswith("⚠"):
                 src += f"  ·  ⚠ Tc {tc[2:]}"
-        nxt = self.suggested_next(t, when) or self.next_text.get(t.id, "…" if self.app.site.complete()
-                                                                 else "set the site first")
-        return ("☑" if t.enabled else "☐", f"{t.vmag:.1f}" if t.vmag is not None else "—",
-                fmt_radec(t.ra, t.dec), t.priority, nxt, src)
+        return src
+
+    def _night_text(self, d) -> str:
+        if isinstance(d, date):
+            return night_label(d.isoformat(), self.app.site)
+        return str(d or "")
+
+    def event_cells(self, t: Target) -> dict:
+        """The event columns of a row from self.events: transits night / ingress / mid / egress; variables night /
+        event; campaigns next. "…" while the planned nights are still being searched."""
+        site = self.app.site
+        if not site.complete():
+            wait = "set the site first"
+        else:
+            wait = "…"
+        ev = self.events.get(t.id)
+        tz = site.tz
+        if t.kind == "campaign":
+            return {"next": (ev or {}).get("text") or (ev or {}).get("none") or wait}
+        if isinstance(ev, dict) and "none" not in ev and not (
+                ("t1" in ev and "tc" in ev and "t4" in ev) if t.kind == "transit" else ("t" in ev)):
+            ev = None                        # computed for the target's old type (it was just moved): wait
+        if not isinstance(ev, dict) and t.kind == "variable" and t.suggested and site.complete():
+            # not searched yet: a suggested variable shows the event its search found
+            info = t.suggest_info if isinstance(t.suggest_info, dict) else {}
+            w = _jd(info.get("when"))
+            if w is not None and w >= sky.now_jd():
+                try:
+                    nd = date.fromisoformat(str(info.get("night") or ""))
+                except ValueError:
+                    nd = sky.night_date_of(w, tz)
+                ev = {"night": nd, "t": w, "event": str(info.get("event") or "max"),
+                      "any": info.get("kind") in ("any", "cycle") or bool(info.get("time_uncertain"))}
+        if not isinstance(ev, dict):
+            return {"night": wait, "ingress": "", "mid": "", "egress": "", "event": ""}
+        if "none" in ev:
+            return {"night": ev["none"], "ingress": "", "mid": "", "egress": "", "event": ""}
+        night = self._night_text(ev.get("night"))
+        if t.kind == "transit":
+            if not ev.get("full"):
+                night += " (partial)"
+            return {"night": night, "ingress": sky.hhmm(ev["t1"], tz), "mid": sky.hhmm(ev["tc"], tz),
+                    "egress": sky.hhmm(ev["t4"], tz)}
+        info = t.suggest_info if (t.suggested and isinstance(t.suggest_info, dict)) else {}
+        if ev.get("any"):
+            event = "any time"
+            sig = info.get("timing_sigma_min")
+            if info.get("time_uncertain"):
+                if isinstance(sig, (int, float)) and math.isfinite(sig):
+                    event += (f"  ⚠ time uncertain ±{sig / 60:.0f} h" if sig >= 90
+                              else f"  ⚠ time uncertain ±{sig:.0f} min")
+                else:
+                    event += "  ⚠ no usable timing"
+            elif info.get("kind") == "cycle":
+                event = "any time (a whole cycle)"
+        else:
+            event = f"{ev.get('event', 'max')} {sky.hhmm(ev['t'], tz)}"
+        return {"night": night, "event": event}
+
+    def row_values(self, t: Target, when: float, today: date) -> tuple:
+        cells = self.event_cells(t)
+        base = {"plan": "☑" if t.enabled else "☐", "name": t.name,
+                "vmag": f"{t.vmag:.1f}" if t.vmag is not None else "—",
+                "priority": t.priority, "radec": fmt_radec(t.ra, t.dec), "source": self._source_text(t, when)}
+        tg = mod("targets")
+        ptext = getattr(tg, "period_text", None) if tg is not None else None
+        if t.kind == "transit":
+            pl = t.planet_obj()
+            base["period"] = ptext(pl.period) if (ptext and pl) else (f"{pl.period:.5f} d" if pl and pl.period
+                                                                      else "—")
+        elif t.kind == "variable":
+            el = t.elements_obj()
+            base["period"] = ptext(el.period) if (ptext and el) else "—"
+            base["vtype"] = (el.vtype if el and el.vtype else "—")
+        else:
+            base["week"] = self.progress_text(t, today) if t.goal_per_week else "—"
+        base.update(cells)
+        return tuple(base.get(c, "") for c, _h in self.COLS[group_of(t)])
 
     def detail_text(self, t: Target) -> str:
         """The selected target's extras: transit depth, duration, ephemeris and Tc ±; campaign rules, goal and
         progress; notes."""
-        bits = [f"{t.name} ({MODE_NAMES.get(t.mode, t.mode)})"]
+        bits = [f"{t.name} ({type_name(t.kind)}{', suggested' if t.suggested else ''})"]
         pl = t.planet_obj()
         if pl and t.kind == "transit":
             if pl.depth:
@@ -1923,16 +2162,6 @@ class TargetsPage:
         if t.notes:
             bits.append(f"notes: {t.notes}")
         return "   ·   ".join(bits)
-
-    def suggested_next(self, t: Target, when: float) -> str:
-        """A suggestion's own date: a suggested transit's soonest good transit, a suggested variable's timed minimum
-        / maximum or the start of its first good stretch, while it is still ahead; "" otherwise (the column's usual
-        text then). The Suggested groups are listed by this date."""
-        if not (t.suggested and isinstance(t.suggest_info, dict)):
-            return ""
-        w = suggested_when(t)
-        text = str(t.suggest_info.get("text") or "")
-        return text if (w is not None and w >= when and text) else ""
 
     def show_detail(self):
         ts = self.selected_targets()
@@ -1979,49 +2208,44 @@ class TargetsPage:
                 else f"goal {t.goal_per_week} nights a week")
 
     def _start_next_events(self):
+        """Each target's next event in a dark window of the planned nights (targets.next_events), in the background;
+        the rows are refilled (and re-sorted) when it is done."""
         app = self.app
         site = app.site
         tg = mod("targets")
-        if not site.complete() or tg is None or not hasattr(tg, "next_event_text"):
-            if tg is None and app.targets:
-                for t in app.targets:
-                    if self.tree.exists(t.id):
-                        self.tree.set(t.id, "next", "—")
+        if not site.complete() or tg is None or not hasattr(tg, "next_events"):
             return
+        nights = self.nights()
         when = sky.now_jd()
-        key = (tuple((t.id, t.ra, t.dec, repr(t.planet), repr(t.elements), repr(t.rules)) for t in app.targets),
+        key = (tuple((t.id, t.kind, t.ra, t.dec, repr(t.planet), repr(t.elements), repr(t.rules))
+                     for t in app.targets),
                (site.lat, site.lon, site.tz, site.min_alt, site.max_airmass, site.sun_alt, repr(site.horizon)),
-               app.tonight().isoformat())
-        if key == self._next_key:
+               tuple(d.isoformat() for d in nights), int(when * 96))          # refreshed every 15 min at most
+        if key == self._events_key:
             return
-        self._next_key = key
+        self._events_key = key
         targets = [Target.from_dict(t.to_dict()) for t in app.targets]
 
         def work():
             out = {}
             for t in targets:
                 try:
-                    out[t.id] = tg.next_event_text(t, site, when) or "—"
+                    out[t.id] = tg.next_events(t, site, nights, when)
                 except Exception as exc:
-                    settings.log(f"next_event_text {t.name}: {exc!r}")
-                    out[t.id] = "—"
+                    settings.log(f"next_events {t.name}: {exc!r}")
+                    out[t.id] = {"none": "—"}
             return out
 
         def done(res, exc):
             if exc is not None or res is None:
                 return
-            self.next_text.update(res)
-            by_id = app.targets_by_id()
-            for tid, text in res.items():
-                if self.tree.exists(tid):
-                    own = self.suggested_next(by_id[tid], sky.now_jd()) if tid in by_id else ""
-                    self.tree.set(tid, "next", own or text)
-            fit_columns(self.tree, self.headings, cap=300, stretch="next", extra=self.FIT)
-        app.jobs.run(work, done, None, "Next useful events")
+            self.events = res
+            self.fill()
+        app.jobs.run(work, done, None, "Next events")
 
     # ---- clicks ----
-    def _click(self, event):
-        tree = self.tree
+    def _click(self, tbl: "TargetTable", event):
+        tree = tbl.tree
         if tree.identify_region(event.x, event.y) != "cell":
             return None
         iid = tree.identify_row(event.y)
@@ -2029,23 +2253,20 @@ class TargetsPage:
         t = self.app.targets_by_id().get(iid)
         if t is None:
             return None
-        name = tree.column(col, "id") if col != "#0" else "#0"
+        name = tree.column(col, "id")
         if name == "plan":
             self.toggle(iid)
             return "break"
         if name == "priority":
-            self._edit_priority(iid, col)
+            self._edit_priority(tbl, iid, col)
             return "break"
         return None
 
-    def _double(self, event):
-        iid = self.tree.identify_row(event.y)
-        if iid in self.app.targets_by_id() and self.tree.identify_column(event.x) not in (
-                self._colref("plan"), self._colref("priority")):
+    def _double(self, tbl: "TargetTable", event):
+        iid = tbl.tree.identify_row(event.y)
+        if iid in self.app.targets_by_id() and tbl.tree.identify_column(event.x) not in (
+                tbl.colref("plan"), tbl.colref("priority")):
             self.edit(iid)
-
-    def _colref(self, name):
-        return f"#{[c for c, _h in self.COLS].index(name) + 1}"
 
     def toggle(self, tid: str):
         t = self.app.targets_by_id().get(tid)
@@ -2055,7 +2276,7 @@ class TargetsPage:
         self.app.save_targets()
         self.app.targets_changed()
         self.fill()
-        self.tree.selection_set(tid)
+        self.select_target(tid)
         set_msg(self.msg_var, self.msg, f"✔ {t.name} will {'be planned' if t.enabled else 'not be planned'}. "
                                         "Build the schedule to apply.")
         if t.enabled:
@@ -2105,14 +2326,14 @@ class TargetsPage:
                                             "Archive's planet-list value). Build the schedule to apply.")
         self.app.jobs.run(work, done, None, "Checking transit ephemerides")
 
-    def _edit_priority(self, iid, col):
+    def _edit_priority(self, tbl: "TargetTable", iid, col):
         if self._editor is not None:
             self._editor.destroy()
-        bbox = self.tree.bbox(iid, col)
+        bbox = tbl.tree.bbox(iid, col)
         if not bbox:
             return
         x, y, w, h = bbox
-        cb = ttk.Combobox(self.tree, values=PRIORITIES, state="readonly")
+        cb = ttk.Combobox(tbl.tree, values=PRIORITIES, state="readonly")
         cb.set(self.app.targets_by_id()[iid].priority)
         cb.place(x=x, y=y, width=max(w, px(self.app, 90)), height=h)
         self._editor = cb
@@ -2144,7 +2365,7 @@ class TargetsPage:
 
     def selected_targets(self) -> list[Target]:
         by = self.app.targets_by_id()
-        return [by[i] for i in self.tree.selection() if i in by]
+        return [by[i] for tbl in self.tables.values() for i in tbl.tree.selection() if i in by]
 
     # ---- add ----
     def add(self, name: str | None = None):
@@ -2178,7 +2399,7 @@ class TargetsPage:
                 host = re.sub(r"\s+[b-z]$", "", label) or label
                 why = str(getattr(exc, "otype", "") or "a planet that does not transit")
                 self.star_lookup(host, dict(pos, main_id=host),
-                                 f"{label} is {why}, so it cannot be a Transits target.", typed_transit=False)
+                                 f"{label} is {why}, so it cannot be a transit target.", typed_transit=False)
                 return
             self.star_lookup(name, pos, f"{label} was found, but it is not a known transiting planet or VSX variable.")
             return
@@ -2257,13 +2478,13 @@ class TargetsPage:
         elif usable:
             names = [p["name"] for p in usable]
             question = (f"{lead}{label} has known planets: {and_list(names)} transit{'s' if len(names) == 1 else ''}. "
-                        "Add a transiting planet as a Transits target, or the star itself as a campaign, variable or "
-                        "Discovery field (with no data while its planets transit)?")
+                        "Add a transiting planet as a transit target, or the star itself as a campaign, variable or "
+                        "star field (with no data while its planets transit)?")
             choices = [planet_pick(n) for n in names] + star_choices
         elif planets:
             none = ("none of its transiting planets has a transit ephemeris at the Archive"
                     if any(p.get("transits") for p in planets) else "none of them transits")
-            question = (f"{lead}{label} has known planets, but {none}, so it cannot be a Transits target. "
+            question = (f"{lead}{label} has known planets, but {none}, so it cannot be a transit target. "
                         f"What is {label} for you?")
             choices = star_choices
         else:
@@ -2271,7 +2492,7 @@ class TargetsPage:
             if problem:
                 question += f" (Its planets could not be checked: {problem.rstrip('.')}.)"
             choices = [c[0] for c in KIND_CHOICES] if typed_transit else star_choices
-        pick = ask_choice(self.app, "Which mode?", question, choices, "Add")
+        pick = ask_choice(self.app, "What kind of target?", question, choices, "Add")
         for p in usable:
             if pick == planet_pick(p["name"]):
                 self.add(p["name"])
@@ -2303,7 +2524,7 @@ class TargetsPage:
         self.accept(t)
         if not any(x is t for x in self.app.targets):
             return                                   # not added (already in the list)
-        what = {"campaign": "a Discovery field" if mode == "D" else "a campaign", "variable": "a variable star"}
+        what = {"campaign": "a star-field campaign" if mode == "D" else "a campaign", "variable": "a variable star"}
         if windows:
             set_msg(self.msg_var, self.msg,
                     f"✔ {name} is {what.get(kind, 'added')}, with no data while {and_list(windows)} "
@@ -2328,9 +2549,7 @@ class TargetsPage:
         settings.log(f"added target {t.name} ({t.kind}, {t.mode}, {t.source})")
         self.add_var.set("")
         self.fill()
-        if self.tree.exists(t.id):
-            self.tree.selection_set(t.id)
-            self.tree.see(t.id)
+        self.select_target(t.id)
         self._start_next_events()
         note = str(getattr(t, "lookup_note", "") or "").strip()
         done = f"Added {t.name}" + (f" ({t.source})" if t.source else "") + "."
@@ -2367,12 +2586,8 @@ class TargetsPage:
         self.app.save_targets()
         self.app.targets_changed(planned=False)          # the planner never looks at "suggested"
         self.fill()
-        moved = []
-        for kind, group in (("transit", "Transits"), ("variable", "Variables")):
-            names = [t.name for t in ts if (t.kind == "variable") == (kind == "variable")]
-            if names:
-                moved.append(f"to {group}: " + ", ".join(names))
-        set_msg(self.msg_var, self.msg, "✔ Moved " + "; ".join(moved) + ".")
+        set_msg(self.msg_var, self.msg, f"✔ Kept {and_list([t.name for t in ts])}: a new Find no longer replaces "
+                                        f"{'it' if len(ts) == 1 else 'them'}.")
         transits = [t.id for t in ts if t.kind == "transit"]
         if transits:
             self.refine_ephemerides(transits)
@@ -2404,6 +2619,16 @@ class TargetsPage:
         tonight = self.app.tonight()
         nights = [d for d in nights if d >= tonight]
         return nights or [tonight + timedelta(days=k) for k in range(7)]
+
+    def ask_transit_search(self):
+        """The Find suggested transits pop-up (how many to show, the nights); its Search runs find_suggested."""
+        if mod("targets") is None:
+            self.find_ind.finish(missing("targets"))
+            return None
+        if not self.app.site.complete():
+            self.find_ind.finish("✖ Enter your site on the Setup page first (latitude, longitude, time zone).")
+            return None
+        return TransitSearchDialog(self.app, self, modal=not self.app.testing)
 
     def find_suggested(self):
         app = self.app
@@ -2456,9 +2681,6 @@ class TargetsPage:
         self.app.save_targets()
         self.app.targets_changed(planned=False)          # only unticked suggestions came and went
         self.fill()
-        if self.tree.exists("grp:suggested"):
-            self.tree.item("grp:suggested", open=True)
-            self.tree.see("grp:suggested")
         self._start_next_events()
         text = (f"{len(added)} suggested transit{'s' if len(added) != 1 else ''} found, soonest first."
                 if added else "Done: no new full transits fit these nights.")
@@ -2521,9 +2743,6 @@ class TargetsPage:
         self.app.save_targets()
         self.app.targets_changed(planned=False)          # only unticked suggestions came and went
         self.fill()
-        if self.tree.exists("grp:suggested_var"):
-            self.tree.item("grp:suggested_var", open=True)
-            self.tree.see("grp:suggested_var")
         self._start_next_events()
         text = (f"{len(added)} suggested variable{'s' if len(added) != 1 else ''} found, soonest first."
                 if added else "Done: no new variables fit these nights and settings.")
@@ -2534,6 +2753,62 @@ class TargetsPage:
             self.find_ind.finish(f"⚠ {text} VSX: {note[:1].upper() + note[1:]}.", linger_ms=0)
         else:
             self.find_ind.finish("✔ " + text, linger_ms=0)
+
+
+class TransitSearchDialog:
+    """"Find suggested transits": how many to show (default 25, remembered as options["suggest_max"]) and the nights
+    searched; the filter itself (V range, depth, baseline, Moon) is Setup's."""
+
+    def __init__(self, app: App, page: TargetsPage, modal: bool = True):
+        self.app, self.page = app, page
+        o = app.options
+        self.win, body = _dialog(app, "Find suggested transits")
+        ttk.Label(body, text="Transiting planets with a full transit (and its baselines) in the dark on the nights "
+                             "below, from your site, filtered by Setup's Suggested-transits settings (V range, "
+                             "depth, Moon). They land unticked in Transits, soonest first.",
+                  style="Hint.TLabel", wraplength=px(app, 460), justify=tk.LEFT).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, px(app, 6)))
+        ttk.Label(body, text="Show at most", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=px(app, 3))
+        f = ttk.Frame(body, style="Card.TFrame")
+        f.grid(row=1, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
+        self.max_var = tk.StringVar(value=fmt_num(o.get("suggest_max", 25)))
+        ttk.Entry(f, textvariable=self.max_var, width=8).pack(side=tk.LEFT)
+        ttk.Label(f, text="transits", style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 6), 0))
+        nights = page.suggestion_nights()
+        site = app.site
+        span = (night_label(nights[0].isoformat(), site) + (f" – {night_label(nights[-1].isoformat(), site)}"
+                                                            if len(nights) > 1 else "")) if nights else "—"
+        ttk.Label(body, text="Nights", style="Card.TLabel").grid(row=2, column=0, sticky="nw", pady=px(app, 3))
+        ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}: the schedule's "
+                             "nights, else the next 7)", style="Card.TLabel", wraplength=px(app, 380),
+                  justify=tk.LEFT).grid(row=2, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
+        self.msg_var = tk.StringVar()
+        self.msg = ttk.Label(body, textvariable=self.msg_var, style="Card.TLabel", wraplength=px(app, 460),
+                             justify=tk.LEFT)
+        self.msg.grid(row=3, column=0, columnspan=2, sticky="w", pady=(px(app, 6), 0))
+        btns = ttk.Frame(body, style="Card.TFrame")
+        btns.grid(row=4, column=0, columnspan=2, sticky="e", pady=(px(app, 10), 0))
+        ttk.Button(btns, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
+        style.green_button(btns, "Search", self.search).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
+        _keys(self.win, self.search)
+        if modal:
+            _show_modal(app, self.win)
+
+    def search(self):
+        text = str(self.max_var.get()).strip().replace(",", ".")
+        try:
+            n = float(text)
+            if not (1 <= n <= 100):
+                raise ValueError
+        except ValueError:
+            set_msg(self.msg_var, self.msg, "✖ Show at most must be a number from 1 to 100.")
+            return False
+        self.app.options["suggest_max"] = int(round(n))      # remembered for next time
+        if not settings.save_settings(self.app.settings):
+            self.app.set_status("⚠ The search settings could not be saved (the settings file is not writable).")
+        self.win.destroy()
+        self.page.find_suggested()
+        return True
 
 
 class VarSearchDialog:
@@ -2551,7 +2826,7 @@ class VarSearchDialog:
             ttk.Label(body, text=text, style=kw.pop("style", "Card.TLabel")).grid(row=row, column=0, sticky="nw",
                                                                                  pady=px(app, 3), **kw)
         ttk.Label(body, text="Variable stars from AAVSO VSX (VizieR's copy) that are up in the dark on the nights "
-                             "below, from your site; they land unticked in Suggested Variables, soonest first.",
+                             "below, from your site; they land unticked in Variables, soonest first.",
                   style="Hint.TLabel", wraplength=px(app, 460), justify=tk.LEFT).grid(
             row=r, column=0, columnspan=2, sticky="w", pady=(0, px(app, 6)))
         r += 1
@@ -2606,7 +2881,7 @@ class VarSearchDialog:
         span = (night_label(nights[0].isoformat(), site) + (f" – {night_label(nights[-1].isoformat(), site)}"
                                                             if len(nights) > 1 else "")) if nights else "—"
         label("Nights", r)
-        ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}, as for Suggested "
+        ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}, as for Find suggested "
                              "transits); your minimum altitude, horizon, darkness and Moon limit from Setup",
                   style="Card.TLabel", wraplength=px(app, 380), justify=tk.LEFT).grid(
             row=r, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
@@ -2733,8 +3008,10 @@ class EditTargetDialog:
         t = self.t
         head("Target")
         row("Name", "name", t.name, width=24)
-        row("SHOBS-P mode", "mode", dict((m, c) for c, m in MODE_CHOICES)[t.mode if t.mode in ("V", "T", "D") else "V"], "",
-            16, [c for c, _m in MODE_CHOICES])
+        # the internal mode code (V / T / D) follows the group and is not shown (no photometry-program modes; 1.1.0)
+        self.vars["mode"] = tk.StringVar(value=dict((m, c) for c, m in MODE_CHOICES)[
+            t.mode if t.mode in ("V", "T", "D") else "V"])
+        self.loaded["mode"] = self.vars["mode"].get()
         row("Group", "kind", dict((k, lab) for lab, k in GROUP_CHOICES).get(t.kind, "Variable"),
             "the Targets page group (and how it is planned)", 12, [lab for lab, _k in GROUP_CHOICES])
         row("Priority", "priority", t.priority, "", 10, list(PRIORITIES))
@@ -3132,10 +3409,10 @@ class EditTargetDialog:
         msg = ""
         if transit and self.t.kind != "transit":
             names = self._transiting_names()
-            msg = "⚠ A Transits target needs its ephemeris: type the period and Tc below."
+            msg = "⚠ A transit target needs its ephemeris: type the period and Tc below."
             if names:
                 msg = (f"⚠ {self.star_name()} is a star: to plan a transit, add its planet {and_list(names)} on the "
-                       "Targets page (type the name in Add) and keep the star a campaign. As a Transits target the "
+                       "Targets page (type the name in Add) and keep the star a campaign. As a transit target the "
                        "star itself needs a typed period and Tc below.")
         elif not transit and self.t.kind == "transit":
             msg = f"⚠ Saving moves {self.t.name} out of Transits; its ephemeris is dropped."
@@ -3259,7 +3536,7 @@ class EditTargetDialog:
                         pl["t0_err"] = None
                 if was != "transit" and not (pl.get("period") and pl.get("t0")):
                     names = self._transiting_names()
-                    raise ValueError("A Transits target needs its period and Tc (type them under Ephemeris)"
+                    raise ValueError("A transit target needs its period and Tc (type them under Ephemeris)"
                                      + (f"; to plan {and_list(names)}, add the planet on the Targets page and keep "
                                         f"{self.star_name()} a campaign" if names else ", or keep it a campaign")
                                      + ".")
@@ -3845,8 +4122,8 @@ class NightTab:
         self.hover_var = tk.StringVar()
         self.hover_lbl = ttk.Label(inner, textvariable=self.hover_var, style="Card.TLabel")
         self.hover_lbl.pack(anchor="w", fill=tk.X, padx=pad, pady=(px(app, 2), 0))
-        legend = ("Faint line: the target all night  ·  bold: its block, in the color of the SHOBS-P mode it will be "
-                  "reduced in, with the airmass at the start and the end  ·  ▼ flip inside the block; | meridian, no flip "
+        legend = ("Faint line: the target all night  ·  bold: its block, in the color of its type (green Transit, navy "
+                  "Variable, plum Campaign), with the airmass at the start and the end  ·  ▼ flip inside the block; | meridian, no flip "
                   "needed  ·  "
                   "dashed gold: the Moon (thicker = fuller)  ·  green band: the transit, lighter: its baselines  ·  "
                   "hatched: a no-transit window that changed the plan  ·  gold box edge: locked or set by you  ·  "
@@ -3860,7 +4137,7 @@ class NightTab:
 
 
         # nightly table
-        cols = (("time", "Time"), ("target", "Target"), ("radec", "RA / Dec (J2000)"), ("mode", "SHOBS-P mode"),
+        cols = (("time", "Time"), ("target", "Target"), ("radec", "RA / Dec (J2000)"),
                 ("alt", "Alt"), ("meridian", "Meridian"), ("exposure", "Exposure"), ("frames", "Frames"),
                 ("notes", "Notes"))
         self.headings = dict(cols)
@@ -3893,7 +4170,7 @@ class NightTab:
         ttk.Label(act, text="Status", style="Card.TLabel").pack(side=tk.LEFT, padx=(px(app, 12), px(app, 4)))
         self.status_var = tk.StringVar()
         self.status_box = ttk.Combobox(act, textvariable=self.status_var, values=STATUS_CHOICES, state="readonly",
-                                       width=max(len(s) for s in STATUS_CHOICES) + 1)
+                                       width=max(len(s) for s in STATUS_CHOICES) + 2)
         self.status_box.pack(side=tk.LEFT)
         self.status_box.bind("<<ComboboxSelected>>", lambda _e: self.set_status(STATUS_KEY.get(self.status_var.get(),
                                                                                                  "planned")))
@@ -4089,10 +4366,6 @@ class NightTab:
             mine = own_row(b, site, self.app.targets_by_id())
             if rows is not None and isinstance(rows[k], dict):
                 r = {str(key).lower(): val for key, val in rows[k].items()}
-                code = r.get("mode_code")
-                if code:
-                    name = str(r.get("mode") or "")
-                    r["mode"] = f"{code} {MODE_NAMES.get(code, name) if name in ('', code) else name}"
                 for col, keys in ROW_KEYS.items():
                     for key in keys:
                         if key in r and r[key] not in (None, ""):
@@ -4115,14 +4388,14 @@ class NightTab:
                 target += "  · locked"
             if b.status != "planned":
                 target += f"  · {STATUS_LABELS.get(b.status, b.status)}"
-            tags = [f"mode{b.mode if b.mode in ('V', 'T', 'D') else 'V'}"]
+            tags = [f"mode{block_type_code(b)}"]          # tinted by the target's type
             if b.status in ("done", "clouded"):
                 tags.append("done")
             notes = r["notes"]
             if b.cautions and not any(str(c).strip() in notes for c in b.cautions):
                 notes = "; ".join(str(c) for c in b.cautions) + ("; " + notes if notes else "")
             tbl.insert("", tk.END, iid=str(i), tags=tuple(tags),
-                       values=(r["time"], target, r["radec"], r["mode"], r["alt"], r["meridian"], r["exposure"],
+                       values=(r["time"], target, r["radec"], r["alt"], r["meridian"], r["exposure"],
                                r["frames"], notes))
         tbl.configure(height=max(2, len(rows)))
         # notes are capped (the full text is in the line under the table) so the table's natural width stays sane
@@ -4156,7 +4429,7 @@ class NightTab:
         lines += [str(c) if str(c).startswith("⚠") else f"⚠ {c}" for c in b.cautions]
         self.detail_var.set("\n".join(lines))
         self.detail.configure(style="Card.TLabel")
-        self.status_var.set(STATUS_LABELS.get(b.status, "Planned"))
+        self.status_var.set("" if b.status in ("", "planned", None) else STATUS_LABELS.get(b.status, ""))
         self.lock_btn.configure(text="Unlock" if (b.locked or b.set_by_user) else "Lock")
         try:
             self.move_btn.state(["disabled"] if b.fixed else ["!disabled"])
@@ -4349,7 +4622,10 @@ class NightTab:
         night.blocks = [x.to_dict() for x in bl]
         self.page.set_night(self.idx, night)
         self.select_block(i)
-        self._act(f"✔ {b.name}: {STATUS_LABELS.get(status, status)}.")
+        if status == "planned":
+            self._act(f"✔ {b.name}: mark cleared (planned, not marked).")
+        else:
+            self._act(f"✔ {b.name}: {STATUS_LABELS.get(status, status)}.")
 
     # ---- lower part ----
     def plan_instead_ok(self, d: dict) -> bool:
@@ -4568,7 +4844,6 @@ ROW_KEYS = {   # nightly-table column → keys tried in export.table_rows' dicts
     "target": ("target", "name"),
     "radec": ("radec", "ra / dec (j2000)", "ra_dec", "ra / dec"),
     "alt": ("alt_x",),
-    "mode": ("shobs-p mode", "mode_name", "mode"),
     "meridian": ("meridian",),
     "exposure": ("exposure",),
     "frames": ("frames",),
@@ -4599,7 +4874,7 @@ def own_row(b: Block, site, targets_by_id: dict) -> dict:
     if b.frames_in_transit:
         frames += f" (~{b.frames_in_transit} in transit)"
     return {"time": span_text(b.start, b.end, tz), "target": b.name, "radec": fmt_radec(ra, dec),
-            "mode": f"{b.mode} {MODE_NAMES.get(b.mode, '')}".strip(), "alt": alt, "meridian": mer,
+            "mode": TYPE_NAMES[block_type_code(b)], "mode_code": block_type_code(b), "alt": alt, "meridian": mer,
             "exposure": exp, "frames": frames, "notes": "; ".join(str(n) for n in b.notes)}
 
 
@@ -4616,8 +4891,7 @@ class ExportPage:
     HOW = {"asiair": "In ASIAIR's Plan: Add → Import, and paste the file's text.",
            "nina": "In NINA: Sequencer → Import targets, and pick this file. It REPLACES the targets now in the "
                    "sequence; each target gets your default sequence template."}
-    COLUMNS = ("Time", "Target", "RA / Dec (J2000)", "SHOBS-P mode", "Alt", "Meridian", "Exposure", "Frames",
-               "Notes")
+    COLUMNS = ("Time", "Target", "RA / Dec (J2000)", "Alt", "Meridian", "Exposure", "Frames", "Notes")
 
     def __init__(self, app: App, parent):
         self.app = app
@@ -5005,18 +5279,16 @@ class ExportPage:
             if r.get("exposure_is_estimate") and exp != "—":
                 exp += " est."
             code = str(r.get("mode_code") or "")
-            mbg = style.mode_color(code, "light") if code else "#ffffff"
             cell(i, 0, r.get("time", ""), style.font(12, "bold"))
-            cell(i, 1, f"{r.get('target', '')}{lock}{status}", style.font(11, "bold"), wrap=ch * 18)
+            # the target's name on its type's tint (Transit / Variable / Campaign); no mode column (1.1.0)
+            cell(i, 1, f"{r.get('target', '')}{lock}{status}", style.font(11, "bold"), wrap=ch * 18,
+                 bg=style.mode_color(code, "tint") if code else "#ffffff")
             cell(i, 2, "\n".join(str(r.get("radec", "—")).split(" ", 1)))
-            m = cell(i, 3, f"{code}  {r.get('mode', '')}".strip(), style.font(9, "bold"), bg="#ffffff")
-            if code:
-                m.configure(background=mbg, foreground=style.text_on(mbg))
-            cell(i, 4, f"{r.get('alt', '—')}\n{r.get('alt_x', '—')}")
-            cell(i, 5, r.get("meridian", "—"), style.font(11, "bold"))
-            cell(i, 6, exp)
-            cell(i, 7, r.get("frames", "—"), wrap=ch * 14)
-            notes.append(cell(i, 8, r.get("notes", ""), wrap=ch * 46))
+            cell(i, 3, f"{r.get('alt', '—')}\n{r.get('alt_x', '—')}")
+            cell(i, 4, r.get("meridian", "—"), style.font(11, "bold"))
+            cell(i, 5, exp)
+            cell(i, 6, r.get("frames", "—"), wrap=ch * 14)
+            notes.append(cell(i, 7, r.get("notes", ""), wrap=ch * 46))
 
         def fit_notes(e=None, notes=notes):
             """Notes wrap to the room the other columns leave (ch × 46 at most, ch × 16 at least)."""
@@ -5302,6 +5574,100 @@ class ExportPage:
 
 
 # ---- self-test ------------------------------------------------------------------------------------------------------
+
+# ---- Credits and sources (not a step) --------------------------------------------------------------------------------
+
+class CreditsPage:
+    """Credits and sources (the sidebar button below the steps, as in SHOBS-P): the copyright and license, how to cite
+    SHOBS-SCHED (once it has a DOI or ASCL entry), and every catalog, service, design and library it uses with the
+    acknowledgement each asks for. Back returns to the page you came from."""
+    title = "Credits and sources"
+    subtitle = ("Every catalog, service, design and library this app uses. Quoted sentences are the acknowledgements "
+                "each source asks for; please include them when you publish work planned with it.")
+
+    def __init__(self, app: App, parent):
+        self.app = app
+        cr = mod("credits")
+        self.frame = ttk.Frame(parent, style="Card.TFrame")
+        nav = ttk.Frame(self.frame, style="Card.TFrame")
+        nav.pack(side=tk.BOTTOM, fill=tk.X, pady=(px(app, 8), 0))
+        ttk.Button(nav, text="Save credits as text…", command=self.save_text).pack(side=tk.LEFT)
+        ttk.Button(nav, text="Back", command=self.back).pack(side=tk.RIGHT)
+        self.msg_var = tk.StringVar()
+        self.msg = ttk.Label(nav, textvariable=self.msg_var, style="Card.TLabel")
+        self.msg.pack(side=tk.LEFT, padx=px(app, 10))
+        head = ttk.Frame(self.frame, style="Card.TFrame")
+        head.pack(fill=tk.X, pady=(0, px(app, 8)))
+        copy = (f"SHOBS-SCHED {settings.APP_VERSION}   {cr.COPYRIGHT if cr else '© Shiloh Hill Observatory'}")
+        ttk.Label(head, text=copy, style="Bold.TLabel").pack(anchor="w")
+        if cr:
+            lic = ttk.Label(head, text=cr.LICENSE_LINE, style="Card.TLabel", justify=tk.LEFT)
+            lic.pack(anchor="w", fill=tk.X)
+            follow_wrap(lic, head, px(app, 10))
+        cite = cr.citation_text(settings.APP_VERSION) if cr else ""
+        if cite:
+            ttk.Label(head, text="How to cite SHOBS-SCHED", style="Section.TLabel").pack(anchor="w",
+                                                                                     pady=(px(app, 6), 0))
+            row = ttk.Frame(head, style="Card.TFrame")
+            row.pack(fill=tk.X)
+            ttk.Button(row, text="Copy", command=lambda: self.copy(cite)).pack(side=tk.RIGHT, anchor="n")
+            cl = ttk.Label(row, text=cite, style="Card.TLabel", justify=tk.LEFT)
+            cl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            follow_wrap(cl, row, px(app, 90))
+        tf = ttk.Frame(self.frame, style="Card.TFrame")
+        tf.pack(fill=tk.BOTH, expand=True)
+        self.text = tk.Text(tf, wrap="word", font=style.font(10), background="#ffffff", foreground=style.TEXT,
+                            relief="flat", padx=px(app, 8), pady=px(app, 8), height=10)
+        vb = ttk.Scrollbar(tf, orient=tk.VERTICAL, command=self.text.yview)
+        self.text.configure(yscrollcommand=vb.set)
+        vb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.text.insert("1.0", cr.credits_text() if cr else missing("credits"))
+        self.text.configure(state="disabled")
+
+    def refresh(self):
+        pass
+
+    def back(self):
+        self.app.show_page(self.app.page_index if self.app.page_index is not None else 0)
+
+    def copy(self, text: str):
+        try:
+            self.app.clipboard_clear()
+            self.app.clipboard_append(text)
+            self.app.update_idletasks()
+        except tk.TclError as exc:
+            set_msg(self.msg_var, self.msg, f"✖ Could not copy to the clipboard ({exc}).")
+            return
+        set_msg(self.msg_var, self.msg, "✔ Citation copied to the clipboard.")
+
+    def whole_text(self) -> str:
+        cr = mod("credits")
+        if cr is None:
+            return missing("credits")
+        cite = cr.citation_text(settings.APP_VERSION)
+        return (f"SHOBS-SCHED {settings.APP_VERSION}\n{cr.COPYRIGHT}\n{cr.LICENSE_LINE}\n\n"
+                + (f"How to cite SHOBS-SCHED:\n  {cite}\n\n" if cite else "") + cr.credits_text())
+
+    def save_text(self, path: str | None = None) -> str | None:
+        if path is None:
+            if self.app.testing:
+                return None
+            path = filedialog.asksaveasfilename(parent=self.app, title="Save credits",
+                                                initialdir=settings.downloads_dir(),
+                                                initialfile="SHOBS-SCHED_credits.txt", defaultextension=".txt",
+                                                filetypes=[("Text", "*.txt")])
+            if not path:
+                return None
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(self.whole_text())
+        except OSError as exc:
+            set_msg(self.msg_var, self.msg, f"✖ Could not save: {exc}")
+            return None
+        set_msg(self.msg_var, self.msg, f"✔ Saved {path}")
+        return path
+
 
 def selftest_ui() -> int:
     """Open the app on a temporary home with the golden targets, build, draw each page, copy the CSV, close."""

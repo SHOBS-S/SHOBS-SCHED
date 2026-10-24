@@ -10,8 +10,32 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-MODES = ("V", "T", "D")                       # SHOBS-P mode a block will be reduced in
+MODES = ("V", "T", "D")                       # internal mode code kept in the files (V / T / D)
 MODE_NAMES = {"V": "Variables", "T": "Transits", "D": "Discovery"}
+# what the user sees (1.1.0, John 24 Oct): a block's color and name follow its target's TYPE (Transit / Variable /
+# Campaign), never a photometry-program mode
+TYPE_CODE = {"transit": "T", "variable": "V", "campaign": "D"}
+TYPE_NAMES = {"T": "Transit", "V": "Variable", "D": "Campaign"}
+
+
+def type_code(kind: str) -> str:
+    """The color key of a target type: transit → "T", variable → "V", campaign → "D" (anything else → "V")."""
+    return TYPE_CODE.get(str(kind or ""), "V")
+
+
+def block_type_code(b) -> str:
+    """A block's color key: "T" for a transit (its kind, or the T mode of an older block), "D" for a campaign, else
+    "V". b = a Block or its dict."""
+    get = b.get if isinstance(b, dict) else (lambda k, d=None: getattr(b, k, d))
+    kind, mode = str(get("kind", "") or ""), str(get("mode", "") or "")
+    if kind == "transit" or mode == "T":
+        return "T"
+    return "D" if kind == "campaign" else "V"
+
+
+def type_name(kind: str) -> str:
+    """"Transit", "Variable" or "Campaign"."""
+    return TYPE_NAMES[type_code(kind)]
 KINDS = ("transit", "variable", "campaign")   # Targets groups; suggested=True → group "suggested" (Suggested
                                               # Transits) or "suggested_var" (Suggested Variables, kind "variable")
 PRIORITIES = ("High", "Normal", "Low")

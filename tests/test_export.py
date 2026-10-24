@@ -78,7 +78,7 @@ class TestTableRows(unittest.TestCase):
         self.assertEqual([r["target"] for r in rows], ["TOI-2046 b", "HD 219134"])
         toi, hd = rows
         self.assertEqual(toi["time"], "20:15–00:30")
-        self.assertEqual(toi["mode"], "Transits")
+        self.assertEqual(toi["mode"], "Transit")             # the type, not a column (no photometry modes)
         self.assertEqual(toi["mode_code"], "T")
         self.assertEqual(toi["alt"], "52–72°")
         self.assertEqual(toi["alt_x"], "72° (X 1.05)")
@@ -89,7 +89,8 @@ class TestTableRows(unittest.TestCase):
         self.assertEqual(toi["radec"], f"{sky.fmt_ra(16.185, 0)} {sky.fmt_dec(74.331389)}")
         self.assertEqual(toi["radec"], "01:04:44 +74:19:53")
         self.assertEqual(hd["time"], "00:40–02:10")
-        self.assertEqual(hd["mode"], "Variables")
+        self.assertEqual(hd["mode"], "Campaign")
+        self.assertEqual(hd["mode_code"], "D")                # a campaign is plum (the type), whatever its old mode
         self.assertEqual(hd["exposure"], "0.75 s")
         self.assertEqual(hd["frames"], "~164")
         self.assertEqual(hd["meridian"], "22:44")
@@ -214,7 +215,11 @@ class TestPlanCard(unittest.TestCase):
         self.assertIn("Clear until 02:00, then 60–80 % cloud", page)
         self.assertIn("Dew from 04:05", page)
         self.assertIn("High 12 °C, low 12 °C, wind up to 10 km/h", page)
-        self.assertIn("WASP-12 b: collides with TOI-2046 b (next chance Tue 27 Oct)", page)
+        # "Didn't fit, and why" is decided on the Schedule page, not printed on the plan (John 24 Oct)
+        self.assertNotIn("WASP-12 b: collides with TOI-2046 b", page)
+        self.assertNotIn("Didn't fit", page)
+        self.assertNotIn("SHOBS-P", page)
+        self.assertNotIn("mode", page.split("<body>", 1)[1].lower())
         self.assertIn("Free 02:10–03:00", page)
         self.assertIn("<h3>Darks</h3><ul><li>To shoot: 0.75 s × 20</li>", page)
         self.assertIn("<li>One set at the night", page)              # "Flats:" prefix not repeated
@@ -230,9 +235,11 @@ class TestPlanCard(unittest.TestCase):
     def test_text(self):
         text = export.plan_card_text([self.n20, self.n22], SITE, {}, self.weather, self.by_id)
         for s in ("TOI-2046 b", "HD 219134", "K2-29 b", "Evil <script>alert(1)</script> & Co",
-                  "20:15–00:30", "~240 (~135 in transit)", "Free 02:10–03:00", "Didn't fit, and why:",
+                  "20:15–00:30", "~240 (~135 in transit)", "Free 02:10–03:00",
                   "SHOBS-SCHED · all times Local time (UTC−4) (America/New_York)", "Dark 20:08–06:16 (astronomical)"):
             self.assertIn(s, text)
+        self.assertNotIn("Didn't fit", text)
+        self.assertNotIn("Transits ·", text)
 
     def test_no_dark_and_empty(self):
         n = NightPlan(date="2026-06-21")
@@ -469,7 +476,7 @@ class TestLabelsAndPlots(unittest.TestCase):
         self.assertEqual(sec["iso"], "2026-10-20")
         self.assertEqual(sec["clock"], "Local time (UTC−4)")
         self.assertEqual([r["target"] for r in sec["rows"]], ["TOI-2046 b", "HD 219134"])
-        self.assertEqual([h for h, _ in sec["lists"]], ["Flats", "Darks", "Didn't fit, and why", "Free time"])
+        self.assertEqual([h for h, _ in sec["lists"]], ["Flats", "Darks", "Free time"])
 
     def test_plots_embedded(self):
         import base64

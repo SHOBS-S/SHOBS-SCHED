@@ -15,11 +15,10 @@ import unicodedata
 from datetime import date, timedelta
 
 import sky
-from models import MODE_NAMES, STATUS_LABELS, Block, NightPlan, Site, Target
+from models import STATUS_LABELS, TYPE_NAMES, Block, NightPlan, Site, Target, block_type_code
 
-TABLE_COLUMNS = ("Time", "Target", "RA / Dec (J2000)", "SHOBS-P mode", "Alt", "Meridian", "Exposure", "Frames",
-                 "Notes")
-TABLE_KEYS = ("time", "target", "radec", "mode", "alt", "meridian", "exposure", "frames", "notes")
+TABLE_COLUMNS = ("Time", "Target", "RA / Dec (J2000)", "Alt", "Meridian", "Exposure", "Frames", "Notes")
+TABLE_KEYS = ("time", "target", "radec", "alt", "meridian", "exposure", "frames", "notes")
 
 
 # ---- small helpers --------------------------------------------------------------------------------------------------
@@ -121,7 +120,7 @@ def _alt_best(b: Block) -> str:
 def table_rows(night, site: Site, targets_by_id: dict | None = None) -> list[dict]:
     """The nightly table in the plan-doc format, one dict per block in time order. Display keys (TABLE_KEYS, in the
     order of TABLE_COLUMNS): time "20:15–00:30", target, radec "23:13:17 +57:10:06" (from targets_by_id, else the
-    block's own ra/dec if it has them, else "—"), mode "Transits", alt "52–72°" (low–high), meridian "22:44", exposure "60 s", frames
+    block's own ra/dec if it has them, else "—"), mode "Transit" (the type; not a column), alt "52–72°" (low–high), meridian "22:44", exposure "60 s", frames
     "~240 (~135 in transit)", notes (notes then cautions, joined with "; "). Extra keys for the app: alt_x
     "62° (X 1.13)" (at best), start/end (JD), mode_code (V/T/D), kind, status, status_label, locked, set_by_user,
     fixed, cautions (list), exposure_is_estimate, target_id."""
@@ -137,14 +136,14 @@ def table_rows(night, site: Site, targets_by_id: dict | None = None) -> list[dic
             "time": f"{_hhmm(b.start, tz)}–{_hhmm(b.end, tz)}",
             "target": b.name,
             "radec": radec,
-            "mode": MODE_NAMES.get(b.mode, b.mode),
+            "mode": TYPE_NAMES[block_type_code(b)],  # the target's type (not shown in the table; 1.1.0)
             "alt": _alt_range(b),
             "meridian": _hhmm(b.meridian, tz),
             "exposure": fmt_exposure(b.exposure_s),
             "frames": fmt_frames(b.frames, b.frames_in_transit if b.kind == "transit" else None),
             "notes": "; ".join(notes + cautions),
             "alt_x": _alt_best(b),
-            "start": b.start, "end": b.end, "mode_code": b.mode, "kind": b.kind, "status": b.status,
+            "start": b.start, "end": b.end, "mode_code": block_type_code(b), "kind": b.kind, "status": b.status,
             "status_label": STATUS_LABELS.get(b.status, b.status), "locked": b.locked,
             "set_by_user": b.set_by_user, "fixed": b.fixed, "cautions": cautions,
             "exposure_is_estimate": b.exposure_is_estimate, "target_id": b.target_id,
@@ -521,12 +520,11 @@ def _free_lines(n: NightPlan, site: Site) -> list[str]:
 
 
 def card_lists(night, site: Site) -> list[tuple[str, list[str]]]:
-    """The lists under a night's table, in card order, only those with something in them: Flats, Darks, Didn't
-    fit (and why), Free time."""
+    """The lists under a night's table, in card order, only those with something in them: Flats, Darks, Free time.
+    "Didn't fit, and why" is not on the plan (1.1.0, John 24 Oct): that decision is made on the Schedule page."""
     n = _night(night)
     out = []
-    for head, items in (("Flats", n.flats), ("Darks", n.darks),
-                        ("Didn't fit, and why", _didnt_fit_lines(n, site)), ("Free time", _free_lines(n, site))):
+    for head, items in (("Flats", n.flats), ("Darks", n.darks), ("Free time", _free_lines(n, site))):
         items = _items(head, items)
         if items:
             out.append((head, items))
@@ -590,9 +588,9 @@ h2 { font-size: 16pt; margin: 0 0 3pt; }
 .facts { font-size: 12pt; margin: 0 0 2pt; }
 .facts b { font-size: 14pt; }
 table { width: 100%; border-collapse: collapse; margin: 6pt 0; table-layout: fixed; }
-col.c-time { width: 15%; } col.c-target { width: 10%; } col.c-radec { width: 9%; } col.c-mode { width: 8%; }
-col.c-alt { width: 8%; } col.c-mer { width: 8%; } col.c-exp { width: 8%; } col.c-frames { width: 9%; }
-col.c-notes { width: 25%; }
+col.c-time { width: 15%; } col.c-target { width: 12%; } col.c-radec { width: 10%; }
+col.c-alt { width: 9%; } col.c-mer { width: 8%; } col.c-exp { width: 9%; } col.c-frames { width: 9%; }
+col.c-notes { width: 28%; }
 td { overflow-wrap: anywhere; }
 th, td { border: 0.75pt solid #000; padding: 3pt 4pt; vertical-align: top; text-align: left; }
 th { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.01em; overflow-wrap: anywhere; }
@@ -601,7 +599,6 @@ td.target { font-size: 13pt; font-weight: 700; }
 td.mer, td.exp { white-space: nowrap; }
 td.mer { font-size: 13pt; font-weight: 700; }
 td.notes { font-size: 10pt; }
-.mode { display: inline-block; border: 1pt solid #000; padding: 0 3pt; font-size: 9pt; font-weight: 700; }
 .status { font-size: 9pt; font-weight: 700; }
 .lists { display: flex; gap: 14pt; flex-wrap: wrap; }
 .list { margin: 2pt 0; font-size: 10pt; flex: 1 1 30%; min-width: 50mm; }
@@ -625,7 +622,7 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
                    targets_by_id: dict | None = None, plots: dict | None = None) -> str:
     """A printable, self-contained HTML page (no scripts, no external files): black on white, big times. Per night:
     date, darkness, Moon, weather + dew onset, the local-time label, the night plot (when given), the nightly table,
-    flats, darks, didn't fit, free gaps. Footer 'SHOBS-SCHED · all times Local time (UTC−4)' with the zone name in
+    flats, darks, free gaps. Footer 'SHOBS-SCHED · all times Local time (UTC−4)' with the zone name in
     small text. Pass targets_by_id to fill the RA / Dec column. plots: {night date ISO: PNG bytes}: each night's
     plot embedded (base64) full width under its heading; it never splits across pages. Without plots the card is
     unchanged."""
@@ -657,7 +654,7 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
             out.append(f'<p class="cont">{e(f["date"])} · Times: {e(f["clock"])}</p>')
         rows = table_rows(n, site, targets_by_id)
         if rows:
-            cols = ("c-time", "c-target", "c-radec", "c-mode", "c-alt", "c-mer", "c-exp", "c-frames", "c-notes")
+            cols = ("c-time", "c-target", "c-radec", "c-alt", "c-mer", "c-exp", "c-frames", "c-notes")
             out.append("<table><colgroup>" + "".join(f'<col class="{k}">' for k in cols) + "</colgroup>"
                        "<thead><tr>" + "".join(f"<th>{e(c)}</th>" for c in TABLE_COLUMNS)
                        + "</tr></thead><tbody>")
@@ -670,7 +667,6 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
                     f'<td class="time">{e(r["time"])}</td>'
                     f'<td class="target">{e(r["target"])}{e(lock)}{status}</td>'
                     f'<td class="num">{"<br>".join(e(x) for x in str(r["radec"]).split(" ", 1))}</td>'
-                    f'<td><span class="mode">{e(r["mode_code"])}</span> {e(r["mode"])}</td>'
                     f'<td class="num">{e(r["alt"])}<br>{e(r["alt_x"])}</td>'
                     f'<td class="mer">{e(r["meridian"])}</td>'
                     f'<td class="exp">{exp}</td>'
@@ -680,12 +676,13 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
             out.append("</tbody></table>")
         else:
             out.append('<p class="empty">No blocks planned.</p>')
-        out.append('<div class="lists">')
-        for head, items in card_lists(n, site):
-            if items:
+        lists = [(head, items) for head, items in card_lists(n, site) if items]
+        if lists:
+            out.append('<div class="lists">')
+            for head, items in lists:
                 out.append(f'<div class="list"><h3>{e(head)}</h3><ul>'
                            + "".join(f"<li>{e(x)}</li>" for x in items) + "</ul></div>")
-        out.append("</div>" + ("</div>" if png else "") + "</section>")
+        out.append(("</div>" if lists else "") + ("</div>" if png else "") + "</section>")
     foot, zone_name = _footer(site, ns)
     out.append(f'<footer>{e(foot)} <span class="zone">({e(zone_name)})</span></footer></body></html>')
     return "\n".join(out)
@@ -720,7 +717,7 @@ def plan_card_text(nights, site: Site, settings_dict: dict | None = None, weathe
             lines.append("")
             lines.append(f"{r['time']:<13} {r['target']}{lock}{extra}")
             est = " est." if r["exposure_is_estimate"] and r["exposure"] != "—" else ""
-            lines.append(f"{'':13} {r['mode']} · {r['radec']} · alt {r['alt']}, best {r['alt_x']} · "
+            lines.append(f"{'':13} {r['radec']} · alt {r['alt']}, best {r['alt_x']} · "
                          f"meridian {r['meridian']}")
             lines.append(f"{'':13} exposure {r['exposure']}{est} · frames {r['frames']}")
             if r["notes"]:

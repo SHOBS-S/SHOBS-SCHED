@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -103,6 +104,18 @@ def make_fakes():
     tg.load_transit_catalog = lambda refresh=False: ([], calls.get("catalog_note", ""))
     tg.suggest_transits = suggest_transits
     tg.next_event_text = lambda t, site, from_jd, days=30: "any time" if t.kind != "transit" else "Fri 23 Oct (full)"
+
+    def next_events(t, site, nights, from_jd):
+        if t.kind == "campaign":
+            return {"text": "every night"}
+        if t.kind == "transit":
+            if not t.planet:
+                return {"none": "no ephemeris"}
+            tc = 2461337.6                      # Fri 23 Oct 2026, 22:24 EDT
+            return {"night": date(2026, 10, 23), "t1": tc - 0.05, "tc": tc, "t4": tc + 0.05, "full": True}
+        return {"night": date(2026, 10, 23), "any": True, "t": 2461337.55}
+    tg.next_events = next_events
+    tg.period_text = lambda p: "—" if not p else (f"{p * 24:.2f} h" if p < 1 else f"{p:.5f} d")
     tg.tc_sigma_minutes = lambda planet, when: 12.5
     tg.campaign_progress = lambda t, sch, today: (1, t.goal_per_week)
     tg.lookup_planet = lambda name, when_jd=None: Target(name=name, kind="transit", planet={
@@ -494,32 +507,58 @@ class TestAppWithFakes(Base):
         app.show_page(1)
         page = app.pages[1]
         self.pump()
-        self.assertNotIn("mode", page.tree["columns"], "the colored square carries the mode")
-        self.assertEqual(page.tree.column("next", "stretch"), True)
+        tv = page.tables["variable"].tree
+        tt = page.tables["transit"].tree
+        tc = page.tables["campaign"].tree
+        # three boxes, Plan first, no mode square or SHOBS-P mode (John 24 Oct)
+        for tree in (tv, tt, tc):
+            self.assertEqual(tree["columns"][0], "plan")
+            self.assertEqual(tree["columns"][1], "name")
+            self.assertNotIn("mode", tree["columns"])
+            self.assertNotIn("tree", str(tree.cget("show")), "no tree column (no mode square)")
+        self.assertIn("period", tt["columns"])
+        self.assertEqual([c for c in tt["columns"] if c in ("ingress", "mid", "egress")], ["ingress", "mid", "egress"])
+        self.assertIn("event", tv["columns"])
+        self.assertEqual(tv.column("event", "stretch"), True)
         dy = next(t for t in app.targets if t.name == "DY Peg")
-        self.assertEqual(page.tree.set(dy.id, "plan"), "☑")
-        self.assertEqual(page.tree.set(dy.id, "next"), "any time")
-        page.tree.see(dy.id)
+        self.assertEqual(page.table_of(dy.id).group, "variable")
+        self.assertEqual(tv.set(dy.id, "plan"), "☑")
+        self.assertEqual(tv.set(dy.id, "name"), "DY Peg")
+        self.assertRegex(tv.set(dy.id, "event"), r"^(any time|max \d\d:\d\d|min \d\d:\d\d|)$")
+        # each list scrolls on its own: its own scroll bar, and the wheel over it (John 24 Oct)
+        self.assertTrue(str(tv.cget("yscrollcommand")))
+        self.assertEqual(tv.bind("<MouseWheel>") != "", True)
+        self.assertEqual(page._click.__name__, "_click")
+        self.assertEqual(len(page.paned.panes()), 2, "Transits and Variables share a draggable divider")
+        tv.see(dy.id)
         app.update()
-        x, y, w, h = page.tree.bbox(dy.id, "plan")
-        page.tree.event_generate("<Button-1>", x=x + w // 2, y=y + h // 2)
+        x, y, w, h = tv.bbox(dy.id, "plan")
+        tv.event_generate("<Button-1>", x=x + w // 2, y=y + h // 2)
         app.update()
         self.assertFalse(next(t for t in settings.load_targets() if t.name == "DY Peg").enabled)
-        self.assertEqual(page.tree.set(dy.id, "plan"), "☐")
+        self.assertEqual(tv.set(dy.id, "plan"), "☐")
         page.set_priority(dy.id, "High")
         self.assertEqual(next(t for t in settings.load_targets() if t.name == "DY Peg").priority, "High")
         toi = next(t for t in app.targets if t.name == "TOI-2046 b")
-        self.assertIn("⚠ Tc ± 12.5 min", page.tree.set(toi.id, "source"))
-        page.tree.selection_set(toi.id)
+        self.assertEqual(page.table_of(toi.id).group, "transit")
+        self.assertIn("⚠ Tc ± 12.5 min", tt.set(toi.id, "source"))
+        self.assertRegex(tt.set(toi.id, "period"), r"^1\.497\d\d d$")
+        self.assertEqual(tt.set(toi.id, "night"), "Fri 23 Oct")
+        self.assertEqual([tt.set(toi.id, c) for c in ("ingress", "mid", "egress")], ["21:12", "22:24", "23:36"])
+        self.assertEqual(page.tables["campaign"].tree.set(
+            next(t for t in app.targets if t.name == "HD 219134").id, "next"), "every night")
+        page.select_target(toi.id)
         app.update()
         self.assertIn("depth 1.47 %", page.detail_var.get())
         self.assertIn("Tc ⚠ ± 12.5 min", page.detail_var.get())
         hd = next(t for t in app.targets if t.name == "HD 219134")
-        page.tree.selection_set(hd.id)
+        self.assertEqual(page.table_of(hd.id).group, "campaign")
+        page.select_target(hd.id)
         app.update()
+        self.assertEqual(tt.selection(), (), "one box's selection clears the others")
         self.assertIn("1 of 5 this week", page.detail_var.get())
         self.assertIn("HD 219134 c", page.detail_var.get())
-        self.assertIn("none yet", page.tree.set("grp:suggested", "next"), "the empty hint, not in the Name column")
+        self.assertIn("planned night", page.tables["transit"].box.cget("text"))
         # add: plain, unknown, needs a mode, several planets
         page.add("RR Lyr")
         self.pump()
@@ -528,7 +567,7 @@ class TestAppWithFakes(Base):
         page.add("Nowhere 1")
         self.pump()
         self.assertTrue(page.add_ind.var.get().startswith("✖ SIMBAD does not know"))
-        app.auto_answers = ["Discovery (D)"]
+        app.auto_answers = ["Star field (a campaign)"]
         page.add("HD 1")
         self.pump()
         hd1 = next(t for t in app.targets if t.name == "HD 1")
@@ -544,12 +583,14 @@ class TestAppWithFakes(Base):
         self.pump()
         w2 = next(t for t in app.targets if t.name == "WASP-2 b")
         self.assertTrue(w2.suggested and not w2.enabled)
-        self.assertEqual(page.tree.parent(w2.id), "grp:suggested")
+        self.assertEqual(page.table_of(w2.id).group, "transit", "suggestions share the Transits box")
+        self.assertTrue(page.tables["transit"].tree.set(w2.id, "source").startswith("suggested"))
         page.toggle(w2.id)
         self.assertTrue(w2.enabled)
-        page.tree.selection_set(w2.id)
+        page.select_target(w2.id)
         page.keep_selected()
-        self.assertEqual(page.tree.parent(w2.id), "grp:transit")
+        self.assertFalse(w2.suggested)
+        self.assertEqual(page.table_of(w2.id).group, "transit")
         page.remove_ids({w2.id})
         self.assertNotIn("WASP-2 b", [t.name for t in settings.load_targets()])
 
@@ -630,7 +671,8 @@ class TestAppWithFakes(Base):
         first = tab.table.get_children()[0]
         self.assertTrue(tab.table.tag_has("modeV", first) or tab.table.tag_has("modeT", first))
         self.assertFalse(self.sa.scrolls_itself(tab.table), "the wheel over the nightly table scrolls the page")
-        self.assertTrue(self.sa.scrolls_itself(app.pages[1].tree))
+        for tbl in app.pages[1].tables.values():
+            self.assertTrue(self.sa.scrolls_itself(tbl.tree))
         # lock the second block, mark the first Done, rebuild: both survive
         iid = tab.table.get_children()[1]
         tab.table.selection_set(iid)
@@ -1193,7 +1235,7 @@ class TestAppWithFakes(Base):
         t = next(t for t in app.targets if t.name == "Kepler-9")
         self.assertEqual((t.kind, t.mode, t.source), ("campaign", "V", "SIMBAD"))
         self.assertAlmostEqual(t.ra, 348.32)
-        self.assertEqual(page.tree.parent(t.id), "grp:campaign")
+        self.assertEqual(page.table_of(t.id).group, "campaign")
         app.auto_answers = ["Variable star (V)"]
         page.add("HD 1")                                  # NeedsMode offers the same kinds
         self.pump()
@@ -1205,7 +1247,7 @@ class TestAppWithFakes(Base):
         self.assertTrue(dlg.save(), dlg.msg_var.get())
         self.assertEqual((saved[0].kind, saved[0].mode), ("variable", "D"))
         page._edited(saved[0])
-        self.assertEqual(page.tree.parent(t.id), "grp:variable")
+        self.assertEqual(page.table_of(t.id).group, "variable")
 
     def test_build_later_start_rolls_marks_into_history(self):
         import planner as real_planner
@@ -1262,9 +1304,9 @@ class TestAppWithFakes(Base):
         tp = app.pages[1]
         app.show_page(1)
         dy = next(t for t in app.targets if t.name == "DY Peg")
-        before = tp.tree.index(dy.id)
+        before = tp.table_of(dy.id).tree.index(dy.id)
         tp.toggle(dy.id)
-        self.assertEqual(tp.tree.index(dy.id), before, "a ticked/unticked row keeps its place")
+        self.assertEqual(tp.table_of(dy.id).tree.index(dy.id), before, "a ticked/unticked row keeps its place")
 
     def test_edit_times_over_a_flexible_block_replans_it(self):
         self.golden_home()
@@ -1486,7 +1528,7 @@ class TestPlanetHosts(Base):
         self.assertEqual(dlg.eph_widgets[0].winfo_manager(), "grid")
         self.assertIn("add its planet HD 219134 b and HD 219134 c", dlg.msg_var.get())
         self.assertFalse(dlg.save(), "never an empty transit target")
-        self.assertTrue(dlg.msg_var.get().startswith("✖ Not saved: A Transits target needs its period and Tc"))
+        self.assertTrue(dlg.msg_var.get().startswith("✖ Not saved: A transit target needs its period and Tc"))
         dlg.vars["period"].set("3.5")
         dlg.vars["t0"].set("2460000.5")
         dlg.vars["t14"].set("2")
@@ -1495,7 +1537,7 @@ class TestPlanetHosts(Base):
         self.assertEqual((t.kind, t.mode, t.elements), ("transit", "T", None))
         self.assertEqual((t.planet["period"], t.planet["name"]), (3.5, "HD 219134"))
         page._edited(t)
-        self.assertEqual(page.tree.parent(t.id), "grp:transit")
+        self.assertEqual(page.table_of(t.id).group, "transit")
         # and back: a transit moved to Campaigns loses its ephemeris and is offered its star's planets
         tr = next(x for x in app.targets if x.id == t.id)
         n = len(self.host_calls)
@@ -1510,7 +1552,7 @@ class TestPlanetHosts(Base):
         self.assertTrue(dlg.save(), dlg.msg_var.get())
         self.assertEqual((saved[0].kind, saved[0].mode, saved[0].planet), ("campaign", "V", None))
         page._edited(saved[0])
-        self.assertEqual(page.tree.parent(t.id), "grp:campaign")
+        self.assertEqual(page.table_of(t.id).group, "campaign")
         # a mode change alone (as if the traces had not run) still moves the group
         dlg, saved = self.dialog(saved[0])
         dlg._syncing = True
@@ -1598,7 +1640,7 @@ class TestPlanetHosts(Base):
         page._added("HD 219134 d", None, exc)
         self.pump()
         msg, choices = self.asked[0]
-        self.assertTrue(msg.startswith("HD 219134 d is a planet that does not transit, so it cannot be a Transits"))
+        self.assertTrue(msg.startswith("HD 219134 d is a planet that does not transit, so it cannot be a transit"))
         self.assertNotIn(self.sa.KIND_CHOICES[3][0], choices)
         self.assertEqual(self.host_calls[0][0], "HD 219134")
         t = next(t for t in app.targets if t.name == "HD 219134" and t.kind == "variable")
@@ -1700,7 +1742,7 @@ class TestAppWithRealModules(Base):
         self.assertAlmostEqual(kept[0].end, b.end, places=6)
         # every row's columns filled from export.table_rows
         row = page.tabs[0].table.item(page.tabs[0].table.get_children()[0], "values")
-        self.assertIn("(X ", row[4])
+        self.assertIn("(X ", row[3])                        # no mode column (1.1.0)
         # a Clouded-out mark: a rebuild keeps it once, and does not plan the target again that night
         tab = page.tabs[0]
         i, b = next((i, b) for i, b in tab.blocks() if not b.fixed and not b.locked)

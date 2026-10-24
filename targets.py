@@ -1324,7 +1324,7 @@ VAR_COLUMNS = ("Name", "V", "RAJ2000", "DEJ2000", "Type", "max", "n_max", "f_min
                "u_Epoch", "l_Period", "Period", "u_Period")
 VAR_SEARCH_DEFAULTS = {"families": ["eclipsing", "rrlyr", "dsct", "long"], "uncertain": False, "pmin": None,
                        "pmax": None,
-                       "punit": "d", "vmin": None, "vmax": None, "min_amp": 0.1, "max_results": 12}
+                       "punit": "d", "vmin": None, "vmax": None, "min_amp": 0.1, "max_results": 25}
 SHORT_PULSATOR_DAYS = 0.5          # a pulsator this short (or shorter) needs a whole cycle in one night
 FILLER_MIN_RUN_MIN = 60.0          # an any-time star needs at least this long above the limits in the dark
 CYCLE_MARGIN_MIN = 30.0            # a full cycle plus this margin
@@ -1751,7 +1751,7 @@ def suggest_variables(site, options, nights: list, params: dict | None = None, e
 
     found.sort(key=lambda x: -x[0])
     out = []
-    for score, v, fam, kind, d, hit, good, amp, sigma in found[: int(p.get("max_results") or 12)]:
+    for score, v, fam, kind, d, hit, good, amp, sigma in found[: int(p.get("max_results") or 25)]:
         t0 = hit[0]
         when_text = f"{_fmt_day(t0, site)} {sky.hhmm(t0, site.tz)}"
         if kind == "timed":
@@ -1878,6 +1878,107 @@ def next_event_text(target: Target, site, from_jd: float, days: int = 30) -> str
             return (f"every night; next blackout {_fmt_day(b['start'], site)} {sky.hhmm(b['start'], site.tz)}–"
                     f"{sky.hhmm(b['end'], site.tz)} ({b['reason']})")
     return "every night"
+
+
+def _night_windows(site, nights: list, from_jd: float) -> list[tuple[date, float, float]]:
+    """(night date, dark start, dark end) of each given night, cut to begin no earlier than from_jd; nights that are
+    over (or have no darkness) are left out."""
+    out = []
+    for d in sorted(set(nights)):
+        w = sky.night_window(d, site)
+        if w and w[1] > from_jd:
+            out.append((d, max(w[0], from_jd), w[1]))
+    return out
+
+
+def period_text(days) -> str:
+    """A period for the Targets rows: "3.5249 d", "5.31 h" (under a day), "—" when unknown."""
+    try:
+        p = float(days)
+    except (TypeError, ValueError):
+        return "—"
+    if not math.isfinite(p) or p <= 0:
+        return "—"
+    if p < 1.0:
+        return f"{p * 24:.2f} h"
+    return f"{p:.5f} d" if p < 10 else (f"{p:.3f} d" if p < 1000 else f"{p:.0f} d")
+
+
+def next_events(target: Target, site, nights: list, from_jd: float) -> dict:
+    """The Targets rows' next event (1.1.0, John 24 Oct): the first one that falls in a dark window of the given
+    nights (the planned nights), not merely the next one from now. Times are JD (UTC); the page shows them on the
+    site's clock.
+      transit  {"night": date, "t1", "tc", "t4", "full": bool} — the first transit whose ingress…egress is all in the
+               dark and above the limits, else the first partly visible one; or {"none": text}
+      variable {"night": date, "t", "event": "min"|"max"} for timed elements; {"night": date, "any": True} for an
+               any-time star (its first night up in the dark ≥ FILLER_MIN_RUN_MIN); or {"none": text}
+      campaign {"text": next_event_text(...)} (every night / next blackout)
+    "none" text: "none in the next 7 nights" (or "none tonight" for one night)."""
+    if site is None or not site.complete():
+        return {"none": "set up your site first"}
+    if target.ra is None or target.dec is None:
+        return {"none": "no coordinates"}
+    nights = [d for d in (nights or []) if isinstance(d, date)]
+    n = len(nights)
+    none = "none tonight" if n == 1 else f"none in the next {n} nights"
+    if target.kind == "campaign":
+        days = max(1, (max(nights) - sky.night_date_of(from_jd, site.tz)).days + 1) if nights else 7
+        return {"text": next_event_text(target, site, from_jd, days=days)}
+    wins = _night_windows(site, nights, from_jd)
+    if not wins:
+        return {"none": "no dark time" if nights else none}
+    mina = _min_alt_of(target)
+
+    def up(jds):
+        return sky.up_mask(target.ra, target.dec, site, np.atleast_1d(np.asarray(jds, dtype=float)), mina)
+
+    def night_of(jd):
+        for d, a, b in wins:
+            if a <= jd <= b:
+                return d
+        return None
+
+    def in_dark(jds):
+        jds = np.atleast_1d(np.asarray(jds, dtype=float))
+        m = np.zeros(jds.shape, dtype=bool)
+        for _d, a, b in wins:
+            m |= (jds >= a) & (jds <= b)
+        return m
+    lo, hi = wins[0][1], wins[-1][2]
+
+    if target.kind == "transit":
+        pl = target.planet_obj()
+        if not pl or not pl.ok():
+            return {"none": "no ephemeris"}
+        partial = None
+        for ev in events.transit_events(pl, target.ra, target.dec, lo, hi):
+            if ev["t4"] < lo or ev["t1"] > hi:
+                continue
+            grid = np.linspace(ev["t1"], ev["t4"], 25)
+            ok = in_dark(grid) & up(grid)
+            d = next((night_of(x) for x, k in zip(grid, ok) if k), None)
+            if ok.all():
+                return {"night": d, "t1": ev["t1"], "tc": ev["tc"], "t4": ev["t4"], "full": True}
+            if ok.any() and partial is None:
+                partial = {"night": d, "t1": ev["t1"], "tc": ev["tc"], "t4": ev["t4"], "full": False}
+        return partial or {"none": none}
+
+    el = target.elements_obj()
+    if el and not el.any_time and el.period and el.epoch:
+        word = "min" if (el.epoch_kind or "max") == "min" else "max"
+        for ev in events.variable_events(el, target.ra, target.dec, lo, hi):
+            if bool(in_dark([ev["t"]])[0]) and bool(up([ev["t"]])[0]):
+                return {"night": night_of(ev["t"]), "t": ev["t"], "event": word}
+        return {"none": none}
+    need = FILLER_MIN_RUN_MIN / 1440.0
+    for d, a, b in wins:
+        grid = np.arange(a, b + 1e-9, 5.0 / 1440.0)
+        if grid.size == 0:
+            continue
+        for s0, s1 in _runs(up(grid), grid):
+            if s1 - s0 >= need - 5.0 / 1440.0:
+                return {"night": d, "any": True, "t": float(s0)}
+    return {"none": none}
 
 
 # ---- campaign progress ---------------------------------------------------------------------------------------------

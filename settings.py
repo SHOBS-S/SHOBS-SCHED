@@ -76,7 +76,7 @@ DEFAULT_OPTIONS = {
     "suggest_vmax": 13.0,
     "suggest_min_depth": 0.005,
     "suggest_baseline_min": 30.0,
-    "suggest_max": 12,
+    "suggest_max": 25,                 # Find suggested transits: how many (the Find pop-up sets it; John 24 Oct)
     "suggest_moon_penalty_max": 3.0,   # magnitudes of Moon-brightened sky allowed
     "tc_sigma_warn_min": 10.0,         # ⚠ when a transit's predicted Tc uncertainty is over this
     # sky
@@ -182,7 +182,22 @@ def load_settings() -> dict:
                 out[k] = v
         if "from_fits" not in data:          # written by v1.0.0, which never put these limits in set_here
             migrate_v1_limits(out)
+        migrate_list_caps(out)
     return out
+
+
+def migrate_list_caps(s: dict) -> None:
+    """The suggestion lists' old default cap of 12 becomes the new default 25, once (John 24 Oct: 12 rows looked
+    like a limit of the page). A cap the user chose (any other number) stays; later choices of 12 stay too."""
+    o = s.setdefault("options", {})
+    if o.get("list_caps_25"):
+        return
+    if o.get("suggest_max") in (12, 12.0):
+        o["suggest_max"] = 25
+    vs = o.get("var_search")
+    if isinstance(vs, dict) and vs.get("max_results") in (12, 12.0):
+        vs["max_results"] = 25
+    o["list_caps_25"] = True
 
 
 def _default_of(dotted: str):

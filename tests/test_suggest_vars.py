@@ -84,7 +84,7 @@ class TestTypesAndParams(unittest.TestCase):
         p = T.var_search_params({})
         self.assertEqual(p["families"], ["eclipsing", "rrlyr", "dsct", "long"], "Miras / SR on by default")
         self.assertEqual((p["vmin"], p["vmax"]), (9.0, 13.0), "V range from Setup's Suggested range")
-        self.assertEqual((p["min_amp"], p["max_results"]), (0.1, 12))
+        self.assertEqual((p["min_amp"], p["max_results"]), (0.1, 25))    # default cap 25 (John 24 Oct)
         p = T.var_search_params({"suggest_vmin": 8.5, "suggest_vmax": 12.5,
                                  "var_search": {"families": ["long", "bogus"], "punit": "x", "vmax": 11.0}})
         self.assertEqual(p["families"], ["long"])
@@ -283,7 +283,13 @@ class VarsPageBase(AppBase):
         return app, app.pages[1]
 
     def kids(self, page, group):
-        return [page.tree.item(i, "text").strip() for i in page.tree.get_children(f"grp:{group}")]
+        """Row names of a Targets box in order; "suggested" / "suggested_var" = only the suggestions in the
+        Transits / Variables box (1.1.0: one box per type)."""
+        real = {"suggested": "transit", "suggested_var": "variable"}.get(group, group)
+        tree = page.tables[real].tree
+        by = page.app.targets_by_id()
+        return [tree.set(i, "name") for i in tree.get_children()
+                if real == group or (i in by and by[i].suggested)]
 
 
 @unittest.skipUnless(HAVE_TK, "needs a display (run under xvfb-run)")
@@ -300,10 +306,12 @@ class TestSuggestedVariablesPage(VarsPageBase):
         app = self.open()
         app.show_page(1)
         page = app.pages[1]
-        self.assertTrue(page.tree.item("grp:suggested", "text").startswith("Suggested Transits  (1"))
-        self.assertTrue(page.tree.item("grp:suggested_var", "text").startswith("Suggested Variables  (0"))
+        self.assertTrue(page.tables["transit"].box.cget("text").startswith("Transits  ("))
+        self.assertTrue(page.tables["variable"].box.cget("text").startswith("Variables  ("))
+        self.assertTrue(page.tables["campaign"].box.cget("text").startswith("Campaigns  ("))
         self.assertEqual(self.kids(page, "suggested"), ["WASP-2 b"])
-        self.assertEqual(page.tree.set("grp:suggested_var", "next"), "none yet: press Find suggested variables")
+        self.assertEqual(page.table_of(old.id).group, "transit", "an old Suggested transit lands in Transits")
+        self.assertEqual(self.kids(page, "suggested_var"), [])
 
     def test_popup_remembers_and_results_land_unticked_by_date(self):
         app, page = self.page()
@@ -327,7 +335,7 @@ class TestSuggestedVariablesPage(VarsPageBase):
         ts = [t for t in app.targets if t.suggested and t.kind == "variable"]
         self.assertTrue(all(not t.enabled for t in ts), "unticked")
         by_name = {t.name: t for t in ts}
-        order = self.sa.row_order("suggested_var", sky.now_jd())     # dates already past count as undated
+        order = self.sa.row_order("variable", sky.now_jd())          # dates already past count as undated
         keys = [order(by_name[n]) for n in names]
         self.assertEqual(keys, sorted(keys), "night by night: timed events first, then fillers")
         self.assertTrue(page.find_ind.var.get().startswith("✔ "), page.find_ind.var.get())
@@ -354,18 +362,22 @@ class TestSuggestedVariablesPage(VarsPageBase):
                    enabled=False, source="VizieR VSX", elements={"vtype": "EA", "period": 1.357, "epoch": 2450000.0},
                    notes="EA, P = 1.357 d", suggest_info={"when": future, "text": "min Sat 24 Oct 04:22",
                                                           "score": 4.34, "good_nights": 3, "nights": 7,
-                                                          "kind": "timed"})
+                                                          "kind": "timed", "event": "min"})
         app.targets.append(t)
         page.fill()
-        self.assertEqual(page.tree.set(t.id, "next"), "min Sat 24 Oct 04:22")
-        page.tree.selection_set(t.id)
+        tv = page.tables["variable"].tree
+        self.assertEqual(tv.set(t.id, "event"), f"min {sky.hhmm(future, app.site.tz)}")
+        self.assertEqual(tv.set(t.id, "period"), "1.35700 d")
+        self.assertEqual(tv.set(t.id, "vtype"), "EA")
+        self.assertTrue(tv.set(t.id, "source").startswith("suggested"))
+        page.select_target(t.id)
         app.update()
         self.assertIn("suggested variable: score 4.34, good on 3 of 7 nights", page.detail_var.get())
         page.keep_selected()
         self.assertEqual(self.kids(page, "variable").count("XZ And"), 1)
-        self.assertIn("Moved to Variables: XZ And", page.msg_var.get())
+        self.assertIn("Kept XZ And", page.msg_var.get())
         self.assertFalse(t.suggested)
-        page.tree.selection_set(t.id)
+        page.select_target(t.id)
         page.remove_selected()
         self.assertNotIn("XZ And", [x.name for x in app.targets])
 
@@ -422,7 +434,7 @@ class TestSuggestedVariablesPage(VarsPageBase):
         page.fill()
         self.assertEqual(self.kids(page, "suggested"), ["B-2 b", "C-3 b", "A-1 b", "0-old b"],
                          "soonest first; no date last")
-        page.tree.selection_set(next(t.id for t in app.targets if t.name == "B-2 b"))
+        page.select_target(next(t.id for t in app.targets if t.name == "B-2 b"))
         app.update()
         self.assertIn("suggested transit: score 3.00, S/N 2.0", page.detail_var.get())
 
@@ -559,8 +571,9 @@ class TestSuggestionsLeavePlanFresh(VarsPageBase):
         page.find_suggested()
         self.pump()
         self.assertFalse(app.pages[2].setup_stale)
-        kid = page.tree.get_children("grp:suggested_var")[0]
-        page.tree.selection_set(kid)
+        by = app.targets_by_id()
+        kid = next(i for i in page.tables["variable"].tree.get_children() if by[i].suggested)
+        page.select_target(kid)
         page.keep_selected()
         self.assertFalse(app.pages[2].setup_stale, "kept unticked: nothing planned changed")
         page.toggle(kid)                                    # ticking it does change the plan

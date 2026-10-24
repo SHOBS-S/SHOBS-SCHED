@@ -1,7 +1,7 @@
 """SHOBS-SCHED look: colors, fonts and the ttk styles (House Style shared with SHOBS-P).
 
-Blue frame (sidebar and status bar) around a white centre; the three SHOBS-P mode colors (navy = Variables,
-green = Transits, plum = Discovery) for blocks, tags and row tints; GREEN final-action buttons that dim briefly
+Blue frame (sidebar and status bar) around a white centre; the three target-type colors (navy = Variable,
+green = Transit, plum = Campaign) for blocks, tags and row tints; GREEN final-action buttons that dim briefly
 when pressed; ✖ / ⚠ / ✔ status label styles.
 
 High-DPI: fonts are given in points and paddings are multiplied by ui_scale(), so nothing is a fixed pixel width.
@@ -33,11 +33,11 @@ SIDE_TEXT = "#f4f7f8"
 SIDE_HINT = "#b7c7d1"
 LINE = "#c9d6de"          # thin rules and borders
 
-# ---- the three SHOBS-P modes (values from SHOBS-P's MODES table) -----------------------------------------------------
+# ---- the three target types: navy = Variable, green = Transit, plum = Campaign (keys V / T / D) ----------------------
 MODE_COLORS = {
-    "V": {"name": "Variables", "dark": "#16324a", "light": "#2a5a80", "tint": "#e4edf4"},
-    "T": {"name": "Transits", "dark": "#1d4a2f", "light": "#357a50", "tint": "#e3f1e7"},
-    "D": {"name": "Discovery", "dark": "#4a1d47", "light": "#7a3576", "tint": "#f3e6f2"},
+    "V": {"name": "Variable", "dark": "#16324a", "light": "#2a5a80", "tint": "#e4edf4"},
+    "T": {"name": "Transit", "dark": "#1d4a2f", "light": "#357a50", "tint": "#e3f1e7"},
+    "D": {"name": "Campaign", "dark": "#4a1d47", "light": "#7a3576", "tint": "#f3e6f2"},
 }
 
 # ---- actions and status --------------------------------------------------------------------------------------------

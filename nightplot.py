@@ -6,7 +6,7 @@ ascl:1306.007, https://github.com/elnjensen/Tapir, GPL-3): airmass downward on t
 the Sun's altitude as shaded twilight bands with the sunset / twilight / sunrise times across the top, the time span
 from nautical dusk − 1.5 h to nautical dawn + 1.5 h in whole hours, the Moon as a dashed line whose width grows
 with its phase (1.5 · (1 + illuminated fraction)), and a transit's ingress-to-egress shaded. SCHED adds what a
-night plan needs: every planned target's whole-night path faint and its block bold in its SHOBS-P mode color with
+night plan needs: every planned target's whole-night path faint and its block bold in its type's color (Transit / Variable / Campaign) with
 the airmass at the block's start and end, a label box per block (name, local start–end, Moon distance), ▼ where a
 meridian flip falls inside a block, the transit's baselines, no-transit windows that changed the plan (hatched),
 and the hourly weather (cloud, temperature, dew point, spread, dew risk) in a strip above on the same time axis.
@@ -32,7 +32,7 @@ import numpy as np
 
 import events
 import sky
-from models import Block, NightPlan, Target
+from models import TYPE_NAMES, Block, NightPlan, Target, block_type_code
 
 # ---- matplotlib (optional) ------------------------------------------------------------------------------------------
 _MPL: dict | None = None
@@ -389,7 +389,7 @@ class NightPlot:
         bl = [b for _i, b in self.blocks if b.target_id == self.selected]
         if bl:
             b = bl[0]
-            self.sel_text.set_text(f"Selected: {b.name} ({b.mode})  {self.hhmm(b.start)}–{self.hhmm(b.end)}")
+            self.sel_text.set_text(f"Selected: {b.name} ({TYPE_NAMES[block_type_code(b)]})  {self.hhmm(b.start)}–{self.hhmm(b.end)}")
 
     # ---- drawing ----
     def draw(self):
@@ -505,7 +505,7 @@ class NightPlot:
     def _block(self, i: int, b: Block):
         ax, look = self.ax, self.look
         tid = b.target_id or f"#{i}"
-        mode = b.mode if b.mode in ("V", "T", "D") else "V"
+        mode = block_type_code(b)                     # the target's type (Transit / Variable / Campaign)
         col = look["mode"][mode]
         ra, dec = self._coords(b)
         x0, x1 = float(self.x(b.start)), float(self.x(b.end))

@@ -388,8 +388,8 @@ class TestLocalTimeLabels(Base):
         self.assertIn("Not a zone name", str(app.pages[0].tz_hint.cget("text")))
         app.pages[0].load_form()
         app.show_page(1)
-        head = app.pages[1].tree.heading("next", "text")
-        self.assertRegex(head, r"^Next useful event, Local time \(UTC[−+]\d+( → UTC[−+]\d+)?\)$")
+        head = app.pages[1].tables["transit"].box.cget("text")
+        self.assertRegex(head, r"next event in the \d+ planned nights?, Local time \(UTC[−+]\d+( → UTC[−+]\d+)?\)$")
         dlg = self.sa.EditTargetDialog(app, app.targets[0], modal=False)
         texts = []
 
