@@ -489,18 +489,6 @@ def _night_facts(n: NightPlan, site: Site, weather_by_date: dict | None, setting
             "clock": night_clock_label(n, site)}
 
 
-def _didnt_fit_lines(n: NightPlan, site: Site) -> list[str]:
-    out = []
-    for d in n.didnt_fit or []:
-        d = d if isinstance(d, dict) else {}
-        line = f"{d.get('name', '?')}: {d.get('reason', '')}".rstrip(": ")
-        nc = d.get("next_chance")
-        if nc and "next chance" not in line:
-            line += f" (next chance {_date_label(nc, site)})"
-        out.append(line)
-    return out
-
-
 def _items(head: str, items) -> list[str]:
     """Sentences under a heading, without repeating it: under "Darks", "Darks to shoot: 40 s" reads
     "To shoot: 40 s" and "Darks: all on hand (…)" reads "All on hand (…)"."""

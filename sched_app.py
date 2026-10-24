@@ -45,7 +45,7 @@ if APP_DIR not in sys.path:
 import settings  # noqa: E402
 import sky  # noqa: E402
 import style  # noqa: E402
-from models import (MODE_NAMES, PRIORITIES, STATUS_LABELS, Block, NightPlan, Optics, Planet,  # noqa: E402
+from models import (PRIORITIES, STATUS_LABELS, Block, NightPlan, Optics, Planet,  # noqa: E402
                     Schedule, Site, Target, TYPE_NAMES, block_type_code, type_name)
 from style import px  # noqa: E402
 
@@ -1837,6 +1837,17 @@ class TargetTable:
         self.tree.bind("<Button-5>", lambda e: self._wheel(e, 1))
 
     def _wheel(self, event, units=None):
+        """Scroll the list under the pointer (whichever Tk delivered the event to: some Windows Tk builds send the
+        wheel to the focused list)."""
+        tree = self.tree
+        try:
+            under = self.tree.winfo_containing(event.x_root, event.y_root)
+            for tbl in self.page.tables.values():
+                if under is tbl.tree:
+                    tree = tbl.tree
+                    break
+        except (tk.TclError, AttributeError, KeyError, TypeError):
+            pass
         try:
             if units is None:
                 d = int(getattr(event, "delta", 0))
@@ -1845,7 +1856,7 @@ class TargetTable:
                 units = -1 if d > 0 else 1
                 if sys.platform == "win32" and abs(d) >= 120:
                     units = -int(d / 120) * 2
-            self.tree.yview_scroll(units, "units")
+            tree.yview_scroll(units, "units")
         except tk.TclError:
             pass
         return "break"
@@ -2092,8 +2103,10 @@ class TargetsPage:
                 night += " (partial)"
             return {"night": night, "ingress": sky.hhmm(ev["t1"], tz), "mid": sky.hhmm(ev["tc"], tz),
                     "egress": sky.hhmm(ev["t4"], tz)}
-        info = t.suggest_info if (t.suggested and isinstance(t.suggest_info, dict)) else {}
-        if ev.get("any"):
+        # the search's verdict on timing stays with the star after Keep (review round 4): an imprecise VSX
+        # minimum is never shown as a confident time, even when the elements themselves are "timed"
+        info = t.suggest_info if isinstance(t.suggest_info, dict) else {}
+        if ev.get("any") or info.get("time_uncertain"):
             event = "any time"
             sig = info.get("timing_sigma_min")
             if info.get("time_uncertain"):
@@ -2228,6 +2241,8 @@ class TargetsPage:
         if key == self._events_key:
             return
         self._events_key = key
+        self._events_gen = getattr(self, "_events_gen", 0) + 1
+        gen = self._events_gen                # a slower earlier search never overwrites a newer one
         targets = [Target.from_dict(t.to_dict()) for t in app.targets]
 
         def work():
@@ -2241,7 +2256,7 @@ class TargetsPage:
             return out
 
         def done(res, exc):
-            if exc is not None or res is None:
+            if exc is not None or res is None or gen != self._events_gen:
                 return
             self.events = res
             self.fill()

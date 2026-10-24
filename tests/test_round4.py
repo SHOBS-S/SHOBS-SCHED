@@ -95,6 +95,23 @@ class TestTypesAndCredits(unittest.TestCase):
 
 
 class TestCapsMigration(unittest.TestCase):
+    def test_load_settings_migrates_old_files_only(self):
+        import tempfile
+        old_path = settings.settings_path
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "s.json")
+        settings.settings_path = lambda: p
+        try:
+            with open(p, "w", encoding="utf-8") as fh:
+                json.dump({"options": {"suggest_max": 12, "var_search": {"max_results": 12}}}, fh)
+            o = settings.load_settings()["options"]
+            self.assertEqual((o["suggest_max"], o["var_search"]["max_results"]), (25, 25), "old file migrates")
+            with open(p, "w", encoding="utf-8") as fh:
+                json.dump({"options": {"suggest_max": 12, "list_caps_25": True}}, fh)
+            self.assertEqual(settings.load_settings()["options"]["suggest_max"], 12, "a new choice of 12 stays")
+        finally:
+            settings.settings_path = old_path
+
     def test_old_caps_of_12_become_25_once(self):
         s = {"options": {"suggest_max": 12, "var_search": {"max_results": 12, "min_amp": 0.2}}}
         settings.migrate_list_caps(s)
@@ -107,6 +124,7 @@ class TestCapsMigration(unittest.TestCase):
         settings.migrate_list_caps(s)
         self.assertEqual(s["options"]["suggest_max"], 8, "a chosen cap stays")
         self.assertEqual(settings.DEFAULT_OPTIONS["suggest_max"], 25)
+        self.assertTrue(settings.DEFAULT_OPTIONS["list_caps_25"], "a new install's own 12 is never migrated")
         self.assertEqual(T.VAR_SEARCH_DEFAULTS["max_results"], 25)
 
 
@@ -169,6 +187,27 @@ class TestRound4Page(Base):
         self.assertEqual(tab.status_var.get(), "")
         saved = json.load(open(settings.schedule_path(), encoding="utf-8"))
         self.assertEqual(saved["nights"][0]["blocks"][i]["status"], "planned", "saved")
+
+    def test_uncertain_timing_never_shown_as_a_time(self):
+        """Review round 4 must-fix: an EW with "timed" elements but an imprecise VSX epoch keeps its ⚠, before and
+        after its events are found, and after Keep."""
+        self.golden_home()
+        app = self.open()
+        app.show_page(1)
+        page = app.pages[1]
+        t = Target(name="EW-like", kind="variable", mode="V", ra=20.0, dec=40.0, suggested=True, enabled=False,
+                   elements={"vtype": "EW", "period": 0.31, "epoch": 2442582.406, "epoch_kind": "min",
+                             "any_time": False},
+                   suggest_info={"when": sky.now_jd() + 0.5, "night": "2026-10-25", "kind": "cycle",
+                                 "time_uncertain": True, "timing_sigma_min": 435540.0})
+        app.targets.append(t)
+        page.events[t.id] = {"night": date(2026, 10, 25), "t": sky.now_jd() + 0.5, "event": "min"}
+        page.fill()
+        tv = page.tables["variable"].tree
+        self.assertTrue(tv.set(t.id, "event").startswith("any time  ⚠ time uncertain ±"), tv.set(t.id, "event"))
+        page.select_target(t.id)
+        page.keep_selected()
+        self.assertTrue(tv.set(t.id, "event").startswith("any time  ⚠"), "kept: the marker stays")
 
     def test_credits_page_and_back(self):
         self.golden_home()

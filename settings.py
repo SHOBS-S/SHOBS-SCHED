@@ -88,6 +88,7 @@ DEFAULT_OPTIONS = {
     "target_peak_frac": 0.8,           # aim the predicted peak at this fraction of the linear limit
     "fwhm_arcsec": 3.0,                # typical seeing FWHM for the cold-start estimate
     "defocus_fwhm_factor": 1.5,        # a defocused target's stars are this many times wider (peak estimate)
+    "list_caps_25": True,              # the 12 → 25 cap migration is done (new installs never migrate)
 }
 
 
@@ -182,7 +183,10 @@ def load_settings() -> dict:
                 out[k] = v
         if "from_fits" not in data:          # written by v1.0.0, which never put these limits in set_here
             migrate_v1_limits(out)
-        migrate_list_caps(out)
+        raw = data.get("options") if isinstance(data.get("options"), dict) else {}
+        if not raw.get("list_caps_25"):      # written before round 4: migrate once (the default says done)
+            out["options"].pop("list_caps_25", None)
+            migrate_list_caps(out)
     return out
 
 
