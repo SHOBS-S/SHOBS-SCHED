@@ -210,6 +210,38 @@ class TestRound4Page(Base):
         page.keep_selected()
         self.assertTrue(tv.set(t.id, "event").startswith("any time  ⚠"), "kept: the marker stays")
 
+    def test_nights_row_on_targets_shared_with_schedule(self):
+        """John 24 Oct: choose the nights on the Targets page (no trip to Schedule and back)."""
+        self.golden_home()
+        app = self.open()
+        app.show_page(1)
+        page = app.pages[1]
+        tonight = app.tonight()
+        labels = list(page.span_start_box.cget("values"))
+        self.assertEqual(len(labels), 14)
+        self.assertTrue(labels[0].endswith("(tonight)"))
+        page.span_start.set(labels[2])
+        page.span_n.set("5")
+        page._span_picked()
+        want = [date.fromordinal(tonight.toordinal() + 2 + k) for k in range(5)]
+        self.assertEqual(page.suggestion_nights(), want)
+        self.assertIn("5 planned nights", page.tables["transit"].box.cget("text"))
+        self.assertEqual(settings.load_settings()["options"]["nights"], 5, "saved")
+        dlg = page.ask_transit_search()
+        self.assertTrue(any("5 nights" in str(w.cget("text")) for w in dlg.win.winfo_children()[0].winfo_children()
+                            if str(w.winfo_class()) == "TLabel"))
+        dlg.win.destroy()
+        sch = app.pages[2]
+        app.show_page(2)
+        self.assertEqual(sch.n_var.get(), "5")
+        self.assertEqual(sch.chosen_start(), want[0], "the Schedule page builds the same nights")
+        # and the other way round
+        sch.n_var.set("3")
+        sch._nights_changed()
+        app.show_page(1)
+        self.assertEqual(len(page.suggestion_nights()), 3)
+        self.assertEqual(page.span_n.get(), "3")
+
     def test_credits_page_and_back(self):
         self.golden_home()
         app = self.open()

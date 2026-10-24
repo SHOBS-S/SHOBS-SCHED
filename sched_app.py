@@ -812,6 +812,35 @@ class App(tk.Tk):
     def planner_targets(self) -> list[Target]:
         return [t for t in self.targets if t.enabled]
 
+    def plan_nights(self) -> list[date]:
+        """The nights the Targets page searches and shows events for (John 24 Oct): first night plan_start (never
+        before tonight; None = tonight) for options["nights"] nights (1–7). The Schedule page's Nights and first
+        night share it."""
+        tonight = self.tonight()
+        start = getattr(self, "plan_start", None)
+        if not isinstance(start, date) or start < tonight:
+            start = tonight
+        try:
+            n = min(7, max(1, int(self.options.get("nights", 7) or 7)))
+        except (TypeError, ValueError):
+            n = 7
+        return [start + timedelta(days=k) for k in range(n)]
+
+    def set_plan_span(self, start: date | None = None, n: int | None = None, source=None):
+        """Change the shared first night and/or number of nights (saved: the number; the first night lasts the
+        session) and bring the other page's controls in line."""
+        if start is not None:
+            self.plan_start = start
+        if n is not None:
+            self.options["nights"] = min(7, max(1, int(n)))
+            settings.save_settings(self.settings)
+        for p in getattr(self, "pages", []):
+            if p is not source and hasattr(p, "span_changed"):
+                try:
+                    p.span_changed()
+                except Exception as exc:
+                    settings.log(f"span_changed {getattr(p, 'title', p)}: {exc!r}")
+
     def tonight(self) -> date:
         """The night that is running or coming, on the site's clock: before sunrise it is the night in progress
         (it started yesterday evening); after sunrise it is the coming evening's night."""
@@ -1910,6 +1939,24 @@ class TargetsPage:
         self.add_ind.pack(side=tk.LEFT, padx=px(app, 10))
         ttk.Label(top, text="a planet (WASP-12 b), a variable (DY Peg) or any star", style="Hint.TLabel").pack(
             side=tk.LEFT)
+        # the nights the Find buttons search and the lists' next events cover (shared with the Schedule page)
+        span = ttk.Frame(self.frame, style="Card.TFrame")
+        span.pack(fill=tk.X, pady=(0, px(app, 6)))
+        ttk.Label(span, text="Nights", style="Bold.TLabel").pack(side=tk.LEFT)
+        ttk.Label(span, text="from", style="Card.TLabel").pack(side=tk.LEFT, padx=(px(app, 8), px(app, 4)))
+        self.span_start = tk.StringVar()
+        self.span_start_box = ttk.Combobox(span, textvariable=self.span_start, state="readonly", width=22)
+        self.span_start_box.pack(side=tk.LEFT)
+        self.span_start_box.bind("<<ComboboxSelected>>", lambda _e: self._span_picked())
+        ttk.Label(span, text="for", style="Card.TLabel").pack(side=tk.LEFT, padx=(px(app, 8), px(app, 4)))
+        self.span_n = tk.StringVar()
+        nb = ttk.Combobox(span, textvariable=self.span_n, values=[str(k) for k in range(1, 8)], state="readonly",
+                          width=3)
+        nb.pack(side=tk.LEFT)
+        nb.bind("<<ComboboxSelected>>", lambda _e: self._span_picked())
+        self.span_hint = ttk.Label(span, text="", style="Hint.TLabel")
+        self.span_hint.pack(side=tk.LEFT, padx=(px(app, 8), 0))
+        self._span_dates: list[date] = []
 
         bottom = ttk.Frame(self.frame, style="Card.TFrame")
         bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(px(app, 6), 0))
@@ -1992,6 +2039,7 @@ class TargetsPage:
 
     # ---- table ----
     def refresh(self):
+        self._fill_span()
         self.fill()
         self._start_next_events()
 
@@ -2628,10 +2676,41 @@ class TargetsPage:
 
     # ---- suggested transits ----
     def suggestion_nights(self) -> list[date]:
-        nights = [date.fromisoformat(n["date"]) for n in self.app.schedule.nights if n.get("date")]
-        tonight = self.app.tonight()
-        nights = [d for d in nights if d >= tonight]
-        return nights or [tonight + timedelta(days=k) for k in range(7)]
+        """The nights chosen on this page (Nights from … for …), shared with the Schedule page."""
+        return self.app.plan_nights()
+
+    def _fill_span(self):
+        app = self.app
+        nights = app.plan_nights()
+        tonight = app.tonight()
+        self._span_dates = [tonight + timedelta(days=k) for k in range(14)]
+        labels = [night_label(d.isoformat(), app.site) + (" (tonight)" if k == 0 else "")
+                  for k, d in enumerate(self._span_dates)]
+        self.span_start_box.configure(values=labels)
+        if nights[0] in self._span_dates:
+            self.span_start.set(labels[self._span_dates.index(nights[0])])
+        self.span_n.set(str(len(nights)))
+        self.span_hint.configure(text=f"night{'s' if len(nights) != 1 else ''}: searched by Find, shown in the "
+                                      "lists below, and built on the Schedule page")
+
+    def _span_picked(self):
+        labels = list(self.span_start_box.cget("values"))
+        text = self.span_start.get()
+        start = self._span_dates[labels.index(text)] if text in labels else None
+        try:
+            n = int(self.span_n.get())
+        except ValueError:
+            n = None
+        self.app.set_plan_span(start, n, source=self)
+        self.span_changed()
+
+    def span_changed(self):
+        """The shared nights changed (here or on the Schedule page): new event columns."""
+        self._fill_span()
+        self._events_key = None
+        self.events = {}
+        self.fill()
+        self._start_next_events()
 
     def ask_transit_search(self):
         """The Find suggested transits pop-up (how many to show, the nights); its Search runs find_suggested."""
@@ -2798,8 +2877,8 @@ class TransitSearchDialog:
         span = (night_label(nights[0].isoformat(), site) + (f" – {night_label(nights[-1].isoformat(), site)}"
                                                             if len(nights) > 1 else "")) if nights else "—"
         ttk.Label(body, text="Nights", style="Card.TLabel").grid(row=2, column=0, sticky="nw", pady=px(app, 3))
-        ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}: the schedule's "
-                             "nights, else the next 7)", style="Card.TLabel", wraplength=px(app, 380),
+        ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}: the Targets page's "
+                             "Nights row)", style="Card.TLabel", wraplength=px(app, 380),
                   justify=tk.LEFT).grid(row=2, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
         self.msg_var = tk.StringVar()
         self.msg = ttk.Label(body, textvariable=self.msg_var, style="Card.TLabel", wraplength=px(app, 460),
@@ -2900,8 +2979,8 @@ class VarSearchDialog:
         span = (night_label(nights[0].isoformat(), site) + (f" – {night_label(nights[-1].isoformat(), site)}"
                                                             if len(nights) > 1 else "")) if nights else "—"
         label("Nights", r)
-        ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}, as for Find suggested "
-                             "transits); your minimum altitude, horizon, darkness and Moon limit from Setup",
+        ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}: the Targets page's "
+                             "Nights row); your minimum altitude, horizon, darkness and Moon limit from Setup",
                   style="Card.TLabel", wraplength=px(app, 380), justify=tk.LEFT).grid(
             row=r, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
         r += 1
@@ -3644,6 +3723,7 @@ class SchedulePage:
         # any date: pick one of the next nights or type one (2026-11-03, 3 Nov)
         self.start_box = ttk.Combobox(ctl, textvariable=self.start_var, width=20)
         self.start_box.pack(side=tk.LEFT, padx=(px(app, 4), px(app, 12)))
+        self.start_box.bind("<<ComboboxSelected>>", lambda _e: self._start_changed())
         self.build_btn = style.green_button(ctl, "Build schedule", self.build)
         self.build_btn.pack(side=tk.LEFT)
         self.review_btn = style.green_button(ctl, "Re-review schedule", self.rereview)
@@ -3683,21 +3763,29 @@ class SchedulePage:
     # ---- controls ----
     def _nights_changed(self):
         try:
-            self.app.options["nights"] = int(self.n_var.get())
-            settings.save_settings(self.app.settings)
+            self.app.set_plan_span(n=int(self.n_var.get()), source=self)
         except ValueError:
             pass
 
-    def _fill_controls(self):
+    def _start_changed(self):
+        d = self.chosen_start()
+        if d is not None:
+            self.app.set_plan_span(start=d, source=self)
+
+    def span_changed(self):
+        self._fill_controls(follow=True)
+
+    def _fill_controls(self, follow: bool = False):
         app = self.app
-        n = int(app.options.get("nights", 1) or 1)
-        self.n_var.set(str(min(7, max(1, n))))
+        nights = app.plan_nights()
+        self.n_var.set(str(len(nights)))
         tonight = app.tonight()
-        self._start_dates = [tonight + timedelta(days=k) for k in range(7)]
+        self._start_dates = [tonight + timedelta(days=k) for k in range(14)]
         labels = [self._label(d, k == 0) for k, d in enumerate(self._start_dates)]
         self.start_box.configure(values=labels)
-        if not self.start_var.get().strip():
-            self.start_var.set(labels[0])
+        if follow or not self.start_var.get().strip():
+            if nights[0] in self._start_dates:
+                self.start_var.set(labels[self._start_dates.index(nights[0])])
 
     def _label(self, d: date, tonight: bool = False) -> str:
         return f"{night_label(d.isoformat(), self.app.site)} {d.year}" + (" (tonight)" if tonight else "")
@@ -3842,6 +3930,8 @@ class SchedulePage:
             self.ind.finish("✖ Type the first night as a date, e.g. 2026-11-03 or 3 Nov.")
             return
         n = int(n or self.n_var.get() or 1)
+        if start >= app.tonight():
+            app.plan_start = start                      # the Targets page follows the built nights
         site, optics, opts = app.site, app.optics, dict(app.options)
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
         pl = mod("planner")
