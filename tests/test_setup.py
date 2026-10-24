@@ -754,7 +754,7 @@ class TestSetupReviewRound3(Base):
         settings.save_settings(s)
         self.shobs_p({"telescope_name": "iOptron 14 RC"})
         app = self.open()
-        self.assertNotEqual(app.page_index, 0, "opens on another page")
+        self.assertEqual(app.page_index, 0, "always opens on Setup (John 24 Oct)")
         self.assertTrue(app.status_var.get().startswith("⚠ Site name cleared: it was SHOBS-P's telescope name "
                                                         "(“iOptron 14 RC”)"), app.status_var.get())
         self.assertIn("Setup page", app.status_var.get())

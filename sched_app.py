@@ -726,9 +726,8 @@ class App(tk.Tk):
         self._build()
         self._place_window()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-        first = 0 if not self.site.complete() else (1 if not self.targets else 2)
-        self.show_page(first)
-        if self.site_name_note:          # said once at start too: the app often opens on Schedule, not Setup
+        self.show_page(0)                # always opens on Setup (John 24 Oct)
+        if self.site_name_note:          # said once at start too
             self.set_status(f"⚠ Site name cleared: it was SHOBS-P's telescope name (“{self.site_name_note}”); type "
                             "your observatory's name on the Setup page.")
         if not testing:                  # kept transits still on the composite ephemeris: upgrade them (background)
