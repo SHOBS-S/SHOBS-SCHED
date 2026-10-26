@@ -58,6 +58,12 @@ any new packages, e.g. matplotlib for the night plot).
 Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_targets.json` and the
 `.shobs_sched` folder (saved schedule, cache, log).
 
+## Documentation
+
+**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (version 1.1.0) walks you through the program step by
+step: installing, your first night, the Setup, Targets, Schedule and OBSPlan pages, the busy bar and messages,
+troubleshooting and a glossary. A PDF of the whole manual can be built with `python tools/build_manual_pdf.py`.
+
 ## Data sources
 
 NASA Exoplanet Archive (ephemerides), AAVSO VSX and VizieR B/vsx (variable stars), SIMBAD (names and positions),
