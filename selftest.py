@@ -214,6 +214,15 @@ def s6_live():
             say(f"  NOTE  {name} did not answer ({exc}); SCHED falls back to its saved copies")
 
 
+def _downloads() -> str:
+    """The Downloads folder the app uses (Windows' known folder, even when moved to another drive)."""
+    try:
+        import settings
+        return settings.downloads_dir()
+    except Exception:
+        return os.path.join(os.path.expanduser("~"), "Downloads")
+
+
 def main() -> int:
     import settings
     say(f"SHOBS-SCHED self-test, version {settings.APP_VERSION}, {time.strftime('%Y-%m-%d %H:%M')}")
@@ -228,7 +237,7 @@ def main() -> int:
     say("ALL PASSED" if not FAILS else f"FAILED: {len(FAILS)} check(s): " + "; ".join(FAILS))
     text = OUT.getvalue()
     for path in (os.path.join(HERE, "selftest_log.txt"),
-                 os.path.join(os.path.expanduser("~"), "Downloads", "SHOBS-SCHED_selftest_log.txt")):
+                 os.path.join(_downloads(), "SHOBS-SCHED_selftest_log.txt")):
         try:
             if os.path.isdir(os.path.dirname(path)):
                 with open(path, "w", encoding="utf-8") as fh:

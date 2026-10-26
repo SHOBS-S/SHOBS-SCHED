@@ -1699,9 +1699,9 @@ def suggest_variables(site, options, nights: list, params: dict | None = None, e
 
     found = []
     for i, (v, fam, kind, unsure, sigma) in enumerate(cands):
-        if progress and i % 50 == 0:
+        if progress and (i % 50 == 0 or i == len(cands) - 1):
             try:
-                progress(i, len(cands))
+                progress(i + 1, len(cands))
             except Exception:
                 pass
         if not up_any[i].any():
