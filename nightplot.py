@@ -26,11 +26,17 @@ from __future__ import annotations
 
 import io
 import math
+import threading
 from datetime import date, timedelta
 
 import numpy as np
 
 import events
+
+# one matplotlib render at a time: the Schedule tab draws on the main thread while the plan card's plots are drawn
+# in a background job, and matplotlib's font and text caches are not thread-safe
+RENDER_LOCK = threading.RLock()
+
 import sky
 from models import TYPE_NAMES, Block, NightPlan, Target, block_type_code
 
@@ -971,9 +977,10 @@ def png_bytes(night, site, targets_by_id, weather, options, print_style=True) ->
             return None
         fig = mpl["Figure"](figsize=(10, 5.6), dpi=150)
         mpl["Agg"](fig)
-        NightPlot(n, site, targets_by_id, weather, options, print_style=print_style, figure=fig).draw()
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=150, facecolor="#ffffff")
+        with RENDER_LOCK:
+            NightPlot(n, site, targets_by_id, weather, options, print_style=print_style, figure=fig).draw()
+            fig.savefig(buf, format="png", dpi=150, facecolor="#ffffff")
         return buf.getvalue()
     except Exception:
         import traceback

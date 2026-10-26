@@ -190,6 +190,9 @@ def setup(root) -> ttk.Style:
     st.configure("TNotebook.Tab", padding=(s(12), s(5)), font=font(10))
     st.map("TNotebook.Tab", background=[("selected", CARD)], foreground=[("selected", SIDE)])
     st.configure("Card.Horizontal.TProgressbar", background=OK, troughcolor="#e6edf2", bordercolor=LINE)
+    # the busy bar on the dark status strip
+    st.configure("Status.Horizontal.TProgressbar", background=OK, troughcolor=mix(STATUS_BG, "#ffffff", 0.18),
+                 bordercolor=STATUS_BG, lightcolor=OK, darkcolor=OK)
     # tables: rows tall enough for the font at any scaling (never clipped on high-DPI Windows)
     body = tkfont.Font(root, font=font(10))
     st.configure("Treeview", rowheight=int(body.metrics("linespace") * 1.55) + 2, font=font(10),
@@ -313,7 +316,7 @@ class BusyBar(ttk.Frame):
             return
         try:
             self.bar.pack(side=tk.LEFT, padx=(0, px(self, 6)))
-            self.label.pack(side=tk.LEFT)
+            self.label.pack(side=tk.LEFT, padx=(0, px(self, 12)))
             self.bar.start(15)
             self.shown = True
         except tk.TclError:

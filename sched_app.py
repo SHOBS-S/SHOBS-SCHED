@@ -20,6 +20,7 @@ Run:  python sched_app.py            (the app)
                                            draws every page, copies the CSV, closes; exit code 0 = passed)"""
 from __future__ import annotations
 
+import contextlib
 import csv
 import importlib
 import io
@@ -383,7 +384,7 @@ class Jobs:
             bar = getattr(self.root, "busy_bar", None)
         tok = bar.begin(label + "…") if bar is not None else None
         if indicator is not None:
-            indicator.start(label)
+            indicator.start()
 
         def progress(i, n):
             self.q.put(("words", (bar, tok), f"{label}… {i} of {n}"))
@@ -455,7 +456,8 @@ class JobIndicator(ttk.Frame):
         self.label.pack(side=tk.LEFT)
         self._clear = None
 
-    def start(self, text: str = ""):
+    def start(self):
+        """A job began: clear the last result (the window's busy bar shows the job's words)."""
         if self._clear:
             self.after_cancel(self._clear)
             self._clear = None
@@ -938,10 +940,11 @@ class App(tk.Tk):
         # the busy bar at the left end of the status strip (House Style: the one delay signal), then the status line
         row = ttk.Frame(status, style="Status.TFrame")
         row.pack(fill=tk.X, padx=px(self, 12), pady=(px(self, 4), 0))
-        self.busy_bar = style.BusyBar(row, label_style="Status.TLabel", frame_style="Status.TFrame")
-        self.busy_bar.pack(side=tk.LEFT, padx=(0, px(self, 12)))
+        self.busy_bar = style.BusyBar(row, label_style="Status.TLabel", frame_style="Status.TFrame",
+                                      bar_style="Status.Horizontal.TProgressbar")
+        self.busy_bar.pack(side=tk.LEFT)
         self.status_label = ttk.Label(row, textvariable=self.status_var, style="Status.TLabel")
-        self.status_label.pack(side=tk.LEFT, anchor="w")
+        self.status_label.pack(side=tk.LEFT, anchor="w", fill=tk.X, expand=True)
         cr = mod("credits")
         # the copyright and sources line under the status line (as SHOBS-P's; the full list: Credits and sources)
         self.credits_line = ttk.Label(status, text=cr.STATUS_LINE if cr else "© Shiloh Hill Observatory",
@@ -1985,8 +1988,8 @@ class TargetsPage:
         style.green_button(bottom, "Find suggested transits…", self.ask_transit_search).pack(side=tk.RIGHT)
         style.green_button(bottom, "Find suggested variables…", self.ask_variable_search).pack(
             side=tk.RIGHT, padx=(0, px(app, 8)))
-        # the searches' spinner and result on a line of their own above the buttons (a long message never squeezes
-        # the buttons)
+        # the searches' result line on a line of their own above the buttons (a long message never squeezes the
+        # buttons; the busy bar at the lower left shows the search while it runs)
         find_row = ttk.Frame(self.frame, style="Card.TFrame")
         find_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(px(app, 4), 0))
         self.find_ind = JobIndicator(find_row)
@@ -3910,7 +3913,7 @@ class SchedulePage:
         """True (and says so) while a build or rebuild runs: edits then would be lost."""
         if not self.busy:
             return False
-        # (the message line, not the indicator: its spinner keeps showing the running job)
+        # (the message line, not the result line: the busy bar shows the running job)
         (show or (lambda t: set_msg(self.msg_var, self.msg, t)))(self.BUSY)
         return True
 
@@ -4860,7 +4863,8 @@ class NightTab:
             return
         try:
             info = self.app.night_info(date.fromisoformat(night.date))
-            self.plot = np_mod.NightPlot(night, site, by_id, wx, opts, figure=fig, info=info).draw()
+            with getattr(np_mod, "RENDER_LOCK", contextlib.nullcontext()):
+                self.plot = np_mod.NightPlot(night, site, by_id, wx, opts, figure=fig, info=info).draw()
             self._plot_key_now = key
         except Exception as exc:
             settings.log(f"night plot: {exc!r}\n{traceback.format_exc()}")
@@ -5051,7 +5055,8 @@ class ExportPage:
         self.night_vars: dict[str, tk.BooleanVar] = {}
         bar = ttk.Frame(self.frame, style="Card.TFrame")
         bar.pack(fill=tk.X, pady=(0, px(app, 4)))
-        style.green_button(bar, "Print plan card", self.print_card).pack(side=tk.LEFT)
+        self.print_btn = style.green_button(bar, "Print plan card", self.print_card)
+        self.print_btn.pack(side=tk.LEFT)
         self.plots_var = tk.BooleanVar(value=bool(app.settings.get("card_plots", True)))
         ttk.Checkbutton(bar, text="Include night plots", variable=self.plots_var, style="Card.TCheckbutton",
                         command=self._plots_changed).pack(side=tk.LEFT, padx=(px(app, 12), 0))
@@ -5677,26 +5682,36 @@ class ExportPage:
             self._msg("⚠ Tick one or more nights first.")
             return None
         self.last_card_path = None
-        if not self.plots_var.get():
+        if not self.plots_var.get() or mod("nightplot") is None:
             return self._make_card(ex, nights, None, open_browser)
         if getattr(self, "_drawing", False):
             self._msg("⚠ Still drawing the night plots for the plan card: it opens when they are done.")
             return None
         self._drawing = True
+        self._set_print_enabled(False)
         self._msg("")
-        ctx = (self.app.targets_by_id(), self.app.site, dict(self.app.options))
+        # copies: the main thread may edit a target while the plots are drawn
+        ctx = ({t.id: Target.from_dict(t.to_dict()) for t in self.app.targets}, self.app.site,
+               dict(self.app.options))
 
         def work(progress):
             return self.card_plots(nights, ctx=ctx, progress=progress)
 
         def done(plots, exc):
             self._drawing = False
+            self._set_print_enabled(True)
             if exc is not None:
                 settings.log(f"card_plots: {exc!r}")
                 plots = None                         # the card still prints, without plots
             self._make_card(ex, nights, plots, open_browser)
         self.app.jobs.run(work, done, None, "Drawing the night plots for the plan card", counted=True)
         return None
+
+    def _set_print_enabled(self, on: bool):
+        try:
+            self.print_btn.state(["!disabled"] if on else ["disabled"])
+        except (tk.TclError, AttributeError):
+            pass
 
     def _make_card(self, ex, nights, plots, open_browser: bool) -> str | None:
         try:
