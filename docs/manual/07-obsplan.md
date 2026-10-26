@@ -15,7 +15,7 @@ This chapter covers:
 - **Export to NINA**,
 - the camera angle in both lists.
 
-![The OBSPlan page: the night ticks, Print plan card and Include night plots, the ASIAIR export folder, and one night of the card with its Export to ASIAIR, Export to NINA and Copy ASIAIR list buttons](img/07-obsplan-page.png)
+![The OBSPlan page: the night ticks with their block counts, Print plan card and Include night plots, the position-angle line, the ASIAIR export folder, and the on-screen card for Mon 02 and Tue 03 Nov, each night with its Export to ASIAIR, Export to NINA and Copy ASIAIR list buttons; under Mon 02 Nov, an ASIAIR result line with Open folder, Open in Notepad and Show file contents](img/07-obsplan-page.png)
 
 ## Choose the nights
 
@@ -29,23 +29,23 @@ With no schedule yet, the page says *No schedule yet: build one on the Schedule 
 
 The printed card's title is **Photometry plan, Tue 20 Oct 2026** for one night, or **Photometry plan, Tue 20 Oct
 to Mon 26 Oct 2026** for several. Under it is your site line: the site's name, its latitude and longitude, and your
-observer code if SHOBS-P gave one.
+observer code if SHOBS-P gave one (*Example Observatory · 40.000° N, 100.000° W*).
 
 For each night:
 
 - **The date**, with the dark hours and which darkness (*Dark 19:42–05:58 (astronomical)*), the Moon (*Moon 62 %,
   rises 23:10*), and which clock the times are on (*Times: Local time (UTC−5)*).
-- **The weather**: *Weather (Open-Meteo): Clear until 02:00, then 60–80 % cloud. High 12°, low 4°, wind up to 15
-  km/h. ⚠ Dew from 04:05*.
+- **The weather**: *Weather (Open-Meteo): Clear until 02:00, then 60–80 % cloud. High 12 °C, low 4 °C, wind up
+  to 15 km/h. ⚠ Dew from 04:05*.
 - **The night plot** (when **Include night plots** is ticked; printed card only).
 - **The nightly table**: **Time**, **Target**, **RA / Dec (J2000)**, **Alt**, **Meridian**, **Exposure**, **Frames**
-  and **Notes**. The times are big and bold, so you can read them at the telescope. Each target's name sits on its
-  type's color. Locked blocks say *(locked)*, blocks you timed say *(set by you)*, and marked blocks show their mark
+  and **Notes**. The times are big and bold, so you can read them at the telescope. On screen each target's name sits on
+  its type's color (the printed card is plain black on white). Locked blocks say *(locked)*, blocks you timed say *(set by you)*, and marked blocks show their mark
   in brackets (*[Done]*). Estimated exposures say *est.*
 - **Flats**, **Darks** and **Free time**, as lists under the table.
 
 The footer gives the clock once more, with the time zone's name: *SHOBS-SCHED · all times Local time (UTC−5)
-(America/Chicago)*.
+(America/Chicago)* on the printed card, *All times Local time (UTC−5) (America/Chicago)* on screen.
 
 "Didn't fit, and why" is not on the card. That is a planning decision you make on the Schedule page; the card is what
 you will actually do.
@@ -56,18 +56,20 @@ you will actually do.
 2. Leave **Include night plots** ticked to print each night's plot, or untick it for a shorter card. The choice is
    remembered.
 3. Press **Print plan card**.
-4. While the plots are drawn, the busy bar at the lower left says *Drawing the night plots…*.
+4. While the plots are drawn, the busy bar at the lower left says *Drawing the night plots for the plan card…*
+   (with a count, *2 of 7*, for several nights). **Print plan card** is grayed until it is done.
 5. The card opens in your web browser, and the result line says *✔ The plan card is open in your browser; print it
    from there.* Print it from the browser (in most browsers, **Ctrl+P**).
 
-The card is black on white with no colors you need, so it prints well on any printer. With plots, each night takes
+The card is black on white with no colors you need, so it prints well on any printer. It is set up to print in
+landscape. With plots, each night takes
 two pages: the date, facts and plot on the first, the table and lists on the second. A table never splits across
 pages if it fits on one.
 
 The card is saved as `plan_card.html` in SHOBS-SCHED's cache folder (chapter 2), replaced each time you print. If the
 browser does not open, the result line gives the file's full path so you can open it yourself.
 
-![The printed plan card in a browser: the title, a night's facts, its night plot, and the nightly table](img/07-plan-card-print.png)
+![The plan card open in a browser: the title "Photometry plan, Mon 02 Nov to Sun 08 Nov 2026", the site line, Mon 02 Nov's facts and weather, its night plot in print colors, the nightly table, and the Flats, Darks and Free time lists](img/07-plan-card-print.png)
 
 > **Tip:** Untick past nights before printing: the card is easier to use at the telescope with only the nights to
 > come.
@@ -99,13 +101,13 @@ By default the files go to your Downloads folder. To have them land on the phone
 2. Pick a folder that syncs to that device, for example an iCloud Drive or OneDrive folder.
 3. The line says *✔ Export to ASIAIR now writes to …*. Each night's file is then waiting on the device.
 
-**Use Downloads** goes back to the Downloads folder. If the chosen folder goes missing (a drive not connected), the
+**Use Downloads** (shown once you have chosen a folder) goes back to the Downloads folder. If the chosen folder goes missing (a drive not connected), the
 folder line shows *⚠ not found: files go to Downloads*, and the export says where the file went instead.
 
 ### Copy ASIAIR list
 
 **Copy ASIAIR list** puts the same list on the clipboard instead of in a file: *✔ Copied 3 targets for Tue 20 Oct.
-In ASIAIR's Plan: Add → Import, and paste.* Use it when ASIAIR runs on the same computer, or you paste through a
+In ASIAIR's Plan: Add → Import, and paste. Position angle 0.00° (set your usual camera angle in Setup).* Use it when ASIAIR runs on the same computer, or you paste through a
 remote-desktop app.
 
 ## Export to NINA

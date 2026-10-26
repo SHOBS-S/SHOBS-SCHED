@@ -10,25 +10,30 @@ Whenever SHOBS-SCHED is working on something that takes more than a moment, a bu
 the window**, in the status strip. A small bar moves back and forth, and the words beside it say what the program is
 doing. This is the same in every SHOBS program.
 
-![The busy bar at the lower left of the window, in the status strip, with "Building 7 nights…" beside it](img/08-busy-bar.png)
+![The busy bar at the lower left of the window, in the status strip, with "Working out twilight and Moon times…" (the last step of Build schedule) beside it](img/08-busy-bar.png)
 
 You see it while SHOBS-SCHED is:
 
 | Job | The words say, for example |
 |---|---|
 | Looking a target up (Targets page, **Add**) | *Looking up WASP-12 b…* |
+| Filling in the Targets lists' next events | *Working out each target's next event…* |
 | Looking up a star's planets for a new campaign | *Looking up the star HD 219134…* |
 | Finding suggestions | *Finding suggested transits… 120 of 640*, *Finding suggested variables (VSX at VizieR; up to a minute or two)…* |
 | Getting the weather (Build, Re-review) | *Getting the forecast from Open-Meteo…* |
-| Building the schedule | *Building 7 nights…*, *Re-reviewing…*, *Rebuilding Tue 20 Oct…* |
-| Checking transit ephemerides at startup | *Checking transit ephemerides…* |
-| Drawing the night plots for the printed card | *Drawing the night plots…* |
+| Building the schedule | *Building 7 nights…*, *Re-reviewing 7 nights…*, *Working out twilight and Moon times…*, *Rebuilding Mon 02 Nov…* |
+| Checking transit ephemerides (at startup, and when you tick or keep a transit) | *Checking transit ephemerides at the NASA Exoplanet Archive…* |
+| Drawing the night plots for the printed card | *Drawing the night plots for the plan card… 3 of 7* |
 
 Some things to know:
 
 - **A multi-step job changes its words step by step.** **Build schedule**, for example, first says *Getting the
-  forecast from Open-Meteo…* and then *Building 7 nights…*.
-- **When the count is known, the words carry it.** A suggestion search says how far it has got, *… 12 of 40*.
+  forecast from Open-Meteo…*, then *Building 7 nights…*, then *Working out twilight and Moon times…*.
+- **When the count is known, the words carry it.** A suggestion search says how far it has got, *… 12 of 40*. The
+  bar itself still moves back and forth; it never fills up.
+
+![The busy bar with "Finding suggested transits… 290 of 302": the search has checked 290 of 302 planets](img/08-busy-bar-find.png)
+
 - **Dialogs have their own busy bar.** The Edit dialog's planet lookup, for example, shows its busy bar at the
   **dialog's** lower left (*Looking up HD 219134's planets at the NASA Exoplanet Archive…*), so the main window stays
   free.
@@ -47,11 +52,12 @@ starts with an icon and is colored to match:
 | Icon | Color | Meaning | Example |
 |---|---|---|---|
 | **✔** | blue on white | Done, as asked. | *✔ Added DY Peg (VSX).* |
-| **⚠** | dark amber on pale yellow | Done, but read this: a caution, a saved copy used, something left out. | *⚠ Added BL Cam (VSX). AAVSO VSX did not answer (timed out); using the copy from 3 days ago.* |
-| **✖** | red | Not done, and why. | *✖ The NASA Exoplanet Archive did not answer (HTTP 503).* |
+| **⚠** | dark amber on pale yellow | Done, but read this: a caution, a saved copy used, something left out. | *⚠ Added BL Cam (VSX). AAVSO VSX did not answer (no answer within 30 s); using the copy from 3 days ago.* |
+| **✖** | red | Not done, and why. | *✖ The NASA Exoplanet Archive did not answer (service unavailable, HTTP 503) and there is no saved copy for WASP-12 b. Try again later.* |
 
-A plain **✔ Done** fades after a few seconds. A **⚠** or **✖** line, and any ✔ line that carries extra information,
-stays until the next action, so you have time to read it.
+A short **✔** line beside a button, such as **✔ Done** or *✔ Added DY Peg (VSX).*, fades after a few seconds. A **⚠**
+or **✖** line, and any ✔ line that carries extra information, stays until the next action, so you have time to read
+it.
 
 The same icons and colors are used everywhere: in the night's warnings, in the table's notes, on the Setup page, in
 the plan card. You never need color alone to tell them apart.
@@ -62,9 +68,9 @@ The status strip runs along the bottom of the window:
 
 1. **Its first line** holds the latest news from anywhere in the program, colored like a result line, for example
    *✔ Setup saved.* or *✔ Built 7 nights: 11 blocks.*
-2. **Its second line** is a short credits line: *© Shiloh Hill Observatory · Data: NASA Exoplanet Archive, AAVSO VSX,
-   CDS (VizieR, SIMBAD), Open-Meteo · Night plot after TAPIR · Full list: Credits and sources*.
-3. **The busy bar** appears at its lower left while the program works.
+2. **Its second line** is a short credits line: *© Shiloh Hill Observatory*, *Data: NASA Exoplanet Archive, AAVSO
+   VSX, CDS (VizieR, SIMBAD), Open-Meteo*, *Night plot after TAPIR* and *Full list: Credits and sources*.
+3. **The busy bar** appears at the left end of the first line, before the news, while the program works.
 
 If something unexpected goes wrong inside the window, the status strip says *✖ Something went wrong: … Details are in
 …\sched.log.* See chapter 10.
@@ -101,7 +107,7 @@ If something unexpected goes wrong inside the window, the status strip says *✖
 | *✖ … did not answer (…) and there is no saved copy for …. Try again later.* | A service is down, or you are offline, and the name was never looked up before. | Try again later. |
 | *⚠ Added … (…). … did not answer (…); using the copy from … ago.* | A saved answer was used. | Fine for planning; it refreshes when the service answers. |
 | *⚠ … is already in the list.* | You added a target twice. | Nothing to do. |
-| *SIMBAD lists … as a planet, but the NASA Exoplanet Archive has no transit ephemeris under that name.* | A planet SIMBAD knows but the Archive does not (under that name). | Try its Archive name (e.g. WASP-12 b), or add the star and type the ephemeris. |
+| *✖ SIMBAD lists … as a planet, but the NASA Exoplanet Archive has no transit ephemeris under that name. Try its Archive name (for example WASP-12 b), or type the planet's values by hand.* | A planet SIMBAD knows but the Archive does not (under that name). | Try its Archive name, or add the star and type the ephemeris. |
 | *⚠ … Planet list: …* after **Find suggested transits…** | The Archive's planet list could not be refreshed. | The saved list was used; suggestions may miss the newest planets. |
 
 ### Schedule

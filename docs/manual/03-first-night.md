@@ -29,23 +29,24 @@ tagged *from SHOBS-P*; check them and go on.
    default) and **Darkness to plan in** (astronomical by default).
 6. Press the green **Save** button at the bottom. It says **✔ Saved.**
 
-![The Setup page filled in for Example Observatory, with "✔ Saved." beside the Save button](img/03-setup-saved.png)
+![The Setup page filled in for Example Observatory (40.0, −100.0, America/Chicago, 250 mm aperture), with "✔ Saved." beside the Save button](img/03-setup-saved.png)
 
 ## Step 2: Add a transit and a variable star
 
 1. Click **2 Targets** in the sidebar.
 2. In **Add a target** at the top, type `WASP-12 b` and press **Enter** (or click **Add**).
 3. The busy bar appears at the lower left of the window, in the status strip, with the words *Looking up WASP-12
-   b…*. When it finishes, a result line appears beside the **Add** button: *✔ Added WASP-12 b (NEA).* The planet is
-   in the **Transits** box, ticked to plan (☑).
-4. Type `DY Peg` and press **Enter**. It is looked up at AAVSO VSX and lands in the **Variables** box, also ticked.
+   b…*. When it finishes, a result line appears beside the **Add** button, for example *✔ Added WASP-12 b (NEA (most
+   precise)).* The planet is in the **Transits** box, ticked to plan (☑).
+4. Type `DY Peg` and press **Enter**. It is looked up at AAVSO VSX (or its copy at VizieR, as in the picture) and
+   lands in the **Variables** box, also ticked.
 
 Each row shows the target's next event in the planned nights: for a transit, the night and its ingress, mid and egress
-times; for a variable, its next timed minimum or maximum, or *any time* for a star with no event worth timing. If a
-transit shows *none in the next 7 nights*, it simply has no full transit in the dark this week. Pick another planet,
-or try **Find suggested transits…** (chapter 5).
+times; for a variable, its next timed minimum or maximum, or *any time* for a star with no event worth timing. A
+transit marked *(partial)* is only partly in the dark; if a transit shows *none in the next 7 nights*, no part of any
+transit is in the dark this week. Pick another planet, or try **Find suggested transits…** (chapter 5).
 
-![The Targets page with WASP-12 b in Transits and DY Peg in Variables, both ticked](img/03-targets-two.png)
+![The Targets page with WASP-12 b in Transits (next transit Sun 01 Nov, partial) and DY Peg in Variables (any time), both ticked](img/03-targets-two.png)
 
 ## Step 3: Build the schedule
 
@@ -54,24 +55,24 @@ or try **Find suggested transits…** (chapter 5).
    shows; change them on either page.
 3. Press **Build schedule**.
 4. The busy bar at the lower left says what it is doing, step by step: first *Getting the forecast from
-   Open-Meteo…*, then *Building 7 nights…*. When it is done, *✔ Done* appears beside the button, and the line under
+   Open-Meteo…*, then *Building 7 nights…*, then *Working out twilight and Moon times…*. When it is done, *✔ Done* appears beside the button, and the line under
    it says what was built, for example *✔ Built 7 nights: 9 blocks; 1 target didn't fit (see each night).*
 
-Each night gets a tab, named by its date (for example **Tue 20 Oct**). A **⚠** in front of a tab's name means that
+Each night gets a tab, named by its date (for example **Mon 02 Nov**). A **⚠** in front of a tab's name means that
 night has a caution or a target that didn't fit.
 
 5. Click the tab of the night you want to observe. You see:
    - a line with the dark hours, the Moon and the weather summary;
    - the **night plot**: each target's airmass through the night, its block in bold, twilight shading, the Moon, and
      the hourly weather above;
-   - the **nightly table**: one row per block, with the time, target, altitude, meridian time, exposure, frames and
-     notes;
+   - the **nightly table**: one row per block, with the time, target, position (RA / Dec), altitude, meridian time,
+     exposure, frames and notes;
    - under it, **Flats and darks to shoot**, **Didn't fit, and why**, and **Free time**.
 
-Click a row (or a block on the plot) to pick it out. Read the notes: they say, for example, *Ingress 21:32, mid
-22:44, egress 23:56 (±1 min)* and *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*.
+Click a row (or a block on the plot) to pick it out. Read the notes: they say, for example, *Ingress 23:50, mid
+01:20, egress 02:50 (±1 min)* and *Start before the meridian and let it flip (~21:01); drop the pre-flip frames*.
 
-![A night tab: the night plot with the transit block and the variable block, and the nightly table under it](img/03-night-tab.png)
+![The Mon 02 Nov tab: the night plot with the DY Peg block (20:48–22:48) and the WASP-12 b transit block (23:26–03:50), and the nightly table under it](img/03-night-tab.png)
 
 ## Step 4: Print the plan card
 
@@ -87,7 +88,8 @@ The card is black on white with big times, so you can read it at the telescope b
 1. On the OBSPlan page, find the night's heading on the card. Beside it are **Export to ASIAIR**, **Export to NINA**
    and **Copy ASIAIR list**.
 2. Press **Export to ASIAIR**. A line under the heading says where the file went, for example *✔ ASIAIR: saved 2
-   targets for Tue 20 Oct to C:\Users\you\Downloads\SHOBS-SCHED_ASIAIR_2026-10-20.csv.*
+   targets for Mon 02 Nov to C:\Users\you\Downloads\SHOBS-SCHED_ASIAIR_2026-11-02.csv. In ASIAIR's Plan: Add →
+   Import, and paste the file's text.*
 3. Open the file (**Open in Notepad**), copy its text, and in ASIAIR's **Plan**, choose **Add → Import** and paste.
 
 ASIAIR takes the targets' positions, in time order. The times, exposures and notes are on your plan card.

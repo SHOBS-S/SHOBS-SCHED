@@ -17,7 +17,7 @@ This chapter covers:
 - **Find suggested transits…** and **Find suggested variables…**,
 - ephemeris precision, and how SHOBS-SCHED upgrades it for you.
 
-![The Targets page: the Add box and the Nights row at the top, the Campaigns, Transits and Variables boxes, and the buttons at the bottom](img/05-targets-page.png)
+![The Targets page: Add a target and the Nights row at the top; the Campaigns box with HD 219134, the Transits box with suggested planets and WASP-12 b, and the Variables box with DY Peg selected; its details line and the Edit…, Remove, Keep and Find buttons at the bottom](img/05-targets-page.png)
 
 ## The three boxes
 
@@ -34,7 +34,8 @@ Campaigns is a short box on top. Transits and Variables share the rest of the pa
 one more room.
 
 Each box's title says how many targets it holds and how many are ticked to plan, and which clock the times are on,
-for example **Transits (6, 2 planned) · next event in the 7 planned nights, Local time (UTC−5)**. An empty box shows a
+for example **Transits (9, 2 planned) · next event in the 7 planned nights, Local time (UTC−5 → UTC−6)** (the
+arrow appears when the clocks change during the planned nights). An empty box shows a
 hint, such as *none yet: Add a planet, or press Find suggested transits*.
 
 ### The columns
@@ -62,8 +63,8 @@ site's clock. They are worked out in the background after the page opens; until 
   minimum) or **max 22:05**. A star with no timed event shows **any time** on the first night it is up long enough.
   A suggested star whose published elements are too old to give a good time shows **any time ⚠ time uncertain ±45
   min** (or **⚠ no usable timing**); a short pulsator suggested for a whole cycle shows **any time (a whole cycle)**.
-- **Campaigns**: **every night**, or, for a campaign with a no-transit window, *every night; next blackout Fri 23 Oct
-  04:28–05:53 (HD 219134 c transits)*.
+- **Campaigns**: **every night**, or, for a campaign with a no-transit window, *every night; next blackout Thu 29 Oct
+  21:43–23:22 (HD 219134 c transits)*.
 
 The rows are sorted by these events: Transits soonest transit first; Variables night by night, with each night's
 timed minima and maxima first, then its any-time stars; Campaigns by name. Rows with no event in the planned nights
@@ -71,9 +72,10 @@ come last. A row stays in its place when you tick or untick it.
 
 ### The Source column
 
-**Source** says where the target came from: **✔ NEA** (the NASA Exoplanet Archive), **✔ VSX** or **✔ VizieR VSX**
+**Source** says where the target came from: **✔ NEA** or **✔ NEA (most precise)** (the NASA Exoplanet Archive; the
+second when a more precise published ephemeris than the Archive's default was chosen), **✔ VSX** or **✔ VizieR VSX**
 (AAVSO VSX, directly or through VizieR's copy), **✔ SIMBAD**, or **typed**. A suggestion shows *suggested · NEA* or
-*suggested · VizieR VSX*. A transit whose predicted mid-time is uncertain by more than 10 minutes adds a **⚠ Tc ±**
+*suggested · VizieR VSX*, and keeps showing it after you tick it (until you press **Keep**). A transit whose predicted mid-time is uncertain by more than 10 minutes adds a **⚠ Tc ±**
 note (see "Ephemeris precision" below).
 
 ### Details of the selected target
@@ -85,7 +87,7 @@ length and notes. A suggestion also shows its score.
 
 ## The Nights row
 
-Under **Add a target** is the **Nights** row: **from** (tonight, or any of the next 14 nights) **for** (1 to 7
+Under **Add a target** is the **Nights** row: **from** (tonight, or any of the next 13 nights) **for** (1 to 7
 nights). These are the nights that:
 
 - the event columns look at,
@@ -123,8 +125,9 @@ Some results need a word from you:
   planets' transits)?"* Pick a planet, or **The star itself (a campaign or a variable)**. Planets that do not transit
   are left out of the choice and named in the question.
 - **A star that is not a planet or a known variable.** A window asks **What kind of target?**, with the choices
-  **Campaign (a star you visit on many nights)**, **Variable star**, **Star field (a campaign)** and **Transit target
-  (type its ephemeris later)**. If the star has transiting planets, they are offered too, and a campaign or variable
+  **Campaign (a star you visit on many nights)**, **Variable star** and **Star field (a campaign)**, plus **Transit
+  target (type its ephemeris later)** when the star has no known planets. If the star has transiting planets, they are
+  offered too, and a campaign or variable
   made from the star gets "no data while … transits" for each of them straight away.
 - **A planet that does not transit** is never added as an empty transit target. SHOBS-SCHED offers its star instead.
 - **A name already in the list** gives *⚠ DY Peg is already in the list.*
@@ -144,9 +147,12 @@ Some results need a word from you:
 - **Priority.** Click a row's **Priority** cell and choose **High**, **Normal** or **Low**. Priority decides who
   wins when two targets want the same time: flexible targets are placed High first, then Normal, then Low; and
   between two fixed-time targets that collide, the higher priority wins.
-- **Keep** (the button **Keep (a suggestion stays when you Find again)**). Suggestions that you have not ticked are
-  replaced each time you search again. Select one or more and press **Keep** to make them your own: they stay in the
-  list, ticked or not.
+- **Keep** (the button **Keep (a suggestion stays when you Find again)**). Ticking a suggestion does not make it your
+  own: it stays a suggestion (*suggested · …* in Source). A search replaces every suggestion of its kind that is
+  unticked at that moment, so a ticked suggestion survives a search, but once you untick it the next search removes
+  it. Select one or more suggestions and press **Keep** to make them your own: they stay in the list, ticked or not,
+  and Source shows **✔ NEA** or **✔ VizieR VSX**. (Keep on a target that is not a suggestion says *⚠ Select a
+  suggested transit or variable to keep.*)
 - **Remove** removes the selected targets after a question. Blocks already planned for them stay until you rebuild.
 - **Edit…** (or double-click a row) opens the Edit dialog for one target.
 
@@ -155,10 +161,11 @@ others.
 
 ## The Edit dialog
 
-**Edit…** opens a dialog with the target's settings in four parts. The dialog sizes itself to its contents and
-scrolls if it is taller than the screen.
+**Edit…** opens a dialog titled with the target's name (**Edit HD 219134**) with its settings in parts: **Target**,
+**Observing**, **Ephemeris** (transits only), **No data while a planet transits** and **Notes**. The dialog sizes
+itself to its contents and scrolls if it is taller than the screen.
 
-![The Edit dialog for a campaign: Target, Observing, the star's known planets with ticks, and Notes](img/05-edit-dialog.png)
+![The Edit dialog for the HD 219134 campaign: Target, Observing (goal 3 nights a week), No data while a planet transits with planets b and c ticked and d, f, g, h grayed, and Notes](img/05-edit-dialog.png)
 
 ### Target
 
@@ -184,14 +191,14 @@ period and Tc; if it has transiting planets, the dialog suggests adding the plan
 
 Why an own exposure matters: the estimate is a cold start, good to within a factor of two or so. Once you know what
 works for a star (from SHOBS-P's peak values, for example), type it here. The planner then predicts the peak for your
-exposure and warns (*⚠ estimate: peak ~45k, near your 32k limit — check a frame*) only when it looks clearly too
-long.
+exposure and warns (*⚠ estimate: peak ~52k, near your 32k limit — check a frame*) only when it looks clearly too
+long (over 1.5 × your limit).
 
 ### Ephemeris (transits)
 
 For a transit target: **Period** (days), **Tc (T0)** (mid-transit time, BJD_TDB), **Duration** (hours), **Depth**
-(%) and **Reference**. Values you type over are marked as typed, and their uncertainties are dropped (so the
-predicted-uncertainty column shows **—** until you look the planet up again).
+(%) and **Reference**. A changed ephemeris is marked as typed, and the uncertainty of a changed period or Tc is
+dropped (change both, and the details line shows *Tc —* until you add the planet again by name).
 
 ### No data while a planet transits
 
@@ -201,7 +208,7 @@ dialog's lower left says *Looking up HD 219134's planets at the NASA Exoplanet A
 
 - Each **transiting** planet gets a tick: ticked = no data while it transits. The first time a star's planets are
   offered, they are all ticked; after that, your choice is kept.
-- Planets that do not transit are shown grayed, with the reason (*no window needed*).
+- Planets that do not transit are shown grayed, with the reason (*does not transit: no window needed*).
 - The list under the ticks shows the windows the target has. Select one and press **Remove** to drop it.
 - To add a planet by hand, type its name (or just its letter, **b**, **c**…) in **Planet (or just b, c …)**, an
   optional **margin** in minutes either side, and press **Look up and add**.
@@ -228,18 +235,20 @@ dialog says why, for example *✖ Not saved: The shortest useful block cannot be
 your site.
 
 1. Press **Find suggested transits…** (bottom right).
-2. A window shows **Show at most** (how many suggestions; 25 by default, remembered) and the **Nights** it will search
-   (the Nights row).
+2. A window shows **Show at most** (how many transits; 25 by default, remembered) and the **Nights** it will search
+   (the Nights row). Its text says the planets are *filtered by Setup's Suggested-transits settings (V range, depth,
+   Moon)*; in 1.1.0 the Setup page has no such fields. The filter is set in the settings file only (below).
 3. Press **Search**.
 4. The busy bar at the lower left counts through the planets: *Finding suggested transits… 120 of 640*. It looks at
    the Archive's list of transiting planets (refreshed weekly), then checks the best of them again with each planet's
    most precise published ephemeris.
 5. The result line says, for example, *✔ 12 suggested transits found, soonest first.*
 
-The suggestions land **unticked** in the Transits box, among your own targets. Tick one to plan it. Unticked
-suggestions are replaced the next time you search; press **Keep** to keep one.
+The suggestions land **unticked** in the Transits box, among your own targets. Tick one to plan it; it is still a
+suggestion. Suggestions that are unticked when you search again are replaced; press **Keep** to keep one for good.
 
-What makes a suggestion (the filter, from `options` in the settings file; chapter 4):
+What makes a suggestion (the filter: the `suggest_…` values in the settings file, chapter 4; there is no Setup field
+for them):
 
 1. **A full transit with baseline.** The whole transit, plus 30 minutes of baseline each side, is above your
    minimum altitude, horizon and maximum airmass. The transit itself is in the planning darkness; the baselines may
@@ -271,13 +280,14 @@ nights.
    - **Brightness (V at maximum)** from … to … mag (at first, the same range as the suggested transits).
    - **Amplitude at least** (0.1 mag at first).
    - **Show at most** (25 at first).
-   - The **Nights** searched. Your minimum altitude, horizon, darkness and Moon limit come from Setup.
+   - The **Nights** searched. The window says your minimum altitude, horizon, darkness and Moon limit come from
+     Setup; the first three do, but the Moon limit is the settings file's `suggest_moon_penalty_max` (chapter 4).
 3. Press **Search**. The busy bar says *Finding suggested variables (VSX at VizieR; up to a minute or two)…* and counts
    through the candidates.
 4. The result line says, for example, *✔ 14 suggested variables found, soonest first.* The line under the boxes says
    how many catalog stars matched.
 
-![The Find suggested variables window with its Types, Period, Brightness, Amplitude and Show at most fields](img/05-find-variables.png)
+![The Find suggested variables window: the first four types ticked, Period empty in days, Brightness 9 to 13, Amplitude at least 0.1, Show at most 25, and the nights Mon 02 Nov – Sun 08 Nov](img/05-find-variables.png)
 
 A star is suggested when, on at least one of the nights, it offers something you can catch:
 
@@ -287,7 +297,7 @@ A star is suggested when, on at least one of the nights, it offers something you
 | **A whole cycle**: δ Scuti, HADS, SX Phe, short Cepheids, RR Lyrae without a usable epoch | One full cycle plus 30 minutes in one dark stretch above your limits. | A whole cycle in one night shows the full light curve. |
 | **Any time**: Miras, semi-regulars and other long-period stars | At least an hour above your limits in the dark. | One good point a night is what these stars need. |
 
-In every case the Moon must not brighten the sky by more than the suggested-transit limit. A star whose VSX elements
+In every case the Moon must not brighten the sky by more than the suggested-transit limit (`suggest_moon_penalty_max`). A star whose VSX elements
 are too old to predict its event to within 30 minutes is not promised at a time: it is offered as a whole-cycle or
 any-time target instead, with **⚠ time uncertain** in its event column.
 
@@ -310,7 +320,7 @@ in the period, can be off by an hour today. That is why SHOBS-SCHED cares where 
   most precise ephemeris, so a stale one neither offers a transit that is not there nor hides one that is.
 - **Upgrading.** A transit still carrying the planet list's ephemeris (for example a suggestion you ticked or kept)
   is upgraded in the background to the most precise one: when you tick it, when you keep it, and each time
-  SHOBS-SCHED starts. The busy bar says *Checking transit ephemerides…*, and when one changes the line under the
+  SHOBS-SCHED starts. The busy bar says *Checking transit ephemerides at the NASA Exoplanet Archive…*, and when one changes the line under the
   boxes says *✔ Most precise ephemeris now used for TOI-1234 b (was the Archive's planet-list value). Build the
   schedule to apply.*
 

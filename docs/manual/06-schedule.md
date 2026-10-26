@@ -25,7 +25,8 @@ This chapter covers:
    same nights as the Targets page's **Nights** row.
 2. Press **Build schedule**.
 3. The busy bar at the lower left of the window shows each step: *Getting the forecast from Open-Meteo…*, then
-   *Building 7 nights…*. **Build schedule** and **Re-review schedule** are grayed out until it finishes.
+   *Building 7 nights…*, then *Working out twilight and Moon times…*. **Build schedule** and **Re-review
+   schedule** are grayed out until it finishes.
 4. When it is done, **✔ Done** appears beside the button, and the line under the controls says what was built, for
    example *✔ Built 7 nights: 11 blocks; 2 targets didn't fit (see each night).*
 
@@ -77,7 +78,7 @@ A tab is built the first time you open it. At the top is the night's line: the d
 04:05*, or *✖ No dark time tonight: the Sun gets no lower than −15.2° (planning darkness −18.0°); nautical darkness
 (Sun below −12°) is possible if you allow it in Setup.*
 
-![A night tab: the night's line, the night plot with the weather strip above, and the nightly table](img/06-night-tab.png)
+![A night tab (Tue 03 Nov): the night's line and a ⚠ dew line, the weather strip above the night plot, the HAT-P-6 b transit selected and drawn bright, the nightly table with its notes, and the selected block's notes, cautions and buttons](img/06-night-tab.png)
 
 ## The night plot
 
@@ -87,12 +88,17 @@ The night plot shows the whole night at a glance. Its design follows the airmass
 - **Across:** the time on the site's clock, from 1.5 hours before nautical dusk to 1.5 hours after nautical dawn,
   with the sunset, twilight and sunrise times along the top. The sky is shaded by twilight: lighter at dusk and
   dawn, darkest in astronomical night.
-- **Down:** airmass on the left (1.0 at the top), altitude on the right. The dashed line is your maximum airmass.
+- **Down:** airmass on the left (1.0 at the top), elevation (altitude) on the right. The red dashed line is your
+  maximum airmass (*max airmass 2*).
+- **Title:** the date, your site's name and the Moon's phase; at the right, the selected block (*Selected: HAT-P-6 b
+  (Transit) 19:05–00:36*).
 - **Each planned target:** its path through the whole night is drawn faint; its block is drawn bold in its type's
   color (green Transit, navy Variable, plum Campaign), with the airmass at the block's start and end. A label box
   gives its name, start and end, and its distance from the Moon.
-- **Transits:** the transit itself (ingress to egress) is a green band, its baselines a lighter band.
-- **Meridian:** a **▼** marks a meridian flip inside a block; a **|** marks a meridian crossing that needs no flip.
+- **Transits:** the transit itself (ingress to egress) is a green band with its times (*Transit 20:05–23:36*), its
+  baselines a fainter green band.
+- **Meridian:** a **▼** marks a meridian flip inside a block (*flip 21:27*); a **|** marks a meridian crossing that
+  needs no flip (*meridian 21:05*).
 - **The Moon:** a dashed gold line, thicker when fuller.
 - **No-transit windows:** hatched, but only where one changed the plan.
 - **Locked blocks** and blocks you set the times of have a gold box edge.
@@ -121,13 +127,13 @@ One row per block, in time order, tinted by the target's type:
 | **Target** | The name, with *· locked*, *· set by you*, or the mark (*· Done*, *· Partial*, *· Clouded out*). |
 | **RA / Dec (J2000)** | The target's position. |
 | **Alt** | The highest altitude in the block and its airmass, e.g. *62° (X 1.13)*. |
-| **Meridian** | When the target crosses the meridian, with *(flip)* when the mount flips during the block. |
-| **Exposure** | The exposure, with *(est.)* when SHOBS-SCHED estimated it. |
+| **Meridian** | When the target crosses the meridian (a flip during the block is in the notes). |
+| **Exposure** | The exposure, e.g. *40 s* (the OBSPlan page and the plan card add *est.* when SHOBS-SCHED estimated it). |
 | **Frames** | About how many frames fit (*~240*); for a transit also how many fall in the transit (*~240 (~135 in transit)*). |
-| **Notes** | What to know about this block (below), cautions first. |
+| **Notes** | What to know about this block (below), then its cautions. |
 
 Click a row to select it (and pick it out on the plot). The line under the table shows its notes and cautions in
-full.
+full, with each caution on its own ⚠ line.
 
 ### Notes you will see
 
@@ -135,7 +141,8 @@ full.
   egress*.
 - **Timed variables**: *Minimum at 01:14* or *Maximum at 22:05*.
 - **Any-time variables**: *About 1.3 cycles (P ≈ 1.75 h)*, how much of the light curve you will cover.
-- **Campaigns with a goal**: *Goal: 3 nights a week*.
+- **Campaigns with a goal**: *Goal: 3 nights a week*, and when it is behind, *Behind its weekly goal (0 of 3 so
+  far): moved up one priority level*.
 - **No-transit windows**: *No HD 219134 after 04:28 (planet c transit)*.
 - **Flips**: *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*, *Meridian flip at
   ~01:10; drop the frames during the flip*, or *Ends 3 min past its meridian, inside your tracking margin; stop by
@@ -151,12 +158,12 @@ full.
 | *⚠ Ephemeris uncertain: mid-time ± 25 min* | The transit may come early or late. Worth observing; consider extra baseline. |
 | *⚠ Baseline trimmed (next to WASP-12 b)* | It shares the night with another fixed-time target; its baseline is shorter. |
 | *⚠ Meridian flip during the transit (23:05)* | The flip falls between ingress and egress. Expect a gap and a step in the light curve. |
-| *⚠ Starts 20 min after its meridian: the mount may flip at once* | Start before the meridian time if you can. |
+| *⚠ Starts 20 min after its meridian: the mount may flip at once (start before 22:40 if you can)* | Start before the meridian time if you can. |
 | *⚠ Counterweight up beyond HA ±6 h (04:10)* | Equatorial mount: the target is more than 6 hours from the meridian during the block, so the mount runs counterweight-up. Check your mount allows it. |
 | *⚠ Zenith keyhole: 87° at 23:40* | Alt-az mount: the target passes too near the zenith to track smoothly. |
 | *⚠ estimate: peak ~45k, near your 32k limit — check a frame* | Your exposure may go past the linear limit. Take a test frame. |
 | *⚠ estimate: even 0.75 s may saturate…; defocus* | A star too bright for the shortest standard exposure. Defocus, and write "defocus" in its notes. |
-| *⚠ Dew expected from 04:05* | Dew is forecast during the block. |
+| *⚠ Dew expected from 04:05* | Dew is forecast during the block (*…: the block ends there* when the dew setting cut it short). |
 | *⚠ Cloud ≥ 70 % forecast for most of this block* | The forecast is poor; the block stays (you decide). |
 | *⚠ Below your limits 03:10–03:40* | One of your own (locked) blocks now runs below your limits. |
 | *⚠ Overlaps your block …* / *⚠ Inside a blackout: …* | One of your own blocks clashes with another or with a no-transit window. |
@@ -166,10 +173,11 @@ full.
 Select a row, then use the buttons under the table. A result line under the buttons says what happened.
 
 - **Lock** keeps the block's times through every rebuild (*✔ HAT-P-23 b locked: it keeps its times when you
-  rebuild.*). The button reads **Unlock** for a locked block.
+  rebuild.*). The button reads **Unlock** for a locked block or one you set the times of.
 - **Remove** takes the block off this night (*it comes back when you rebuild unless you untick it*).
 - **Move to night…** moves a flexible block to another night of the schedule, at the same place in the sky (about 4
-  minutes earlier on the clock each night later). The block is locked there, and that night is rebuilt around it. A
+  minutes earlier on the clock each night later). The block is kept there (the table says *set by you*), and that
+  night is rebuilt around it. A
   transit or a timed event cannot move: its time is set by the sky, so the button is grayed for those.
 - **Edit times…** asks for a new start and end (`HH:MM` on the site's clock). The block is marked *set by you*, keeps
   those times through rebuilds, and the night is rebuilt around it. The times must be between sunset and sunrise, and
@@ -184,6 +192,8 @@ While a build or rebuild runs, these buttons wait: *⚠ Wait for the build to fi
 
 Under the table are three boxes.
 
+![The lower part of a night tab: the nightly table with the selected block's notes and cautions, the Lock, Remove, Move to night… (grayed for a transit), Edit times… and Status row, and the Flats and darks to shoot, Didn't fit, and why (with two Plan this instead buttons) and Free time boxes](img/06-night-tab-lower.png)
+
 **Flats and darks to shoot.** For example *Flats: one set at the night's camera angle; a meridian flip's 180° turn
 needs no new flats*, and *Darks to shoot: 0.75 s, 45 s, 60 s*. A defocused target adds *flats at the defocus position
 too*. Darks you already have can be listed in the settings file (`darks_on_hand`, chapter 4); then the line says
@@ -195,16 +205,16 @@ keeps the camera angle fixed.
 
 **Didn't fit, and why.** Every ticked target that got no block, with the reason and its next chance, for example:
 
-- *WASP-12 b: collides with HAT-P-23 b; next chance Fri 23 Oct*
-- *BL Cam: below your limits all night (highest 24°; limit 30° there); next chance Mon 26 Oct*
-- *DY Peg: no free stretch of 45 min left tonight (longest 30 min)*
+- *WASP-12 b: collides with HAT-P-23 b; next chance 23 Oct*
+- *BL Cam: below your limits all night (highest 24°; limit 30° there); next chance 26 Oct*
+- *DY Peg: no free stretch of 45 min left tonight (longest 19 min); next chance 4 Nov*
 - *KELT-1 b: no transit tonight*
 
 When another block took the room (a collision, or no free stretch left), a green **Plan this instead** button appears
 under the line. It rebuilds the night with that target first; the one that gave way then appears here instead. The
 result line says *✔ Rebuilt with WASP-12 b first.*, or *✖ Still didn't fit: …* when it cannot be done.
 
-**Free time.** Gaps of 15 minutes or more with nothing planned, for example *Free 02:10–03:00 (50 min)*. A good place
+**Free time.** Gaps of 15 minutes or more in the dark with nothing planned, for example *Free 00:36–01:02 (26 min)*. A good place
 for an extra any-time variable, or for flats and darks.
 
 ## Weather and dew
@@ -253,13 +263,14 @@ What each mark means for the planner:
 If locked blocks on past nights were never marked, SHOBS-SCHED asks first: they would go to the history as Planned,
 not Done. Mark them first if you observed them.
 
-The busy bar says *Re-reviewing…* while it works, and the line under the controls reports the result as for a build.
+The busy bar says *Re-reviewing 7 nights…* while it works, and the line under the controls reports the result as for a build.
 
 ## Weekly goals for campaigns
 
 A campaign with a **Goal** (nights a week, in its Edit dialog) is paced through the week, Monday to Sunday:
 
-- Only **Done** nights count.
+- **Done** nights count, and so do nights already planned for it earlier in this schedule. Partial and Clouded out
+  nights do not.
 - A campaign is **behind** when it cannot reach its goal without tonight, or is behind an even pace through the week.
   A goal of 1 is behind from Monday until it has a night; a goal of 2 is behind from Monday until it has one night,
   and from Thursday until it has two.
@@ -275,7 +286,9 @@ The Targets page's **This week** column shows the progress, for example *2 of 3 
   schedule was built: press Build schedule (or Re-review) to rebuild it with the changes.* The OBSPlan page shows a
   similar warning, and still lets you print and export. Unticked suggestions coming and going do not count.
 - **The schedule starts before tonight.** *⚠ The schedule starts on Mon 19 Oct, before tonight. Mark what happened
-  and press Re-review schedule to roll it forward.* Past nights stay visible as a record, with a ⚠ line above the plot.
+  and press Re-review schedule to roll it forward.* Past nights stay visible as a record, with a ⚠ line above the
+  plot: *⚠ Mon 19 Oct has passed: this tab is the record of that night (mark what happened, then Re-review
+  schedule).*
 - **Every night has passed.** *⚠ Last built for Thu 22 Oct (past): press Build schedule.*
 
 ---
