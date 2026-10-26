@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SHOBS-SCHED — Shiloh Hill Observatory Scheduler (the app).
+"""SHOBS-SCHED — Shiloh Hill Observatory Photometry Scheduler (the app).
 
 Plans each night's targets (transits, variable stars and campaigns), for one night or a rolling seven, and exports
 the plan for ASIAIR and NINA. Four pages, as the numbered steps in the blue sidebar:
@@ -353,8 +353,18 @@ def fit_columns(tree, headings: dict, cap: int = 360, stretch: str | None = None
 
 # ---- background jobs ------------------------------------------------------------------------------------------------
 
+def busy_bar_of(widget):
+    """The busy bar of the window (or dialog) a widget is in, or None (House Style: one per window, lower left)."""
+    try:
+        return getattr(widget.winfo_toplevel(), "busy_bar", None)
+    except (tk.TclError, AttributeError):
+        return None
+
+
 class Jobs:
-    """Run work in a thread; its result comes back to the main thread through a queue (Tk is not thread-safe)."""
+    """Run work in a thread; its result comes back to the main thread through a queue (Tk is not thread-safe).
+    Every job shows on the busy bar of the window it was started from (the indicator's window, else the main one)
+    with its words; the indicator beside the button only shows the ✔ / ⚠ / ✖ result."""
 
     def __init__(self, root):
         self.root = root
@@ -362,23 +372,32 @@ class Jobs:
         self.active = 0
         self._poll()
 
-    def run(self, work, done=None, indicator=None, label: str = "Working", counted: bool = False):
-        """work() (or work(progress) when counted; progress(i, n) moves the bar) runs in a thread; then
-        done(result, exc) runs here. The indicator shows a spinner (count unknown) or a bar (counted)."""
+    def run(self, work, done=None, indicator=None, label: str = "Working", counted: bool = False,
+            steps: bool = False):
+        """work() runs in a thread; work(progress) when counted (progress(i, n) puts "i of n" in the busy bar's
+        words, the bar stays back-and-forth), work(step) when steps (step("Getting the forecast") changes the words).
+        Then done(result, exc) runs here, after the job has left the busy bar."""
         self.active += 1
+        bar = busy_bar_of(indicator) if indicator is not None else None
+        if bar is None:
+            bar = getattr(self.root, "busy_bar", None)
+        tok = bar.begin(label + "…") if bar is not None else None
         if indicator is not None:
             indicator.start(label)
 
         def progress(i, n):
-            self.q.put(("progress", indicator, (i, n)))
+            self.q.put(("words", (bar, tok), f"{label}… {i} of {n}"))
+
+        def step(text):
+            self.q.put(("words", (bar, tok), str(text).rstrip(".…") + "…"))
 
         def target():
             try:
-                res = work(progress) if counted else work()
-                self.q.put(("done", (done, indicator, label), (res, None)))
+                res = work(progress) if counted else (work(step) if steps else work())
+                self.q.put(("done", (done, indicator, label, bar, tok), (res, None)))
             except Exception as exc:
                 settings.log(f"{label} failed: {exc!r}\n{traceback.format_exc()}")
-                self.q.put(("done", (done, indicator, label), (None, exc)))
+                self.q.put(("done", (done, indicator, label, bar, tok), (None, exc)))
 
         threading.Thread(target=target, daemon=True).start()
 
@@ -386,13 +405,19 @@ class Jobs:
         try:
             while True:
                 kind, a, b = self.q.get_nowait()
-                if kind == "progress":
-                    if a is not None:
-                        a.count(*b)
+                if kind == "words":
+                    bar, tok = a
+                    if bar is not None:
+                        bar.words(tok, b)
                     continue
-                done, ind, label = a
+                done, ind, label, bar, tok = a
                 res, exc = b
                 self.active -= 1
+                if bar is not None:
+                    try:
+                        bar.end(tok)
+                    except tk.TclError:
+                        pass
                 try:
                     if done is not None:
                         done(res, exc)
@@ -420,39 +445,28 @@ class Jobs:
 
 
 class JobIndicator(ttk.Frame):
-    """Spinner (or progress bar when the count is known) beside the job's button, then a brief ✔ Done / ✖ reason."""
+    """The result line beside a job's button: empty while the job runs (the window's busy bar, lower left, shows
+    what it is doing), then ✔ Done / ⚠ / ✖ reason. Not a delay signal itself (House Style, 26 Oct 2026)."""
 
     def __init__(self, parent):
         super().__init__(parent, style="Card.TFrame")
-        self.bar = ttk.Progressbar(self, mode="indeterminate", length=px(parent, 110),
-                                   style="Card.Horizontal.TProgressbar")
         self.var = tk.StringVar()
         self.label = ttk.Label(self, textvariable=self.var, style="Card.TLabel")
         self.label.pack(side=tk.LEFT)
-        self._text = ""
         self._clear = None
 
-    def start(self, text: str):
+    def start(self, text: str = ""):
         if self._clear:
             self.after_cancel(self._clear)
             self._clear = None
-        self._text = text
-        self.bar.configure(mode="indeterminate", value=0)
-        if not self.bar.winfo_manager():
-            self.bar.pack(side=tk.LEFT, padx=(0, px(self, 6)), before=self.label)
-        self.bar.start(15)
-        self.var.set(text + "…")
+        self.var.set("")
         self.label.configure(style="Card.TLabel")
-
-    def count(self, i, n):
-        self.bar.stop()
-        self.bar.configure(mode="determinate", maximum=max(1, n), value=i)
-        self.var.set(f"{self._text}: {i} of {n}")
 
     def finish(self, msg: str = "✔ Done", linger_ms: int = 6000):
         try:
-            self.bar.stop()
-            self.bar.pack_forget()
+            if self._clear:
+                self.after_cancel(self._clear)
+                self._clear = None
             self.var.set(msg)
             kind = style.kind_of(msg)
             self.label.configure(style=style.status_style(kind))
@@ -921,8 +935,13 @@ class App(tk.Tk):
         self.status_var = tk.StringVar(value="")
         status = ttk.Frame(self, style="Status.TFrame")
         status.pack(side=tk.BOTTOM, fill=tk.X)
-        self.status_label = ttk.Label(status, textvariable=self.status_var, style="Status.TLabel")
-        self.status_label.pack(anchor="w", padx=px(self, 12), pady=(px(self, 4), 0))
+        # the busy bar at the left end of the status strip (House Style: the one delay signal), then the status line
+        row = ttk.Frame(status, style="Status.TFrame")
+        row.pack(fill=tk.X, padx=px(self, 12), pady=(px(self, 4), 0))
+        self.busy_bar = style.BusyBar(row, label_style="Status.TLabel", frame_style="Status.TFrame")
+        self.busy_bar.pack(side=tk.LEFT, padx=(0, px(self, 12)))
+        self.status_label = ttk.Label(row, textvariable=self.status_var, style="Status.TLabel")
+        self.status_label.pack(side=tk.LEFT, anchor="w")
         cr = mod("credits")
         # the copyright and sources line under the status line (as SHOBS-P's; the full list: Credits and sources)
         self.credits_line = ttk.Label(status, text=cr.STATUS_LINE if cr else "© Shiloh Hill Observatory",
@@ -935,10 +954,10 @@ class App(tk.Tk):
         side = ttk.Frame(outer, style="Side.TFrame")
         side.pack(side=tk.LEFT, fill=tk.Y)
         self.side = side
-        ttk.Label(side, text="Shiloh Hill\nObservatory\nScheduler", style="SideTitle.TLabel", justify=tk.LEFT).pack(
+        ttk.Label(side, text="Shiloh Hill\nObservatory\nPhotometry\nScheduler", style="SideTitle.TLabel", justify=tk.LEFT).pack(
             anchor="w", padx=px(self, 16), pady=(px(self, 18), px(self, 2)))
         ttk.Label(side, text="(SHOBS-SCHED)", style="SideHint.TLabel").pack(anchor="w", padx=px(self, 16))
-        ttk.Label(side, text="Plans each night's\ntransits, variable stars\nand campaigns", style="SideHint.TLabel",
+        ttk.Label(side, text="Plans each night's\nphotometry: transits,\nvariable stars and\ncampaigns", style="SideHint.TLabel",
                   justify=tk.LEFT).pack(anchor="w", padx=px(self, 16), pady=(px(self, 8), px(self, 12)))
         ttk.Label(side, text="STEPS", style="SideHead.TLabel").pack(anchor="w", padx=px(self, 16))
         self.step_buttons = []
@@ -1897,7 +1916,7 @@ class TargetTable:
 
 class TargetsPage:
     title = "Targets"
-    subtitle = ("What you want to observe. Tick Plan (☑) to plan a target, click its Priority to change it, select a "
+    subtitle = ("What you want to measure. Tick Plan (☑) to plan a target, click its Priority to change it, select a "
                 "row for its details, and double-click it to edit. Each list shows the next event in the planned "
                 "nights; drag the bar between Transits and Variables to share the room.")
     # (key, heading) per box; Plan always first (John 24 Oct)
@@ -2301,7 +2320,7 @@ class TargetsPage:
                 return
             self.events = res
             self.fill()
-        app.jobs.run(work, done, None, "Next events")
+        app.jobs.run(work, done, None, "Working out each target's next event")
 
     # ---- clicks ----
     def _click(self, tbl: "TargetTable", event):
@@ -2384,7 +2403,7 @@ class TargetsPage:
             self._start_next_events()
             set_msg(self.msg_var, self.msg, f"✔ Most precise ephemeris now used for {and_list(names)} (was the "
                                             "Archive's planet-list value). Build the schedule to apply.")
-        self.app.jobs.run(work, done, None, "Checking transit ephemerides")
+        self.app.jobs.run(work, done, None, "Checking transit ephemerides at the NASA Exoplanet Archive")
 
     def _edit_priority(self, tbl: "TargetTable", iid, col):
         if self._editor is not None:
@@ -3198,6 +3217,9 @@ class EditTargetDialog:
         btns.pack(fill=tk.X, pady=(px(app, 10), 0))
         ttk.Button(btns, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
         style.green_button(btns, "Save", self.save).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
+        # the dialog's own busy bar, lower left (its lookups show here, not in the main window behind it)
+        self.win.busy_bar = self.busy_bar = style.BusyBar(btns)
+        self.busy_bar.pack(side=tk.LEFT)
         self._fill_nt()
         _keys(self.win, self._return)
         self.vars["mode"].trace_add("write", self._mode_changed)
@@ -3912,13 +3934,13 @@ class SchedulePage:
             except Exception:
                 pass
 
-    def _run(self, work, done, label):
+    def _run(self, work, done, label, steps: bool = False):
         self.set_busy(True)
 
         def finish(res, exc):
             self.set_busy(False)
             done(res, exc)
-        self.app.jobs.run(work, finish, self.ind, label)
+        self.app.jobs.run(work, finish, self.ind, label, steps=steps)
 
     def build(self, start: date | None = None, n: int | None = None):
         if not self._ready():
@@ -3938,14 +3960,19 @@ class SchedulePage:
         if hasattr(pl, "roll_forward") and any(nd.get("date", "") < start.isoformat() for nd in prior.nights):
             prior = pl.roll_forward(prior, start)      # nights before the new start go to the history, marks kept
 
-        def work():
+        nn = f"{n} night{'s' if n > 1 else ''}"
+
+        def work(step):
+            step(f"Getting the forecast from {opts.get('weather_source') or 'Open-Meteo'}")
             wx, note = app.fetch_weather(start, n)
+            step(f"Building {nn}")
             sch = pl.build_schedule(start, n, site, optics, targets, opts, prior=prior, weather_by_date=wx or None)
             self._attach_weather(sch, wx)
+            step("Working out twilight and Moon times")
             self._prefetch_info(sch)
             return sch, wx, note
         settings.log(f"build schedule {start} × {n}, {len(targets)} targets")
-        self._run(work, lambda r, e: self._built(r, e, prior), f"Building {n} night{'s' if n > 1 else ''}")
+        self._run(work, lambda r, e: self._built(r, e, prior), f"Building {nn}", steps=True)
 
     def review_start(self) -> date:
         """Re-review rolls the schedule forward to tonight; a schedule that starts later keeps its first night (no
@@ -3972,15 +3999,18 @@ class SchedulePage:
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
         prior = Schedule.from_dict(app.schedule.to_dict())
 
-        def work():
+        def work(step):
+            step(f"Getting the forecast from {opts.get('weather_source') or 'Open-Meteo'}")
             wx, note = app.fetch_weather(today, n)
+            step(f"Re-reviewing {n} night{'s' if n > 1 else ''}")
             # rereview moves past nights to the history and rebuilds from today, keeping the schedule's length
             sch = pl.rereview(prior, today, site, optics, targets, opts, weather_by_date=wx or None)
             self._attach_weather(sch, wx)
+            step("Working out twilight and Moon times")
             self._prefetch_info(sch)
             return sch, wx, note
         settings.log(f"re-review from {today}")
-        self._run(work, lambda r, e: self._built(r, e, prior), "Re-reviewing")
+        self._run(work, lambda r, e: self._built(r, e, prior), "Re-reviewing", steps=True)
 
     @staticmethod
     def _attach_weather(sch: Schedule, wx: dict):
@@ -5613,15 +5643,16 @@ class ExportPage:
         self.app.settings["card_plots"] = bool(self.plots_var.get())
         settings.save_settings(self.app.settings)
 
-    def card_plots(self, nights) -> dict | None:
+    def card_plots(self, nights, ctx=None, progress=None) -> dict | None:
         """Night plots for the printed card ({night ISO: PNG bytes}, white print style); None when matplotlib is
-        missing or no night could be drawn (the card then prints exactly as before)."""
+        missing or no night could be drawn (the card then prints exactly as before). Runs in a background job:
+        ctx = (targets_by_id, site, options) taken on the main thread; progress(i, n) after each night."""
         np_mod = mod("nightplot")
         if np_mod is None:
             return None
-        by_id, site, opts = self.app.targets_by_id(), self.app.site, self.app.options
+        by_id, site, opts = ctx if ctx else (self.app.targets_by_id(), self.app.site, dict(self.app.options))
         plots = {}
-        for n in nights:
+        for i, n in enumerate(nights, 1):
             try:
                 png = np_mod.png_bytes(n, site, by_id, n.weather or {}, opts, print_style=True)
             except Exception as exc:                 # never let a plot stop the card
@@ -5629,9 +5660,14 @@ class ExportPage:
                 png = None
             if png:
                 plots[n.date] = png
+            if progress is not None and len(nights) > 1:
+                progress(i, len(nights))
         return plots or None
 
     def print_card(self, open_browser: bool = True) -> str | None:
+        """Make the plan card and open it. With night plots the drawing runs in the background (busy bar: "Drawing
+        the night plots… 2 of 7") and the card opens when it is done: then this returns None and the path is in
+        self.last_card_path afterwards. Without plots it is made at once and the path returned."""
         ex = mod("export")
         if ex is None:
             self._msg(missing("export"))
@@ -5640,13 +5676,31 @@ class ExportPage:
         if not nights:
             self._msg("⚠ Tick one or more nights first.")
             return None
+        self.last_card_path = None
+        if not self.plots_var.get():
+            return self._make_card(ex, nights, None, open_browser)
+        if getattr(self, "_drawing", False):
+            self._msg("⚠ Still drawing the night plots for the plan card: it opens when they are done.")
+            return None
+        self._drawing = True
+        self._msg("")
+        ctx = (self.app.targets_by_id(), self.app.site, dict(self.app.options))
+
+        def work(progress):
+            return self.card_plots(nights, ctx=ctx, progress=progress)
+
+        def done(plots, exc):
+            self._drawing = False
+            if exc is not None:
+                settings.log(f"card_plots: {exc!r}")
+                plots = None                         # the card still prints, without plots
+            self._make_card(ex, nights, plots, open_browser)
+        self.app.jobs.run(work, done, None, "Drawing the night plots for the plan card", counted=True)
+        return None
+
+    def _make_card(self, ex, nights, plots, open_browser: bool) -> str | None:
         try:
             kw = {"targets_by_id": self.app.targets_by_id()}
-            plots = None
-            if self.plots_var.get():
-                self._msg("Drawing the night plots…")
-                self.app.update_idletasks()
-                plots = self.card_plots(nights)
             if plots:
                 kw["plots"] = plots
             html = ex.plan_card_html(nights, self.app.site, self.app.settings, self._weather_by_date(nights), **kw)
@@ -5661,6 +5715,7 @@ class ExportPage:
         except OSError as exc:
             self._msg(f"✖ The plan card could not be written ({exc.strerror or exc}).")
             return None
+        self.last_card_path = path
         if open_browser and not self.app.testing:
             try:
                 if sys.platform == "win32":

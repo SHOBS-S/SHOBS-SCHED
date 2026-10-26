@@ -1,8 +1,12 @@
-# SHOBS-SCHED — Shiloh Hill Observatory Scheduler
+# SHOBS-SCHED — Shiloh Hill Observatory Photometry Scheduler
 
-SHOBS-SCHED plans each night's observing — **transits**, **variable stars** and **campaigns** (stars or fields you
+SHOBS-SCHED plans each night's **photometry** — **transits**, **variable stars** and **campaigns** (stars or fields you
 visit on many nights) — for one night or a rolling seven nights, and exports each night for ASIAIR or NINA (a target
 file to import) plus a printable plan card.
+
+It is a *photometry* scheduler: it knows about transit baselines, timed minima and maxima, saturation
+and the camera's linear limit, defocus, and campaign goals. It is not meant for deep-sky imaging plans (hours of
+integration per filter on a nebula or galaxy); general imaging planners do that job better.
 
 It works on its own. If [SHOBS-P](https://github.com/SHOBS-S/SHOBS-P) is installed on the same computer,
 SHOBS-SCHED reads its site and equipment settings so you type them once (it never changes SHOBS-P's files).

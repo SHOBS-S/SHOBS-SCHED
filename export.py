@@ -531,10 +531,10 @@ def card_sections(night, site: Site, settings_dict: dict | None = None, weather_
 
 def _title(nights: list[NightPlan], site: Site) -> str:
     if not nights:
-        return "Observing plan"
+        return "Photometry plan"
     a, b = nights[0].date, nights[-1].date
-    return (f"Observing plan, {_date_label(a, site, True)}" if a == b else
-            f"Observing plan, {_date_label(a, site)} to {_date_label(b, site, True)}")
+    return (f"Photometry plan, {_date_label(a, site, True)}" if a == b else
+            f"Photometry plan, {_date_label(a, site)} to {_date_label(b, site, True)}")
 
 
 def _site_line(site: Site, settings_dict: dict | None) -> str:

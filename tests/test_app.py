@@ -1047,7 +1047,9 @@ class TestAppWithFakes(Base):
             self.assertTrue(path and os.path.exists(path))
             self.assertTrue(page.msg_var.get().startswith("⚠ Plan out of date"), page.msg_var.get())
             self.assertIn(path, page.msg_var.get())
-            self.assertTrue(page.print_card())
+            page.print_card()
+            app.jobs.wait()
+            self.assertTrue(page.last_card_path)
             self.assertTrue(page.page_msg_var.get().startswith("⚠ Plan out of date"), page.page_msg_var.get())
             # rebuilt: the bar goes
             self.build(start=date(2026, 10, 20), n=2)
@@ -1095,9 +1097,10 @@ class TestAppWithFakes(Base):
                 self.assertLessEqual(w.winfo_rootx() - page.body.canvas.winfo_rootx() + w.winfo_width(), cw + 1)
         # Include night plots: remembered; off → no plots asked for
         asked = []
-        page.card_plots = lambda nights: asked.append(len(nights)) or {n.date: b"png" for n in nights}
+        page.card_plots = lambda nights, **kw: asked.append(len(nights)) or {n.date: b"png" for n in nights}
         self.assertTrue(page.plots_var.get())
-        page.print_card()
+        self.assertIsNone(page.print_card(), "with plots the card is made in the background")
+        app.jobs.wait()
         self.assertEqual(len(asked), 1)
         page.plots_var.set(False)
         page._plots_changed()
@@ -1140,7 +1143,9 @@ class TestAppWithFakes(Base):
         n = len(clip.splitlines()) - 1
         self.assertEqual(page.msg_var.get().split(".")[0], f"✔ Copied {n} targets for Tue 20 Oct")
         self.assertIn(("2026-10-20", "copy"), page.results)
-        path = page.print_card()
+        page.print_card()
+        app.jobs.wait()
+        path = page.last_card_path
         self.assertTrue(path, page.page_msg_var.get())
         self.assertTrue(path and os.path.exists(path) and path.startswith(settings.cache_dir()))
         self.assertTrue(page.page_msg_var.get().startswith("✔ The plan card is open"))

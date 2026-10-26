@@ -60,7 +60,7 @@ foreach ($dir in $places) {
     $link.Arguments = '"' + (Join-Path $AppDir 'sched_app.py') + '"'
     $link.WorkingDirectory = $AppDir
     $link.IconLocation = (Join-Path $AppDir 'shobs_sched.ico') + ',0'
-    $link.Description = 'Shiloh Hill Observatory - Scheduler (SHOBS-SCHED)'
+    $link.Description = 'Shiloh Hill Observatory - Photometry Scheduler (SHOBS-SCHED)'
     $link.Save()
     try {
         [ShobsAppId]::Stamp($path, $AppId)

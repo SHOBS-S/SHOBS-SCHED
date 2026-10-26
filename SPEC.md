@@ -1,5 +1,10 @@
 # SHOBS-SCHED v1 — build spec (for the build workers)
 
+> **Note (1.1.0, 26 Oct 2026):** this is the original v1 build spec, kept for history. Since 1.1.0 SCHED is the
+> *Shiloh Hill Observatory Photometry Scheduler* and shows no SHOBS-P modes: targets are grouped Campaign / Transit /
+> Variable, the V / T / D code is internal only, and the plan table has no "SHOBS-P mode" column. Where this spec
+> and the code disagree, the code (and README.md) are current.
+
 SHOBS-SCHED plans each night's targets for the three SHOBS-P modes (Variables = V, Transits = T, Discovery = D),
 for one night or a rolling 7 nights, and exports the plan for ASIAIR (coordinate CSV + printable plan card).
 Owner: John (amateur observatory, 14" RC f/8, ZWO ASI2600MC color camera, EQ8-R German equatorial mount (GEM) with

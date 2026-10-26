@@ -20,7 +20,7 @@ def citation_text(version: str) -> str:
         return ""
     where = ", ".join(x for x in (f"doi:{CITATION_DOI}" if CITATION_DOI else "",
                                   f"ascl:{ASCL_ID}" if ASCL_ID else "") if x)
-    return (f"Armbrust, J. W., and Shiloh Hill Observatory, SHOBS-SCHED: Shiloh Hill Observatory Scheduler, "
+    return (f"Armbrust, J. W., and Shiloh Hill Observatory, SHOBS-SCHED: Shiloh Hill Observatory Photometry Scheduler, "
             f"version {version}, {where}")
 
 
