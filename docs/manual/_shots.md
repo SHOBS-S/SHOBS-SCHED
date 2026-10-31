@@ -1,4 +1,6 @@
-# Screenshots to take (SHOBS-SCHED manual)
+# Screenshots (SHOBS-SCHED manual, 1.2.0 edition)
+
+Retaken for 1.2.0 on 31 Oct 2026 (maximized window, resized to 2200 px wide). `04-fits-summary.png` and `02-create-shortcuts.png` are the 1.1.0 captures (only the sidebar version was updated on the first).
 
 Every image the manual refers to, with the window and state it should show. Take them on Windows, with the
 example site (Example Observatory, latitude 40.0, longitude −100.0, America/Chicago, a 0.25 m telescope). Never use
@@ -6,13 +8,13 @@ the real observatory's coordinates or name. Save as PNG in `docs/manual/img/` wi
 
 | File | Chapter | What it should show |
 |---|---|---|
-| `img/01-window-parts.png` | 1 | The whole main window on the Targets or Schedule page, with the sidebar ("Shiloh Hill / Observatory / Photometry / Scheduler", "(SHOBS-SCHED)", the tagline, STEPS 1–4, Credits and sources, Version 1.1.0), the white page area with its title and subtitle, and the status strip at the bottom (status line and credits line). Ideally labeled with arrows: sidebar, page title, page, status strip, busy-bar position. |
+| `img/01-window-parts.png` | 1 | The whole main window on the Targets or Schedule page, with the sidebar ("Shiloh Hill / Observatory / Photometry / Scheduler", "(SHOBS-SCHED)", the tagline, STEPS 1–4, Credits and sources, Version 1.2.0), the white page area with its title and subtitle, and the status strip at the bottom (status line and credits line). Ideally labeled with arrows: sidebar, page title, page, status strip, busy-bar position. |
 | `img/02-create-shortcuts.png` | 2 | The black console window of Create shortcuts.bat at the end of a first run: "Looking for a Python…", the "usable:" line, "Setting up SHOBS-SCHED's own Python environment…", the package check, and "Done. Start SHOBS-SCHED from the Desktop icon or the Start menu." |
 | `img/02-first-start.png` | 2 | SHOBS-SCHED on first start with no SHOBS-P installed: the Setup page, empty fields, the top line "Enter your site and equipment once (or read the camera from a FITS frame)…", the guessed time zone with its hint. |
 | `img/03-setup-saved.png` | 3 | The Setup page filled in for Example Observatory (40.0, −100.0, America/Chicago, 250 mm aperture), with "✔ Saved." beside the green Save button, and "set here" tags beside the typed fields. |
 | `img/03-targets-two.png` | 3 | The Targets page with WASP-12 b in the Transits box and DY Peg in the Variables box, both ticked ☑, their event columns filled; the result line "✔ Added DY Peg (VSX)." beside Add. |
 | `img/03-night-tab.png` | 3 | The Schedule page after Build schedule: a night tab selected, the night's line (dark, Moon, weather), the night plot with a green transit block and a navy variable block, and the nightly table with both rows; "✔ Built … nights" in the message line. |
-| `img/04-setup-page.png` | 4 | The whole Setup page in its two-column layout: Site and Telescope and camera on the left; Mount and limits, Horizon profile (a few az/alt lines) and Weather on the right; the source line at the top; Save at the bottom. |
+| `img/04-setup-page.png` | 4 | The whole Setup page in its two-column layout: Mount and limits and Weather on the left with Site; Telescope and camera, Horizon profile (a few az/alt lines) and Suggestions and darks (with darks on hand) on the right; the source line at the top; Save at the bottom. |
 | `img/04-fits-summary.png` | 4 | The Telescope and camera box right after Read from a FITS frame…: the "✔ Read the header of … Press Save to keep these values." summary with its "Changed:" list (old → new), and "from FITS" tags beside the filled fields. |
 | `img/05-targets-page.png` | 5 | The Targets page with several targets in all three boxes (a campaign with "This week" progress, transits with Night/Ingress/Mid/Egress, variables with "min …"/"any time"), a mix of ticked and unticked (gray) rows, one row selected with its details line, the Nights row, and the buttons at the bottom. |
 | `img/05-edit-dialog.png` | 5 | The Edit dialog for a campaign on a planet-host star (a made-up or public example such as HD 219134): Target and Observing fields, the "No data while a planet transits" part with the Archive result line, the ticked transiting planets, a grayed non-transiting planet, the window list, and Notes. |
@@ -21,4 +23,8 @@ the real observatory's coordinates or name. Save as PNG in `docs/manual/img/` wi
 | `img/07-obsplan-page.png` | 7 | The OBSPlan page: the night ticks, Print plan card with Include night plots ticked, the position-angle line, the ASIAIR export folder line, and one night of the on-screen card (date heading with Export to ASIAIR, Export to NINA and Copy ASIAIR list; the facts line; the table; Flats/Darks/Free time lists), with an "✔ ASIAIR: saved …" result line and its Open folder / Open in Notepad / Show file contents buttons. |
 | `img/07-plan-card-print.png` | 7 | The printed plan card open in a web browser: "Photometry plan, <dates>" title, the site line (Example Observatory, 40.000° N, 100.000° W), one night's facts and weather line, its night plot (print style), and the start of the nightly table. |
 | `img/08-busy-bar.png` | 8 | A close-up of the lower left of the main window during Build schedule: the back-and-forth busy bar in the status strip with "Building 7 nights…" beside it (a second shot with "Getting the forecast from Open-Meteo…" is welcome). |
-| `img/09-credits-page.png` | 9 | The Credits and sources page: "SHOBS-SCHED 1.1.0 © 2026 Shiloh Hill Observatory", the license line, the list (CATALOGS AND SERVICES first), Save credits as text… and Back. |
+| `img/09-credits-page.png` | 9 | The Credits and sources page: "SHOBS-SCHED 1.2.0 © 2026 Shiloh Hill Observatory", the license line, the list (CATALOGS AND SERVICES first), Save credits as text… and Back. |
+| `img/05-find-transits.png` | 5 | The Find suggested transits window: its text naming Setup's "Suggestions and darks" box and the values, Show at most, the Nights line, Search and Cancel. |
+| `img/05-remove-dialog.png` | 5 | The app's own Remove targets window: "Remove DY Peg from the list? …" with Remove and Cancel. |
+| `img/06-night-tab-lower.png` | 6 | A second night: a block with "stop by … at the latest", a transit whose Meridian reads "(flip)", its "⚠ Meridian flip during the transit" caution, the tab marked ⚠. |
+| `img/08-busy-bar-find.png` | 8 | The busy bar during Find suggested transits, showing the stage and its count ("…: the best with their most precise ephemeris… 8 of 37"). |

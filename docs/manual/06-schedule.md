@@ -125,7 +125,7 @@ The Moon is given in the order the dark night meets it: whether it is up or down
 dawn. For example *Moon 62 % (down at dusk, rises 23:10)*, *Moon 48 % (up at dusk, sets 01:35)*, or, when it does not
 rise or set in the dark, *Moon 95 % (up all night)* or *Moon 3 % (down all night)*.
 
-![A night tab (Tue 03 Nov): the night's line and a ⚠ dew line, the weather strip above the night plot, the HAT-P-6 b transit selected and drawn bright, the nightly table with its notes, and the selected block's notes, cautions and buttons](img/06-night-tab.png)
+![A night tab (Sat 31 Oct): the night's line and a ⚠ dew line, the weather strip above the night plot, the HAT-P-32 b transit selected and drawn bright, DY Peg and the HD 219134 campaign, the nightly table with (est.) exposures and its notes, and the Flats and darks, Didn't fit (with Plan this instead) and Free time boxes](img/06-night-tab.png)
 
 ## The night plot
 
@@ -246,7 +246,7 @@ While a build or rebuild runs, these buttons wait: *⚠ Wait for the build to fi
 
 Under the table are three boxes.
 
-![The lower part of a night tab: the nightly table with the selected block's notes and cautions, the Lock, Remove, Move to night… (grayed for a transit), Edit times… and Status row, and the Flats and darks to shoot, Didn't fit, and why (with two Plan this instead buttons) and Free time boxes](img/06-night-tab-lower.png)
+![Another night (Tue 03 Nov, its tab marked ⚠): AB And with "stop by 21:04 at the latest", the WASP-12 b transit selected with its meridian time marked (flip) and the caution "⚠ Meridian flip during the transit (04:18)"; the Lock, Remove, Move to night… (grayed for a transit), Edit times… and Status row; and the Flats and darks, Didn't fit and Free time boxes](img/06-night-tab-lower.png)
 
 **Flats and darks to shoot.** For example *Flats: one set at the night's camera angle; a meridian flip's 180° turn
 needs no new flats*, and *Darks to shoot: 0.75 s, 45 s, 60 s*. A defocused target adds *flats at the defocus position

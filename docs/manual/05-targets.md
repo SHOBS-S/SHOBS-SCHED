@@ -17,7 +17,7 @@ This chapter covers:
 - **Find suggested transits…** and **Find suggested variables…**,
 - ephemeris precision, and how SHOBS-SCHED upgrades it for you.
 
-![The Targets page: Add a target and the Nights row at the top; the Campaigns box with HD 219134, the Transits box with suggested planets and WASP-12 b, and the Variables box with DY Peg selected; its details line and the Edit…, Remove, Keep and Find buttons at the bottom](img/05-targets-page.png)
+![The Targets page: Add a target and the Nights row at the top; the Campaigns box with HD 219134 (next blackout Tue 03 Nov), the Transits box with suggested planets and HAT-P-32 b ticked and selected (its Source now ✔ NEA), and the Variables box with suggestions and AB And ticked (✔ VizieR VSX); the details line, the "will be planned … Kept" line, and the Edit…, Remove, Keep and Find buttons at the bottom](img/05-targets-page.png)
 
 ## The three boxes
 
@@ -177,6 +177,9 @@ Some results need a word from you:
 - **Remove** removes the selected targets. A window titled **Remove targets** asks *Remove DY Peg from the list?
   Blocks already planned stay until you rebuild.*; press **Remove** to go ahead, or **Cancel**. The line then says
   *✔ Removed DY Peg.*
+
+  ![The Remove targets window: "Remove DY Peg from the list? Blocks already planned stay until you rebuild." with Remove and Cancel](img/05-remove-dialog.png)
+
 - **Edit…** (or double-click a row) opens the Edit dialog for one target.
 
 ### Blocks you locked or set by hand
@@ -294,6 +297,8 @@ your site.
    ephemeris… 12 of 50*.
 5. The result line says, for example, *✔ 12 suggested transits found, soonest first.*
 
+![The Find suggested transits window: what it searches, the filter values from Setup's "Suggestions and darks" box, Show at most 25, the nights Sat 31 Oct – Fri 06 Nov, and Search and Cancel](img/05-find-transits.png)
+
 The suggestions land **unticked** in the Transits box, among your own targets. Tick one to plan it (that keeps it
 too), or press **Keep** to keep it without planning it. Suggestions you neither ticked nor kept are replaced when
 you search again.
@@ -338,7 +343,7 @@ nights.
 4. The result line says, for example, *✔ 14 suggested variables found, soonest first.* The line under the boxes says
    how many catalog stars matched.
 
-![The Find suggested variables window: the first four types ticked, Period empty in days, Brightness 9 to 13, Amplitude at least 0.1, Show at most 25, and the nights Mon 02 Nov – Sun 08 Nov](img/05-find-variables.png)
+![The Find suggested variables window: the first four types ticked, Period empty in days, Brightness 9 to 13, Amplitude at least 0.1, Show at most 25, and the nights Sat 31 Oct – Fri 06 Nov with the Moon limit from Setup's "Suggestions and darks" box](img/05-find-variables.png)
 
 A star is suggested when, on at least one of the nights, it offers something you can catch:
 

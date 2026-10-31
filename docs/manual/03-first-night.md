@@ -50,7 +50,7 @@ times; for a variable, its next timed minimum or maximum, or *any time* for a st
 transit marked *(partial)* is only partly in the dark; if a transit shows *none in the next 7 nights*, no part of any
 transit is in the dark this week. Pick another planet, or try **Find suggested transits…** (chapter 5).
 
-![The Targets page with WASP-12 b in Transits (next transit Sun 01 Nov, partial) and DY Peg in Variables (any time), both ticked](img/03-targets-two.png)
+![The Targets page with WASP-12 b in Transits (next transit Mon 02 Nov, ✔ NEA (most precise)) and DY Peg in Variables (any time), both ticked, and "✔ Added DY Peg (VSX)." beside Add](img/03-targets-two.png)
 
 ## Step 3: Build the schedule
 
@@ -80,7 +80,7 @@ or no dark time. A target that didn't fit, or a cloudy forecast, is listed on th
 Click a row (or a block on the plot) to pick it out. Read the notes: they say, for example, *Ingress 23:50, mid
 01:20, egress 02:50 (±1 min)* and *Start before the meridian and let it flip (~21:01); drop the pre-flip frames*.
 
-![The Mon 02 Nov tab: the night plot with the DY Peg block (20:48–22:48) and the WASP-12 b transit block (23:26–03:50), and the nightly table under it](img/03-night-tab.png)
+![The Mon 02 Nov tab: the night's line (Moon 35 %, down at dusk, rises 01:12) and a dew line, the night plot with the DY Peg block (20:48–22:48) and the WASP-12 b transit block, and the nightly table under it](img/03-night-tab.png)
 
 ## Step 4: Print the plan card
 
