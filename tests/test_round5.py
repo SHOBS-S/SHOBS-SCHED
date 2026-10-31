@@ -99,6 +99,11 @@ class TestSimbad(unittest.TestCase):
                                                 "format for catalog:\n\tZ : catalogue Z"))
         with self.assertRaises(T.FetchError):
             T.parse_simbad_script("::error:::::\n\n[1] GluTools: HTTP 403 for http://...\n")
+        # review: a name holding "timeout" is still an answer; a bare "unknown error" is not
+        self.assertIsNone(T.parse_simbad_script("::error:::::\n\n[3] Identifier not found in the database : "
+                                                "NAME Timeout Star"))
+        with self.assertRaises(T.FetchError):
+            T.parse_simbad_script("::error:::::\n\n[1] unknown error occurred\n")
 
     def test_mirror_then_archive(self):
         calls = []

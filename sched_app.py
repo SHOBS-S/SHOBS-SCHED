@@ -641,6 +641,12 @@ def ask_choice(app, title: str, message: str, choices, ok_text: str = "OK"):
     return out["v"]
 
 
+def _opt(o: dict, key: str) -> float:
+    """A numeric option, or its default when missing or not a number."""
+    x = settings._num((o or {}).get(key))
+    return settings.DEFAULT_OPTIONS[key] if x is None else x
+
+
 def ask_yes_no(app, title: str, message: str, yes_text: str = "Continue") -> bool:
     """A yes/no question (Return = yes, Escape = no). Tests answer through app.auto_answers."""
     if app.auto_answers:
@@ -881,6 +887,10 @@ class App(tk.Tk):
                f"{'it' if n == 1 else 'them'} in the schedule, marked ⚠.)")
         if ask_yes_no(self, "Blocks set by hand", msg, "Remove"):
             return self.drop_blocks(pairs)
+        # kept: not asked again this session for these blocks (review)
+        self._kept_hand_set = getattr(self, "_kept_hand_set", set()) | {(d, b.get("target_id"),
+                                                                         round(float(b.get("start") or 0), 6))
+                                                                        for d, b in pairs}
         return 0
 
     def plan_nights(self) -> list[date]:
@@ -1458,11 +1468,16 @@ class SetupPage:
         v["options.dew_spread_c"].set(fmt_num(spread * 1.8 if tu == "F" else spread, 1))
         v["options.dew_sensitive_end"].set(bool(opts.get("dew_sensitive_end", True)))
         d = settings.DEFAULT_OPTIONS
+
+        def opt_num(k):                                   # a hand-edited "" or text falls back to the default
+            x = settings._num(opts.get(k))
+            return d[k] if x is None else x
         for k in ("suggest_vmin", "suggest_vmax", "suggest_baseline_min", "suggest_moon_penalty_max"):
-            v[f"options.{k}"].set(fmt_num(opts.get(k, d[k])))
-        v["options.suggest_min_depth"].set(fmt_num(100.0 * float(opts.get("suggest_min_depth",
-                                                                          d["suggest_min_depth"])), 3))
-        v["options.darks_on_hand"].set(", ".join(fmt_num(x) for x in (opts.get("darks_on_hand") or [])))
+            v[f"options.{k}"].set(fmt_num(opt_num(k)))
+        v["options.suggest_min_depth"].set(fmt_num(100.0 * opt_num("suggest_min_depth"), 3))
+        hand = opts.get("darks_on_hand") if isinstance(opts.get("darks_on_hand"), list) else []
+        v["options.darks_on_hand"].set(", ".join(fmt_num(x) for x in (settings._num(y) for y in hand)
+                                                 if x is not None))
         self._loading = False
         self.fits_pending = {}
         self._units_changed()
@@ -1483,6 +1498,9 @@ class SetupPage:
             return str(int(value or 1))
         if key == "site.sun_alt":
             return darkness_label(value)
+        if key == "options.suggest_min_depth":            # shown in percent (review)
+            v = settings._num(value)
+            return fmt_num(100.0 * v, 3) if v is not None else ""
         return fmt_num(value) if not isinstance(value, str) else value.strip()
 
     def source_of(self, key: str) -> str:
@@ -2772,8 +2790,8 @@ class TargetsPage:
         ids = {t.id for t in ts}
         self.remove_ids(ids)
         set_msg(self.msg_var, self.msg, f"✔ Removed {names}.")
-        n = self.app.ask_drop_hand_set(self.app.hand_set_blocks(ids), "A rebuild keeps blocks set by hand even "
-                                                                      "when the target is gone.")
+        n = 0 if getattr(self.app.pages[2], "busy", False) else self.app.ask_drop_hand_set(
+            self.app.hand_set_blocks(ids), "A rebuild keeps blocks set by hand even when the target is gone.")
         if n:
             self.app.schedule_changed()
             set_msg(self.msg_var, self.msg, f"✔ Removed {names} and {n} block{'s' if n != 1 else ''} set by hand.")
@@ -2781,6 +2799,11 @@ class TargetsPage:
     def _unticked_with_set_blocks(self, t):
         """Unticking (or removing) a target whose blocks you set by hand: ask whether they go too (fix list 23)."""
         if t.enabled:
+            return
+        if getattr(self.app.pages[2], "busy", False):     # a build would put them back (review): ask later
+            if self.app.hand_set_blocks({t.id}):
+                set_msg(self.msg_var, self.msg, f"✔ {t.name} will not be planned. A build is running: its blocks "
+                                                "set by hand are asked about at the next Build.")
             return
         pairs = self.app.hand_set_blocks({t.id})
         if pairs:
@@ -3023,10 +3046,10 @@ class TransitSearchDialog:
         self.win, body = _dialog(app, "Find suggested transits")
         ttk.Label(body, text="Transiting planets with a full transit (and its baselines) in the dark on the nights "
                              "below, from your site, filtered by Setup's “Suggestions and darks” box (host V "
-                             f"{fmt_num(o.get('suggest_vmin', 9))}–{fmt_num(o.get('suggest_vmax', 13))}, depth at least "
-                             f"{fmt_num(100 * float(o.get('suggest_min_depth', 0.005)), 3)} %, baseline "
-                             f"{fmt_num(o.get('suggest_baseline_min', 30))} min each side, Moon-brightened sky up to "
-                             f"{fmt_num(o.get('suggest_moon_penalty_max', 3))} mag). They land unticked in Transits, "
+                             f"{fmt_num(_opt(o, 'suggest_vmin'))}–{fmt_num(_opt(o, 'suggest_vmax'))}, depth at least "
+                             f"{fmt_num(100 * _opt(o, 'suggest_min_depth'), 3)} %, baseline "
+                             f"{fmt_num(_opt(o, 'suggest_baseline_min'))} min each side, Moon-brightened sky up to "
+                             f"{fmt_num(_opt(o, 'suggest_moon_penalty_max'))} mag). They land unticked in Transits, "
                              "soonest first.",
                   style="Hint.TLabel", wraplength=px(app, 460), justify=tk.LEFT).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, px(app, 6)))
@@ -4101,7 +4124,9 @@ class SchedulePage:
         if start >= app.tonight():
             app.plan_start = start                      # the Targets page follows the built nights
         site, optics, opts = app.site, app.optics, dict(app.options)
-        stale = app.hand_set_blocks(None, start.isoformat())
+        kept = getattr(app, "_kept_hand_set", set())
+        stale = [(d, b) for d, b in app.hand_set_blocks(None, start.isoformat())
+                 if (d, b.get("target_id"), round(float(b.get("start") or 0), 6)) not in kept]
         if stale:
             app.ask_drop_hand_set(stale, "Their targets are not ticked to plan (or no longer in your list).")
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]

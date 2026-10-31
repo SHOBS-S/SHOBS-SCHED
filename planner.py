@@ -49,8 +49,7 @@ import numpy as np
 
 import events
 import sky
-from models import (PRIORITY_RANK, Block, NightPlan, Schedule, Target, serious_caution,  # noqa: F401
-                    serious_night)
+from models import PRIORITY_RANK, Block, NightPlan, Schedule, Target
 from settings import DEFAULT_OPTIONS
 
 MIN = 1.0 / 1440.0
@@ -1101,16 +1100,20 @@ class _Night:
         pool = cands or fallback
         if not pool:
             return (None, None) if with_cost else None
+        noflip = False
         if self.gem:
             # a second ideal (fix list 24, John 29 Oct): the WHOLE block before the meridian, ending inside the
             # tracking margin (no flip, no settle, no dropped frames). It wins whenever a full-length block fits in
             # the dark before the meridian; otherwise the flip goes at the start (flip_lead before the meridian).
             before = m_ideal + margin * MIN - want * MIN
-            whole = [r for r in pool if r[1] >= want and g[r[0]] + r[1] * MIN <= m_ideal + margin * MIN + EPS
+            longest = max(r[1] for r in pool)
+            whole = [r for r in pool if r[1] >= min(want, longest)
+                     and g[r[0]] + r[1] * MIN <= m_ideal + margin * MIN + EPS
                      and not any(g[r[0]] < m < g[r[0]] + r[1] * MIN and (g[r[0]] + r[1] * MIN - m) * 1440.0 > margin
                                  for m in mers)]
             if whole and t.id not in self.flip_at_start:
                 ideal = before
+                noflip = True
 
         def cost(r):     # absolute, so costs of different free layouts compare (the nudge)
             return (abs(g[r[0]] - ideal) * 1440.0 + LOST_MIN_WEIGHT * (want - r[2]) + AIRMASS_WEIGHT * r[3]
@@ -1119,7 +1122,7 @@ class _Night:
         best = min(pool, key=lambda r: (cost(r), r[0]))
         s, L = best[0], best[1]
         p = _P(tg=t, tid=t.id, name=t.name, kind="flex", start=g[s], end=g[s] + L * MIN)
-        p.noflip_ideal = bool(self.gem and ideal != m_ideal - lead * MIN)
+        p.noflip_ideal = noflip
         p.fallback_flip = not cands
         if self.dew is not None and self.o.get("dew_sensitive_end") and abs(p.end - self.dew) <= 2 * MIN:
             p.dew_cut = True
@@ -1341,8 +1344,8 @@ def build_night(d: date, site, optics, targets: list, options: dict, locked: lis
         used = {p.tid for p in n.placed if p.kind == "flex" and getattr(p, "noflip_ideal", False)}
         return plan, used
 
-    def fitted(plan) -> int:
-        return len({b.get("target_id") for b in plan.blocks})
+    def fitted(plan) -> set:
+        return {b.get("target_id") for b in plan.blocks}
 
     fas: set = set()
     plan, used = one(fas)
@@ -1352,7 +1355,7 @@ def build_night(d: date, site, optics, targets: list, options: dict, locked: lis
         better = None
         for tid in sorted(used):
             trial, trial_used = one(fas | {tid})
-            if fitted(trial) > fitted(plan):
+            if fitted(trial) > fitted(plan):     # a strict superset: nothing that fitted is lost (review)
                 better = (tid, trial, trial_used)
                 break
         if better is None:
@@ -1360,7 +1363,7 @@ def build_night(d: date, site, optics, targets: list, options: dict, locked: lis
         tid, plan, used = better
         fas.add(tid)
         for b in plan.blocks:
-            if b.get("target_id") == tid:
+            if b.get("target_id") == tid and not (b.get("locked") or b.get("set_by_user")):
                 b.setdefault("notes", []).append("Flips at the start (not run wholly before its meridian) so "
                                                  "another target fits tonight")
     return plan

@@ -980,17 +980,16 @@ def parse_simbad_script(text: str) -> dict | None:
     raise FetchError("SIMBAD sent a reply that could not be read")
 
 
-_SIMBAD_UNKNOWN = ("not found", "incorrect format", "no known catalog", "unknown")
-_SIMBAD_TROUBLE = ("glutools", "http ", "exception", "timeout", "time out", "unavailable", "internal error")
+_SIMBAD_UNKNOWN_RE = re.compile(r"^\[\d+\]\s+.*(?:Identifier not found|incorrect format for catalog|"
+                                r"No known catalog could be found)", re.IGNORECASE | re.MULTILINE)
 
 
 def _simbad_unknown_name(text: str) -> bool:
-    """Does SIMBAD's ::error:: reply say it does not know the name ("Identifier not found in the database", "this
-    identifier has an incorrect format for catalog")? False for trouble on its side (GluTools, HTTP 403...)."""
-    low = text.lower()
-    if any(w in low for w in _SIMBAD_TROUBLE):
-        return False
-    return any(w in low for w in _SIMBAD_UNKNOWN)
+    """Does SIMBAD's ::error:: reply say it does not know the name ("[3] Identifier not found in the database",
+    "[3] 'X' this identifier has an incorrect format for catalog")? Matched on SIMBAD's structured error lines, so
+    a star name holding words like "timeout" stays an answer, and trouble on its side (GluTools, HTTP 403...) is
+    not mistaken for one (review)."""
+    return bool(_SIMBAD_UNKNOWN_RE.search(text))
 
 
 def _fetch_simbad(name: str):
@@ -1336,17 +1335,25 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
 
     n_ref = 2 * int(o["suggest_max"]) if refine else 0
 
+    takes_stage = False
+    if progress:
+        try:
+            import inspect
+            ps = inspect.signature(progress).parameters.values()
+            takes_stage = any(x.kind == x.VAR_POSITIONAL for x in ps) or len(
+                [x for x in ps if x.kind in (x.POSITIONAL_ONLY, x.POSITIONAL_OR_KEYWORD)]) >= 3
+        except (TypeError, ValueError):
+            takes_stage = False
+
     def tell(i, n, stage):
         """Progress per step, each counting up to its own n (fix list 9: one count over two passes ran backwards)."""
         if not progress:
             return
         try:
-            progress(i, n, stage)
-        except TypeError:
-            try:
+            if takes_stage:
+                progress(i, n, stage)
+            else:
                 progress(i, n)
-            except Exception:
-                pass
         except Exception:
             pass
 
@@ -2019,7 +2026,7 @@ def next_events(target: Target, site, nights: list, from_jd: float) -> dict:
                 w = sky.night_window(min(nights), site)
                 if w and w[0] > from_jd:
                     start = w[0]
-        days = max(1, (max(nights) - sky.night_date_of(start, site.tz)).days + 1) if nights else 7
+        days = max(1, (max(nights) - min(nights)).days + 1) if nights else 7
         return {"text": next_event_text(target, site, start, days=days)}
     wins = _night_windows(site, nights, from_jd)
     if not wins:
