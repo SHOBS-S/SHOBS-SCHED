@@ -21,7 +21,7 @@ This chapter covers:
 ## Build a schedule
 
 1. At the top of the page, choose **Nights** (1 to 7) and the **first night**. The first night is tonight by
-   default; pick one of the next 14 nights from the list, or type any date (`2026-11-03`, `3 Nov`). These are the
+   default; pick tonight or one of the next 13 nights from the list, or type any date (`2026-11-03`, `3 Nov`). These are the
    same nights as the Targets page's **Nights** row.
 2. Press **Build schedule**.
 3. The busy bar at the lower left of the window shows each step: *Getting the forecast from Open-Meteo…*, then

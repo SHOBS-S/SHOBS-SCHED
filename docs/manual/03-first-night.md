@@ -42,7 +42,7 @@ tagged *from SHOBS-P*; check them and go on.
 3. The busy bar appears at the lower left of the window, in the status strip, with the words *Looking up WASP-12
    b…*. When it finishes, a result line appears beside the **Add** button, for example *✔ Added WASP-12 b (NEA, most
    precise).* The planet is in the **Transits** box, ticked to plan (☑).
-4. Type `DY Peg` and press **Enter**. It is looked up at AAVSO VSX (or its copy at VizieR, as in the picture) and
+4. Type `DY Peg` and press **Enter**. It is looked up at AAVSO VSX (or its copy at VizieR when VSX does not answer) and
    lands in the **Variables** box, also ticked.
 
 Each row shows the target's next event in the planned nights: for a transit, the night and its ingress, mid and egress

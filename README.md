@@ -78,7 +78,7 @@ Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_t
 
 ## Documentation
 
-**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (written for version 1.2.0; the 1.2.0 changes are listed in the README above) walks you through the program step by
+**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (written for version 1.2.0) walks you through the program step by
 step: installing, your first night, the Setup, Targets, Schedule and OBSPlan pages, the busy bar and messages,
 troubleshooting and a glossary. A PDF of the whole manual can be built with `python tools/build_manual_pdf.py`.
 

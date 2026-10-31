@@ -10,7 +10,7 @@ Whenever SHOBS-SCHED is working on something that takes more than a moment, a bu
 the window**, in the status strip. A small bar moves back and forth, and the words beside it say what the program is
 doing. This is the same in every SHOBS program.
 
-![The busy bar at the lower left of the window, in the status strip, with "Working out twilight and Moon times…" (the last step of Build schedule) beside it](img/08-busy-bar.png)
+![The busy bar at the lower left of the window, in the status strip, with "Finding suggested variables (VSX at VizieR; up to a minute or two)…" beside it](img/08-busy-bar.png)
 
 You see it while SHOBS-SCHED is:
 
@@ -36,7 +36,7 @@ Some things to know:
   planet… 291 of 302*), then checks the best of them again with each planet's most precise ephemeris (*Finding
   suggested transits: the best with their most precise ephemeris… 12 of 50*).
 
-![The busy bar with "Finding suggested transits: the best with their most precise ephemeris… 8 of 37": the second pass of the search](img/08-busy-bar-find.png)
+![The busy bar with "Finding suggested transits: the best with their most precise ephemeris… 10 of 37": the second pass of the search](img/08-busy-bar-find.png)
 
 - **Dialogs have their own busy bar.** The Edit dialog's planet lookup, for example, shows its busy bar at the
   **dialog's** lower left (*Looking up HD 219134's planets at the NASA Exoplanet Archive…*), so the main window stays
@@ -58,7 +58,7 @@ button. It starts with an icon and is colored to match:
 | Icon | Color | Meaning | Example |
 |---|---|---|---|
 | **✔** | blue on white | Done, as asked. | *✔ Added DY Peg (VSX).* |
-| **⚠** | dark amber on pale yellow | Done, but read this: a caution, a saved copy used, something left out. | *⚠ Added BL Cam (VSX). AAVSO VSX did not answer (no answer within 30 s); using the copy from 3 days ago.* |
+| **⚠** | dark amber on pale yellow | Done, but read this: a caution, a saved copy used, something left out. | *⚠ Added BL Cam (VSX). AAVSO VSX did not answer (no answer within 10 s; VizieR's copy: service unavailable, HTTP 503); using the copy from 3 days ago.* |
 | **✖** | red | Not done, and why. | *✖ The NASA Exoplanet Archive did not answer (service unavailable, HTTP 503) and there is no saved copy for WASP-12 b. Try again later.* |
 
 A short **✔** line beside a button, such as **✔ Done** or *✔ Added DY Peg (VSX).*, fades after a few seconds. A **⚠**

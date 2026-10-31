@@ -42,4 +42,4 @@
     photometry words this manual uses.
 
 ---
-*Screenshots taken from SHOBS-SCHED 1.1.0 on Windows.*
+*Screenshots taken from SHOBS-SCHED 1.2.0 on Windows.*

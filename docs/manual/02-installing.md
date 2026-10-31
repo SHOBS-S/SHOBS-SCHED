@@ -47,7 +47,7 @@ with the reason. Install Python from python.org (tick **Add python.exe to PATH**
 again. If it says `The shortcuts could not be made. Leave this window open and copy the message above.`, the lines
 above it say why.
 
-![Create shortcuts.bat finishing: the Python it chose, the packages checked, and "Done."](img/02-create-shortcuts.png)
+![Create shortcuts.bat finishing: the packages checked, the two shortcuts made, and "Done."](img/02-create-shortcuts.png)
 
 > **Tip:** To pin SHOBS-SCHED to the taskbar, open the Start menu, right-click **SHOBS-SCHED** and choose **Pin to
 > taskbar**. The pin keeps the SHOBS-SCHED icon (not Python's).

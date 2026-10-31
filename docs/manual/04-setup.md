@@ -140,7 +140,7 @@ The TELESCOP keyword is not used: ASIAIR writes the mount driver's name there, n
 
 Values read from a frame are tagged *from FITS* and win over SHOBS-P's. Type over one and it becomes *set here*.
 
-![The Read from a FITS frame summary: "✔ Read the header of …", the changed values listed old → new](img/04-fits-summary.png)
+![The Setup page right after Read from a FITS frame…: the summary "⚠ Read the header of example_frame2.fits (ZWO ASI533MC Pro). Press Save to keep these values.", the Changed: list (Gain setting 100 → 120, e⁻ per ADU 1 → 0.75, Focal length 1600 → 1580 mm), the values already the same, the keyword not in this frame (ROTATOR, hence ⚠), and the *from FITS* tags](img/04-fits-summary.png)
 
 ## Mount and limits
 
@@ -163,8 +163,9 @@ and any-time variables) are placed a little differently.
 
 For every block:
 
-- **It never starts a block within an hour after its target's meridian.** A start there would make the mount flip
-  at once, while the run is under way.
+- **It avoids starting a block within an hour after its target's meridian.** A start there would make the mount flip
+  at once, while the run is under way. When nothing else fits, the block gets *⚠ Starts 20 min after its meridian:
+  the mount may flip at once (start before 22:40 if you can)*.
 - **A block that ends just past the meridian** but inside your **Tracks past the meridian** margin needs no flip at
   all. The note says, for example, *Ends 3 min past its meridian, inside your tracking margin; stop by 03:38 at the
   latest*.

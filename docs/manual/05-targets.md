@@ -120,8 +120,8 @@ How the name is looked up:
    Spellings are forgiving: `wasp-12b`, `WASP 12 b` and `WASP-12 b` all work.
 2. Otherwise, a **variable star** is looked up at **AAVSO VSX**, or VizieR's copy of it when VSX does not answer. You
    get its type, period, epoch and range. Eclipsing binaries are planned at their minima (each minimum covered ±60
-   minutes, or more for a long eclipse when VSX gives the eclipse length); pulsating and long-period stars are planned
-   at any time of night.
+   minutes, or ±0.6 × the eclipse length when VSX gives it, between ±20 and ±240 minutes); pulsating and long-period
+   stars are planned at any time of night.
 3. Otherwise, the star's position is looked up at **SIMBAD**, and a window asks what the star is for you (below).
    SHOBS-SCHED asks SIMBAD at the CDS (Strasbourg) first, then its mirror at IDIA (Cape Town) when the CDS does not
    answer. When SIMBAD does not answer at all, or does not know the name, a planet host's position is taken from
@@ -147,7 +147,9 @@ Some results need a word from you:
   SIMBAD counts as SIMBAD not answering (next point), so a problem on SIMBAD's side is never reported as a wrong
   name.
 - **A service that does not answer.** If the name was looked up before, the saved copy is used, and the result
-  line says so with a ⚠: *⚠ Added DY Peg (VSX). AAVSO VSX did not answer (no answer within 30 s); using the copy from 3 days ago.*
+  line says so with a ⚠: *⚠ Added DY Peg (VSX). AAVSO VSX did not answer (no answer within 10 s; VizieR's copy:
+  service unavailable, HTTP 503); using the copy from 3 days ago.* (VSX is given 10 seconds, then VizieR's copy is
+  tried; the saved copy is used only when both fail, so both reasons are named.)
   If not, it says so in plain words, for example *✖ The NASA Exoplanet Archive did not answer (service unavailable,
   HTTP 503) and there is no saved copy for WASP-12 b. Try again later.* SIMBAD is the same: when neither SIMBAD
   (at the CDS or its mirror) nor the Archive can give the star's position, the line says, for example, *✖ SIMBAD did
@@ -215,7 +217,7 @@ others.
 **Observing**, **Ephemeris** (transits only), **No data while a planet transits** and **Notes**. The dialog sizes
 itself to its contents and scrolls if it is taller than the screen.
 
-![The Edit dialog for the HD 219134 campaign: Target, Observing (goal 3 nights a week), No data while a planet transits with planets b and c ticked and d, f, g, h grayed, and Notes](img/05-edit-dialog.png)
+![The Edit dialog for the HD 219134 campaign: Target, Observing (block length 120, shortest useful block 45, goal 0), No data while a planet transits with planets b and c ticked and d, f, g, h grayed, and Notes](img/05-edit-dialog.png)
 
 ### Target
 
@@ -242,7 +244,8 @@ period and Tc; if it has transiting planets, the dialog suggests adding the plan
 Why an own exposure matters: the estimate is a cold start, good to within a factor of two or so. Once you know what
 works for a star (from SHOBS-P's peak values, for example), type it here. The planner then predicts the peak for your
 exposure and warns (*⚠ estimate: peak ~52k, near your 32k limit — check a frame*) only when it looks clearly too
-long (over 1.5 × your limit).
+long (over 1.5 × your limit); past twice the limit the line is a ✖ (*… over twice your 32k limit — shorten 60 s or
+defocus*).
 
 ### Ephemeris (transits)
 
