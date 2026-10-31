@@ -15,7 +15,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAN = ROOT / "docs" / "manual"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
+EDITION = "Second edition"
 TITLE = "SHOBS-SCHED User's Manual"
 
 CSS = """
@@ -129,7 +130,7 @@ def build(pdf_out):
         '<section class="title"><h1>%s</h1>' % TITLE,
         '<div class="sub">Shiloh Hill Observatory Photometry Scheduler, version %s</div>' % VERSION,
         '<div class="tag">Plans each night\'s photometry: transits, variable stars and campaigns.</div>',
-        '<div class="date">First edition, %d %s %d</div></section>' % (
+        '<div class="date">%s, %d %s %d</div></section>' % (EDITION,
             today.day, today.strftime("%B"), today.year),
         contents(chapters),
     ]
