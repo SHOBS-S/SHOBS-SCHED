@@ -417,6 +417,10 @@ class Jobs:
                 if bar is not None:
                     try:
                         bar.end(tok)
+                        if not bar.jobs:
+                            # repaint now: done() may draw for a while, and the bar must not sit there with the
+                            # job's last words beside its result (fix list 10)
+                            bar.update_idletasks()
                     except tk.TclError:
                         pass
                 try:
@@ -826,6 +830,55 @@ class App(tk.Tk):
 
     def planner_targets(self) -> list[Target]:
         return [t for t in self.targets if t.enabled]
+
+    def hand_set_blocks(self, ids=None, from_iso: str | None = None) -> list[tuple[str, dict]]:
+        """(night date, block) for every still-planned block you locked or set by hand, from tonight on, whose
+        target is in ids, or (ids None) is no longer planned: unticked or removed (fix list 23: such blocks were kept
+        silently through every rebuild)."""
+        from_iso = from_iso or self.tonight().isoformat()
+        planned = {t.id for t in self.targets if t.enabled}
+        out = []
+        for nd in self.schedule.nights:
+            if str(nd.get("date", "")) < from_iso:
+                continue
+            for b in nd.get("blocks", []):
+                if not (b.get("locked") or b.get("set_by_user")) or b.get("status", "planned") != "planned":
+                    continue
+                tid = b.get("target_id")
+                if (tid in ids) if ids is not None else (tid not in planned):
+                    out.append((str(nd.get("date")), b))
+        return out
+
+    def drop_blocks(self, pairs) -> int:
+        """Take these (night date, block) pairs out of the schedule and save it; returns how many went."""
+        gone = {(d, id(b)) for d, b in pairs}
+        n = 0
+        for nd in self.schedule.nights:
+            keep = []
+            for b in nd.get("blocks", []):
+                if (str(nd.get("date")), id(b)) in gone:
+                    n += 1
+                else:
+                    keep.append(b)
+            nd["blocks"] = keep
+        if n:
+            self.save_schedule()
+        return n
+
+    def ask_drop_hand_set(self, pairs, why: str) -> int:
+        """Ask whether blocks set by hand for unplanned targets go too; removes them on yes. Returns how many went."""
+        if not pairs:
+            return 0
+        names = list(dict.fromkeys(b.get("name") or "?" for _d, b in pairs))
+        days = sorted({d for d, _b in pairs})
+        when = and_list([night_label(d, self.site) for d in days])
+        n = len(pairs)
+        msg = (f"{and_list(names)} {'has' if len(names) == 1 else 'have'} {n} block{'s' if n != 1 else ''} you "
+               f"locked or set by hand on {when}. {why} Remove {'it' if n == 1 else 'them'} too? (No keeps "
+               f"{'it' if n == 1 else 'them'} in the schedule, marked ⚠.)")
+        if ask_yes_no(self, "Blocks set by hand", msg, "Remove"):
+            return self.drop_blocks(pairs)
+        return 0
 
     def plan_nights(self) -> list[date]:
         """The nights the Targets page searches and shows events for (John 24 Oct): first night plan_start (never
@@ -2411,12 +2464,19 @@ class TargetsPage:
         if t is None:
             return
         t.enabled = not t.enabled
+        kept = bool(t.enabled and t.suggested)
+        if kept:
+            # ticking a suggestion keeps it (fix list 3, 21): a new Find never replaces or drops it, ticked or not
+            t.suggested = False
         self.app.save_targets()
         self.app.targets_changed()
         self.fill()
         self.select_target(tid)
-        set_msg(self.msg_var, self.msg, f"✔ {t.name} will {'be planned' if t.enabled else 'not be planned'}. "
-                                        "Build the schedule to apply.")
+        text = f"✔ {t.name} will {'be planned' if t.enabled else 'not be planned'}. Build the schedule to apply."
+        if kept:
+            text += " Kept: a new Find no longer replaces it (Remove takes it off the list)."
+        set_msg(self.msg_var, self.msg, text)
+        self._unticked_with_set_blocks(t)
         if t.enabled:
             self.refine_ephemerides([tid])
 
@@ -2690,7 +2750,8 @@ class TargetsPage:
         self.select_target(t.id)
         self._start_next_events()
         note = str(getattr(t, "lookup_note", "") or "").strip()
-        done = f"Added {t.name}" + (f" ({t.source})" if t.source else "") + "."
+        src = re.sub(r"\s*\((.*)\)\s*$", r", \1", str(t.source or "").strip())   # no nested brackets (fix 11)
+        done = f"Added {t.name}" + (f" ({src})" if src else "") + "."
         self.add_ind.finish(f"⚠ {done} {note[:1].upper() + note[1:]}." .replace("..", ".") if note else "✔ " + done,
                             linger_ms=0 if note else 6000)
 
@@ -2704,8 +2765,27 @@ class TargetsPage:
         if not ask_yes_no(self.app, "Remove targets", f"Remove {names} from the list? Blocks already planned "
                                                        "stay until you rebuild.", "Remove"):
             return
-        self.remove_ids({t.id for t in ts})
+        ids = {t.id for t in ts}
+        self.remove_ids(ids)
         set_msg(self.msg_var, self.msg, f"✔ Removed {names}.")
+        n = self.app.ask_drop_hand_set(self.app.hand_set_blocks(ids), "A rebuild keeps blocks set by hand even "
+                                                                      "when the target is gone.")
+        if n:
+            self.app.schedule_changed()
+            set_msg(self.msg_var, self.msg, f"✔ Removed {names} and {n} block{'s' if n != 1 else ''} set by hand.")
+
+    def _unticked_with_set_blocks(self, t):
+        """Unticking (or removing) a target whose blocks you set by hand: ask whether they go too (fix list 23)."""
+        if t.enabled:
+            return
+        pairs = self.app.hand_set_blocks({t.id})
+        if pairs:
+            n = self.app.ask_drop_hand_set(pairs, "A rebuild keeps blocks set by hand even when the target is no "
+                                                  "longer planned.")
+            if n:
+                self.app.schedule_changed()
+                set_msg(self.msg_var, self.msg, f"✔ {t.name} will not be planned; removed {n} block"
+                                                f"{'s' if n != 1 else ''} set by hand. Build the schedule to apply.")
 
     def remove_ids(self, ids: set):
         self.app.targets = [t for t in self.app.targets if t.id not in ids]
@@ -4017,6 +4097,9 @@ class SchedulePage:
         if start >= app.tonight():
             app.plan_start = start                      # the Targets page follows the built nights
         site, optics, opts = app.site, app.optics, dict(app.options)
+        stale = app.hand_set_blocks(None, start.isoformat())
+        if stale:
+            app.ask_drop_hand_set(stale, "Their targets are not ticked to plan (or no longer in your list).")
         targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
         pl = mod("planner")
         prior = Schedule.from_dict(app.schedule.to_dict())
@@ -4144,7 +4227,7 @@ class SchedulePage:
         else:
             text = "✔ " + text
         set_msg(self.msg_var, self.msg, text)
-        self.ind.finish("✔ Done")
+        self.ind.finish("")                             # the result line below says it all (fix list 12: no 2nd ✔)
         app.set_status(text)
 
     # ---- one night ----
@@ -4523,12 +4606,12 @@ class NightTab:
             w.destroy()
         lines = [str(x) for x in (night.notes or []) if str(x).strip()]
         if (not night.dusk or not night.dawn) and not any("dark" in x.lower() for x in lines):
+            pl = mod("planner")
             darkest = (info or {}).get("darkest_sun_alt")
-            nautical_helps = site.sun_alt <= -17.9 and darkest is not None and darkest < -12
-            lines.append("✖ No dark time tonight: the Sun stays above " + f"{site.sun_alt:.0f}°"
-                         + (f" (lowest {darkest:.1f}°)" if darkest is not None else "")
-                         + (". Choose nautical darkness on the Setup page to plan in what darkness there is."
-                            if nautical_helps else "."))
+            if pl is not None and hasattr(pl, "no_dark_note"):
+                lines.append(pl.no_dark_note(darkest, site.sun_alt))     # the planner's own words (fix list 19)
+            else:
+                lines.append("✖ No dark time tonight.")
         darkest = (info or {}).get("darkest_sun_alt")
         if (not night.dusk or not night.dawn) and site.sun_alt <= -17.9 and \
                 darkest is not None and darkest < -12 and \
@@ -5662,7 +5745,7 @@ class ExportPage:
         msg = f"✔ Copied {n} target{'s' if n != 1 else ''} for {when}. In ASIAIR's Plan: Add → Import, and paste."
         if skipped:
             msg = (f"⚠ Copied {n} target{'s' if n != 1 else ''} for {when}; left out (no coordinates): "
-                   f"{', '.join(skipped)}.")
+                   f"{', '.join(skipped)}. In ASIAIR's Plan: Add → Import, and paste.")
         ang = self.angle_text().replace("ASIAIR and NINA lists: position", "Position")
         if ang:
             msg += " " + ang

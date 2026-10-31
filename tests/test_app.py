@@ -787,7 +787,7 @@ class TestAppWithFakes(Base):
         self.assertEqual(len(got), 1)
         self.assertTrue(got[0].locked)
         self.assertAlmostEqual(got[0].start, moved["start"], places=6)
-        self.assertEqual(page.ind.var.get(), "✔ Done")
+        self.assertEqual(page.ind.var.get(), "", "a build's result shows once, below")
 
     def test_plan_this_instead(self):
         self.golden_home()

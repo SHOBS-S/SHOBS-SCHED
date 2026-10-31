@@ -36,8 +36,8 @@ def block_type_code(b) -> str:
 def type_name(kind: str) -> str:
     """"Transit", "Variable" or "Campaign"."""
     return TYPE_NAMES[type_code(kind)]
-KINDS = ("transit", "variable", "campaign")   # Targets groups; suggested=True → group "suggested" (Suggested
-                                              # Transits) or "suggested_var" (Suggested Variables, kind "variable")
+KINDS = ("transit", "variable", "campaign")   # Targets groups (1.1.0: suggested, hand-added and kept targets share
+                                              # their type's box; suggested=True only marks a Find's own pick)
 PRIORITIES = ("High", "Normal", "Low")
 PRIORITY_RANK = {"High": 0, "Normal": 1, "Low": 2}
 BLOCK_STATUS = ("planned", "done", "partial", "clouded")

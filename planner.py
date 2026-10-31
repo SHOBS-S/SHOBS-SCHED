@@ -88,8 +88,23 @@ def _k(adu: float) -> str:
     return f"{adu / 1000:.0f}k"
 
 
+def no_dark_note(lowest, sun_alt) -> str:
+    """The night-wide ✖ line for a night with no planning darkness (the planner and the app share it; fix list 19)."""
+    def deg(x):
+        return f"{x:.1f}°".replace("-", "−")
+
+    why = (f"no dark time tonight: the Sun gets no lower than {deg(lowest)} (planning darkness {deg(sun_alt)})"
+           if lowest is not None else f"no dark time tonight (planning darkness {deg(sun_alt)})")
+    if sun_alt < sky.NAUTICAL and lowest is not None and lowest < sky.NAUTICAL:
+        why += "; nautical darkness (Sun below −12°) is possible if you allow it in Setup"
+    elif lowest is not None and lowest >= sky.NAUTICAL:
+        why += "; the sky never gets darker than nautical twilight tonight"
+    return "✖ " + why[0].upper() + why[1:]
+
+
 def _fmt_day(d: date) -> str:
-    return f"{d.day} {d.strftime('%b')}"
+    """The app's day style everywhere ("Wed 04 Nov"; fix list 16)."""
+    return d.strftime("%a %d %b")
 
 
 def _is_fixed(t: Target) -> bool:
@@ -485,18 +500,7 @@ class _Night:
         if self.weather:
             plan.weather = self.weather
         if not info["dark_ok"]:
-            lowest = info.get("darkest_sun_alt")
-
-            def deg(x):
-                return f"{x:.1f}°".replace("-", "−")
-
-            why = (f"no dark time tonight: the Sun gets no lower than {deg(lowest)} (planning darkness "
-                   f"{deg(site.sun_alt)})")
-            if site.sun_alt < sky.NAUTICAL and lowest is not None and lowest < sky.NAUTICAL:
-                why += "; nautical darkness (Sun below −12°) is possible if you allow it in Setup"
-            elif lowest is not None and lowest >= sky.NAUTICAL:
-                why += "; the sky never gets darker than nautical twilight tonight"
-            plan.notes.append("✖ " + why[0].upper() + why[1:])
+            plan.notes.append(no_dark_note(info.get("darkest_sun_alt"), site.sun_alt))
             for t in enabled:
                 self.didnt_fit(t, "no dark time tonight")
             self._keep_locked_without_sky("no dark time tonight")

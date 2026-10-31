@@ -88,7 +88,8 @@ class TestBusyBar(Base):
         self.pump()
         self.assertEqual(words[:2], ["Getting the forecast from Open-Meteo…", "Building 2 nights…"])
         self.assertTrue(app.schedule.nights)
-        self.assertEqual(page.ind.var.get(), "✔ Done", "the result shows beside the button")
+        self.assertEqual(page.ind.var.get(), "", "the result shows once, below (no ✔ Done beside the button)")
+        self.assertTrue(page.msg_var.get().startswith(("✔ Built", "⚠ Built")))
         self.assertFalse(app.busy_bar.jobs)
 
     def test_result_line_has_no_bar_of_its_own(self):

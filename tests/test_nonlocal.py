@@ -241,7 +241,7 @@ class Collisions(unittest.TestCase):
         self.assertEqual(miss["name"], "Often b")
         nd = date.fromisoformat(miss["next_chance"])
         self.assertEqual((nd - self.d).days, 3)
-        self.assertIn(f"next chance {nd.day} {nd.strftime('%b')}", miss["reason"])
+        self.assertIn(f"next chance {nd.strftime('%a %d %b')}", miss["reason"])
 
     def test_better_snr_wins_when_equal(self):
         deep = transit("Deep b", self.ra, 35.0, self.jd(22, 30), 2.0, 3.0, depth=0.03)
