@@ -8,7 +8,8 @@ Sections:
   3 planner: the five golden nights
   4 weather and export (recorded forecast; CSV; plan card)
   5 the window (all four pages, a build, the CSV) — needs a display
-  6 live services (NASA Exoplanet Archive, SIMBAD, VizieR, AAVSO VSX, Open-Meteo): reported, never a failure
+  6 live services (NASA Exoplanet Archive, SIMBAD and its IDIA mirror, VizieR and its IDIA mirror, AAVSO VSX,
+    Open-Meteo): reported, never a failure
 """
 from __future__ import annotations
 
@@ -201,6 +202,9 @@ def s6_live():
         ("SIMBAD", "https://simbad.cds.unistra.fr/simbad/sim-id?Ident=HD+219134&output.format=ASCII"),
         ("VizieR (VSX copy)", "https://tapvizier.cds.unistra.fr/TAPVizieR/tap/sync?REQUEST=doQuery&LANG=ADQL"
          "&FORMAT=csv&QUERY=SELECT+Name+FROM+%22B/vsx/vsx%22+WHERE+Name%3D%27BL+Cam%27"),
+        ("SIMBAD mirror (IDIA)", "https://simbad.idia.ac.za/simbad/sim-id?Ident=HD+219134&output.format=ASCII"),
+        ("VizieR mirror (IDIA)", "https://vizier.idia.ac.za/viz-bin/asu-tsv?-source=B/vsx/vsx&Name=BL+Cam"
+         "&-out.max=1"),
         ("AAVSO VSX", "https://www.aavso.org/vsx/index.php?view=api.object&ident=BL+Cam&format=json"),
         ("Open-Meteo", "https://api.open-meteo.com/v1/forecast?latitude=35&longitude=-80&hourly=temperature_2m"
          "&forecast_days=1"),

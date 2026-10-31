@@ -19,7 +19,7 @@ from models import Optics, Schedule, Site, Target
 
 APP_NAME = "SHOBS-SCHED"
 APP_TITLE = "Shiloh Hill Observatory – Photometry Scheduler (SHOBS-SCHED)"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 
 def home() -> str:

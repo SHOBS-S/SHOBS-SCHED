@@ -1030,10 +1030,14 @@ def _nea_star(name: str) -> dict | None:
     """A planet host's position, V and name from the NASA Exoplanet Archive ("V1298 Tau" or a planet "V1298 Tau d"
     → its host), shaped like resolve_simbad's answer; None when the Archive does not know it. FetchError when the
     Archive does not answer."""
-    host, rows = _host_rows_by_name(name)
-    if not rows and looks_like_planet(name):
-        rows = nea_query(f"select {NEA_COLUMNS} from pscomppars where pl_name = '{_adql_str(_clean(name))}'")
+    clean = _clean(name)
+    host, rows = _host_rows_by_name(clean)
+    stem = re.sub(r"[\s-]+[b-z]$", "", clean)          # "V1298 Tau d" → its host "V1298 Tau"
+    if not rows and (stem != clean or looks_like_planet(clean)):
+        rows = nea_query(f"select {NEA_COLUMNS} from pscomppars where pl_name = '{_adql_str(clean)}'")
         host = (rows[0].get("hostname") or "") if rows else ""
+        if not rows and stem != clean:
+            host, rows = _host_rows_by_name(stem)
     for r in rows:
         ra, dec = _f(r.get("ra")), _f(r.get("dec"))
         if ra is not None and dec is not None:
@@ -1211,8 +1215,8 @@ def tc_sigma_minutes(planet, when_jd: float) -> float | None:
 
 
 def _fmt_day(jd: float, site) -> str:
-    t = sky.to_local(jd, site.tz)
-    return f"{t.strftime('%a')} {t.day} {t.strftime('%b')}"
+    """The app's day style ("Wed 04 Nov"; fix list 16), on the site's clock."""
+    return sky.to_local(jd, site.tz).strftime("%a %d %b")
 
 
 def _night_label(d: date, site) -> str:
