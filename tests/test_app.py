@@ -654,8 +654,10 @@ class TestAppWithFakes(Base):
         self.assertEqual(page.n_var.get(), "2")
         self.assertEqual(app.options["nights"], 2)
         tab = page.tabs[0]
-        self.assertTrue(tab.tab_text().startswith("⚠ "), "warning mark first, no padding")
-        self.assertFalse(tab.tab_text().endswith(" "))
+        import models
+        serious = models.serious_night(app.schedule.nights[0])
+        self.assertEqual(tab.tab_text().startswith("⚠ "), serious, "⚠ only when serious (fix list 25)")
+        self.assertFalse(tab.tab_text().startswith(" ") or tab.tab_text().endswith(" "))
         app.update()
         tab.redraw()
         self.assertIsNotNone(tab.plot, "the night plot is drawn")

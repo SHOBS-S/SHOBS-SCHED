@@ -1256,24 +1256,31 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
                 first[k] = (ev["t1"], ev["t4"])           # the soonest good transit: the page lists by it
 
     n_ref = 2 * int(o["suggest_max"]) if refine else 0
-    total = len(cands) + n_ref
-    for i, p in enumerate(cands):
-        if progress:
+
+    def tell(i, n, stage):
+        """Progress per step, each counting up to its own n (fix list 9: one count over two passes ran backwards)."""
+        if not progress:
+            return
+        try:
+            progress(i, n, stage)
+        except TypeError:
             try:
-                progress(i, total)
+                progress(i, n)
             except Exception:
                 pass
+        except Exception:
+            pass
+
+    for i, p in enumerate(cands):
+        if i % 10 == 0 or i == len(cands) - 1:
+            tell(i + 1, len(cands), "transits of each planet")
         score_planet(p, best)
     if refine:
         keys = [k for k, _v in sorted(best.items(), key=lambda kv: -kv[1][0])[:n_ref]]
         short = [best.pop(k) for k in keys]
         mid = (jd_lo + jd_hi) / 2.0
         for j, entry in enumerate(short):
-            if progress:
-                try:
-                    progress(len(cands) + j, total)
-                except Exception:
-                    pass
+            tell(j + 1, len(short), "the best with their most precise ephemeris")
             p = entry[1]
             first.pop(_key_name(p["name"]), None)
             pl = precise_planet(p["name"], mid)
@@ -1922,8 +1929,19 @@ def next_events(target: Target, site, nights: list, from_jd: float) -> dict:
     n = len(nights)
     none = "none tonight" if n == 1 else f"none in the next {n} nights"
     if target.kind == "campaign":
-        days = max(1, (max(nights) - sky.night_date_of(from_jd, site.tz)).days + 1) if nights else 7
-        return {"text": next_event_text(target, site, from_jd, days=days)}
+        # from the first planned night's dusk, not from now (fix list 8: with Nights from Mon 02 Nov it said "next
+        # blackout Thu 29 Oct"), to the end of the last planned night
+        start = from_jd
+        if nights:
+            first = _night_windows(site, [min(nights)], from_jd)
+            if first:
+                start = max(from_jd, first[0][1])
+            else:
+                w = sky.night_window(min(nights), site)
+                if w and w[0] > from_jd:
+                    start = w[0]
+        days = max(1, (max(nights) - sky.night_date_of(start, site.tz)).days + 1) if nights else 7
+        return {"text": next_event_text(target, site, start, days=days)}
     wins = _night_windows(site, nights, from_jd)
     if not wins:
         return {"none": "no dark time" if nights else none}

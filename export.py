@@ -448,6 +448,32 @@ def _darkness_word(site: Site) -> str:
     return {-18.0: "astronomical", -12.0: "nautical", -6.0: "civil"}.get(a, f"Sun below {a:g}°")
 
 
+def moon_events_text(dusk, dawn, moonrise, moonset, tz) -> str:
+    """The Moon's night in the dark's order ("down at dusk, rises 23:10"; "up all night"), never leading with an
+    afternoon moonset (fix list 17). Without dusk/dawn: the events by time, as before. "" when nothing is known."""
+    ev = sorted([(j, w) for j, w in ((moonrise, "rises"), (moonset, "sets")) if _jd_ok(j)], key=lambda p: p[0])
+    if not ev:
+        return ""
+    if not (_jd_ok(dusk) and _jd_ok(dawn)):
+        return ", ".join(f"{w} {_hhmm(j, tz)}" for j, w in ev)
+    before = [e for e in ev if e[0] < dusk]
+    inside = [e for e in ev if dusk <= e[0] <= dawn]
+    up = None
+    if before:
+        up = before[-1][1] == "rises"
+    elif inside:
+        up = inside[0][1] == "sets"
+    elif ev:                                          # only events after dawn: the next one tells the state
+        up = ev[0][1] == "sets"
+    bits = []
+    if up is not None and not inside:
+        return "up all night" if up else "down all night"
+    if up is not None:
+        bits.append("up at dusk" if up else "down at dusk")
+    bits += [f"{w} {_hhmm(j, tz)}" for j, w in inside]
+    return ", ".join(bits)
+
+
 def _night_facts(n: NightPlan, site: Site, weather_by_date: dict | None, settings_dict: dict | None) -> dict:
     """Header lines of one night, as plain strings (escaped later for HTML)."""
     tz = site.tz
@@ -458,13 +484,9 @@ def _night_facts(n: NightPlan, site: Site, weather_by_date: dict | None, setting
     moon = "Moon —"
     if n.moon_illum is not None:
         moon = f"Moon {int(round(100 * float(n.moon_illum)))} %"
-        ev = []
-        if _jd_ok(n.moonrise):
-            ev.append((n.moonrise, f"rises {_hhmm(n.moonrise, tz)}"))
-        if _jd_ok(n.moonset):
-            ev.append((n.moonset, f"sets {_hhmm(n.moonset, tz)}"))
+        ev = moon_events_text(n.dusk, n.dawn, n.moonrise, n.moonset, tz)
         if ev:
-            moon += ", " + ", ".join(t for _j, t in sorted(ev))
+            moon += ", " + ev
     w = (weather_by_date or {}).get(n.date) or n.weather
     wline = ""
     if isinstance(w, dict):

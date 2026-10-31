@@ -304,7 +304,8 @@ class LockedAndWeather(unittest.TestCase):
         b = p.blocks_obj()[0]
         self.assertLessEqual(b.end, dew + 1e-6)
         self.assertTrue(any("Dew expected from 01:00" in c for c in b.cautions), b.cautions)
-        self.assertTrue(any("Cloud" in c for c in b.cautions), b.cautions)
+        self.assertFalse(any("Cloud" in c for c in b.cautions), "clouds are a plain note (fix list 25)")
+        self.assertTrue(any(n.startswith("Cloud") for n in b.notes), b.notes)
         self.assertTrue(any("Dew expected" in n for n in p.notes))
         # a fixed block crossing the dew onset only gets the caution
         p2 = planner.build_night(date(2026, 10, 22), self.site, self.optics, [gtarget(self.g, "K2-29 b")], {},

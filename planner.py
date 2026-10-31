@@ -45,7 +45,8 @@ import numpy as np
 
 import events
 import sky
-from models import PRIORITY_RANK, Block, NightPlan, Schedule, Target
+from models import (PRIORITY_RANK, Block, NightPlan, Schedule, Target, serious_caution,  # noqa: F401
+                    serious_night)
 from settings import DEFAULT_OPTIONS
 
 MIN = 1.0 / 1440.0
@@ -1290,7 +1291,8 @@ class _Night:
         if inside:
             cloudy = [h for h in inside if (h.get("cloud") or 0) >= CLOUDY_PCT]
             if len(cloudy) > len(inside) / 2.0:
-                cautions.append(f"⚠ Cloud ≥ {CLOUDY_PCT:.0f} % forecast for most of this block")
+                # a plain note, not a ⚠: clouds are what they are (John 27 Oct; fix list 25)
+                notes.append(f"Cloud ≥ {CLOUDY_PCT:.0f} % forecast for most of this block")
         b.notes = notes
         b.cautions = list(dict.fromkeys(cautions))
         return b

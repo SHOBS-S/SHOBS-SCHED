@@ -211,7 +211,7 @@ class TestPlanCard(unittest.TestCase):
             self.assertIn(t, page)
         self.assertEqual(page.count("<tr>"), 2 + 2 + 4)       # header row per night + blocks
         self.assertIn("Dark 20:11–06:14 (astronomical)", page)
-        self.assertIn("Moon 74 %, sets 02:47", page)
+        self.assertIn("Moon 74 %, up at dusk, sets 02:47", page)
         self.assertIn("Clear until 02:00, then 60–80 % cloud", page)
         self.assertIn("Dew from 04:05", page)
         self.assertIn("High 12 °C, low 12 °C, wind up to 10 km/h", page)

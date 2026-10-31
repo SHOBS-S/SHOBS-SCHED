@@ -47,7 +47,8 @@ import settings  # noqa: E402
 import sky  # noqa: E402
 import style  # noqa: E402
 from models import (PRIORITIES, STATUS_LABELS, Block, NightPlan, Optics, Planet,  # noqa: E402
-                    Schedule, Site, Target, TYPE_NAMES, block_type_code, type_name)
+                    Schedule, Site, Target, TYPE_NAMES, block_type_code, serious_night,
+                    type_name)
 from style import px  # noqa: E402
 
 STEPS = ("Setup", "Targets", "Schedule", "OBSPlan")
@@ -386,8 +387,10 @@ class Jobs:
         if indicator is not None:
             indicator.start()
 
-        def progress(i, n):
-            self.q.put(("words", (bar, tok), f"{label}… {i} of {n}"))
+        def progress(i, n, stage: str = ""):
+            # stage names the step when a job counts in several passes ("Finding suggested transits: the best with
+            # their most precise ephemeris… 12 of 50"; fix list 9)
+            self.q.put(("words", (bar, tok), f"{label}: {stage}… {i} of {n}" if stage else f"{label}… {i} of {n}"))
 
         def step(text):
             self.q.put(("words", (bar, tok), str(text).rstrip(".…") + "…"))
@@ -4547,8 +4550,7 @@ class NightTab:
 
     def tab_text(self) -> str:
         n = self.app.schedule.nights[self.idx]
-        warn = (any(b.get("cautions") for b in n.get("blocks", [])) or n.get("didnt_fit")
-                or any(str(x).startswith(("✖", "⚠")) for x in n.get("notes", []) or []))
+        warn = serious_night(n)
         past = " (past)" if str(n.get("date", "")) < self.app.tonight().isoformat() else ""
         return ("⚠ " if warn else "") + night_label(n.get("date", ""), self.app.site) + past
 
@@ -4592,9 +4594,14 @@ class NightTab:
             moon = f"Moon {illum * 100:.0f} %"
             mr = night.moonrise if night.moonrise is not None else (info or {}).get("moonrise")
             ms = night.moonset if night.moonset is not None else (info or {}).get("moonset")
-            ev = sorted([(j, w) for j, w in ((mr, "rises"), (ms, "sets")) if j], key=lambda p: p[0])
+            ex = mod("export")
+            if ex is not None and hasattr(ex, "moon_events_text"):
+                ev = ex.moon_events_text(night.dusk, night.dawn, mr, ms, tz)
+            else:
+                ev = ", ".join(f"{w} {sky.hhmm(j, tz)}" for j, w in sorted(
+                    [(j, w) for j, w in ((mr, "rises"), (ms, "sets")) if j], key=lambda p: p[0]))
             if ev:
-                moon += " (" + ", ".join(f"{w} {sky.hhmm(j, tz)}" for j, w in ev) + ")"
+                moon += f" ({ev})"
             bits.append(moon)
         wx = night.weather or {}
         if wx.get("summary"):
@@ -4655,6 +4662,11 @@ class NightTab:
                         if key in r and r[key] not in (None, ""):
                             mine[col] = str(r[key])
                             break
+                # the card's rows carry no (flip) / (est.) marks: put them back (fix list 15)
+                if b.flip_in_block and b.meridian and "(flip)" not in mine["meridian"]:
+                    mine["meridian"] += " (flip)"
+                if b.exposure_s and b.exposure_is_estimate and "(est.)" not in mine["exposure"]:
+                    mine["exposure"] += " (est.)"
             out.append((i, b, mine))
         return out
 
@@ -4784,8 +4796,10 @@ class NightTab:
         if not others:
             self._act("⚠ There is no other night in the schedule. Build more nights first.")
             return
-        pick = ask_choice(self.app, "Move to night", f"Move {b.name} to which night? It keeps its clock time "
-                                                     "(the planner checks it is still up).", [l for _k, l in others],
+        pick = ask_choice(self.app, "Move to night", f"Move {b.name} to which night? It keeps its place in the sky, "
+                                                     "so it starts about 4 minutes earlier on the clock for each "
+                                                     "night later (later for an earlier night); the planner checks "
+                                                     "it is still up.", [l for _k, l in others],
                           "Move")
         if not pick:
             return
@@ -4793,7 +4807,7 @@ class NightTab:
         self.move_block(i, k)
 
     def move_block(self, i: int, k: int) -> bool:
-        """Put block i on night k (same clock time, locked, set by you). The source night changes only after the
+        """Put block i on night k (same place in the sky: ~3.9 min earlier per night later; locked, set by you). The source night changes only after the
         destination night has been rebuilt with it."""
         if self.page.refuse_if_busy(self._act):
             return False

@@ -335,3 +335,23 @@ class Schedule:
     @classmethod
     def from_dict(cls, data):
         return _from_dict(cls, data)
+
+
+# Block cautions that are information, not a call to act: they never raise a night tab's ⚠ (fix list 25)
+INFO_CAUTIONS = ("⚠ Baseline trimmed", "⚠ Ephemeris uncertain")
+
+
+def serious_caution(text: str) -> bool:
+    """A block caution that needs action (flip in the event, dew cutting the block, counterweight up, below limits,
+    overlap...): it raises the night tab's ⚠. Plain notes and INFO_CAUTIONS do not."""
+    text = str(text or "").strip()
+    return text.startswith(("⚠", "✖")) and not text.startswith(INFO_CAUTIONS)
+
+
+def serious_night(night: dict) -> bool:
+    """Does this night's tab carry ⚠? Only a serious caution on a still-planned block, or a night-wide ✖ (no dark
+    time). "Didn't fit" suggestions, clouds and night-wide ⚠ notes never do (John 27 Oct 13:23)."""
+    for b in night.get("blocks", []) or []:
+        if b.get("status", "planned") == "planned" and any(serious_caution(c) for c in b.get("cautions") or []):
+            return True
+    return any(str(x).strip().startswith("✖") for x in night.get("notes", []) or [])
