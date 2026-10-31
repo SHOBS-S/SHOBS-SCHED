@@ -32,7 +32,10 @@ worse mean airmass; the cheapest wins. The ideal start on a GEM is `flip_lead_mi
 happens at the start while you are there, then the whole run is on one pier side with the best part of the night
 for that target (this is also how John's hand plans place blocks). On an alt-az mount the block is centred on the
 meridian. A target whose meridian is before dusk thus starts as early as it can, one whose meridian is after dawn
-runs as late as it can.
+runs as late as it can. Second GEM ideal (1.2.0, John 29 Oct): when a full-length block fits in the dark wholly
+BEFORE the meridian (ending inside `site.past_meridian_min`), that is the ideal instead: no flip, no settle, no
+dropped frames. A placement with the flip in the MIDDLE of the run costs MIDFLIP_COST_MIN extra (a pier-side step
+in a campaign series); settle time only matters for a flip at the start.
 
 Times: JD (UTC) inside; the site's zone (site.tz) for every clock time in a note, never the computer's."""
 from __future__ import annotations
@@ -57,6 +60,8 @@ FLIP_BEFORE_MIN = 5.0          # ... nor this close before it (no time to settle
 SEARCH_NIGHTS = 60             # how far ahead "next chance" looks
 AIRMASS_WEIGHT = 300.0         # flexible placement: minutes of distance from the ideal start per unit mean airmass
 LOST_MIN_WEIGHT = 1.5          # flexible placement: minutes of distance from the ideal start per usable minute lost
+MIDFLIP_COST_MIN = 240.0       # flexible placement: a meridian flip in the MIDDLE of the run (a pier-side step in a
+                               # campaign series) costs like starting 4 h from the ideal (fix list 24, John 29 Oct)
 NUDGE_MAX_MIN = 20.0           # an earlier flexible block may end up to this much early so the next one can start
                                # before its meridian (instead of an hour after it)
 EPS = 0.2 * MIN
@@ -1028,6 +1033,9 @@ class _Night:
         p, cost = self._best_flex(t, mask, with_cost=True)
         if p is None or not self.gem:
             return p
+        margin = float(self.site.past_meridian_min or 0.0) * MIN
+        if not any(p.start < m < p.end and p.end - m > margin for m in self.meridians(t)):
+            return p                                   # no flip in it (the whole block before the meridian)
         ideal = self._ideal_start(t)
         if p.start <= ideal + EPS:
             return p
@@ -1074,6 +1082,7 @@ class _Night:
                 ts, te = g[s], g[s] + L * MIN
                 usable = float(L)
                 bad_start = False
+                midflip = False
                 if self.gem:
                     for m in mers:
                         dm = (ts - m) * 1440.0
@@ -1081,16 +1090,28 @@ class _Night:
                             bad_start = True
                         if ts < m < te and (te - m) * 1440.0 > margin:
                             usable -= settle
+                            if (m - ts) * 1440.0 > lead + 10.0:
+                                midflip = True          # not the flip-at-start: a flip in the middle of the run
                 meanx = (xs[s + L] - xs[s]) / L
-                row = (s, L, usable, meanx)
+                row = (s, L, usable, meanx, midflip)
                 (fallback if bad_start else cands).append(row)
         pool = cands or fallback
         if not pool:
             return (None, None) if with_cost else None
+        if self.gem:
+            # a second ideal (fix list 24, John 29 Oct): the WHOLE block before the meridian, ending inside the
+            # tracking margin (no flip, no settle, no dropped frames). It wins whenever a full-length block fits in
+            # the dark before the meridian; otherwise the flip goes at the start (flip_lead before the meridian).
+            before = m_ideal + margin * MIN - want * MIN
+            whole = [r for r in pool if r[1] >= want and g[r[0]] + r[1] * MIN <= m_ideal + margin * MIN + EPS
+                     and not any(g[r[0]] < m < g[r[0]] + r[1] * MIN and (g[r[0]] + r[1] * MIN - m) * 1440.0 > margin
+                                 for m in mers)]
+            if whole:
+                ideal = before
 
         def cost(r):     # absolute, so costs of different free layouts compare (the nudge)
             return (abs(g[r[0]] - ideal) * 1440.0 + LOST_MIN_WEIGHT * (want - r[2]) + AIRMASS_WEIGHT * r[3]
-                    + (1000.0 if not cands else 0.0))
+                    + (MIDFLIP_COST_MIN if r[4] else 0.0) + (1000.0 if not cands else 0.0))
 
         best = min(pool, key=lambda r: (cost(r), r[0]))
         s, L = best[0], best[1]
@@ -1218,6 +1239,9 @@ class _Night:
                                                  f"{max(0.0, (b.end - b.t4) * 1440):.0f} min after egress")
                         else:
                             notes.append(f"Meridian flip at ~{self.hh(mm)}; drop the frames during the flip")
+                            if p.kind == "flex":
+                                cautions.append(f"⚠ Meridian flip in the middle of the run (~{self.hh(mm)}): a "
+                                                "pier-side step in the series")
                         if b.t1 is not None and b.t1 < mm < b.t4:
                             flip_in_transit = True
                             cautions.append(f"⚠ Meridian flip during the transit ({self.hh(mm)})")

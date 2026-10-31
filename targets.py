@@ -71,6 +71,8 @@ NEA_ALIAS = "https://exoplanetarchive.ipac.caltech.edu/cgi-bin/Lookup/nph-aliasl
 VSX_API = "https://www.aavso.org/vsx/index.php?"
 VIZIER_TAP = "https://tapvizier.cds.unistra.fr/TAPVizieR/tap/sync?"
 SIMBAD_SCRIPT = "https://simbad.cds.unistra.fr/simbad/sim-script?"
+# SIMBAD's mirror at IDIA (Cape Town; answers sim-script with the same format; up when CDS was down 29–30 Oct 2026)
+SIMBAD_MIRRORS = (SIMBAD_SCRIPT, "https://simbad.idia.ac.za/simbad/sim-script?")
 
 SOURCE_WORDS = {"NEA": "the NASA Exoplanet Archive", "VSX": "AAVSO VSX", "VizieR": "VizieR",
                 "SIMBAD": "SIMBAD", "NEA catalog": "the NASA Exoplanet Archive"}
@@ -788,7 +790,9 @@ def vsx_name_variants(name: str) -> list[str]:
 
 # VizieR's plain (ASU) interface runs on other servers than its TAP service: when TAP is down (HTTP 503 "No server
 # is available", seen 22 Oct 2026 while ASU answered) the same B/vsx rows come from ASU at CDS, then the CfA mirror.
-VIZIER_ASU = ("https://vizier.cds.unistra.fr/viz-bin/asu-tsv?", "https://vizier.cfa.harvard.edu/viz-bin/asu-tsv?")
+# The IDIA (Cape Town) mirror added 31 Oct 2026, as SHOBS-FLUX did when CDS and the CfA were both down.
+VIZIER_ASU = ("https://vizier.cds.unistra.fr/viz-bin/asu-tsv?", "https://vizier.cfa.harvard.edu/viz-bin/asu-tsv?",
+              "https://vizier.idia.ac.za/viz-bin/asu-tsv?")
 
 
 def parse_asu_tsv(text: str) -> list[dict]:
@@ -811,7 +815,7 @@ def parse_asu_tsv(text: str) -> list[dict]:
 
 
 def vizier_asu(params: dict) -> list[dict]:
-    """B/vsx/vsx rows from VizieR ASU (CDS, then the CfA mirror). FetchError only when both fail."""
+    """B/vsx/vsx rows from VizieR ASU (CDS, then the CfA and IDIA mirrors). FetchError only when all fail."""
     q = {"-source": "B/vsx/vsx", "-out.all": "", "-oc.form": "d", "-out.max": "20"}
     q.update(params)
     last = None
@@ -955,7 +959,11 @@ def parse_simbad_script(text: str) -> dict | None:
     (it does not know the name). Anything else unreadable (a web page, a throttling notice, a cut-off reply) is a
     FetchError, so a cached copy or a plain "SIMBAD did not answer" follows, never "not found"."""
     if "::error::" in text:
-        return None
+        if _simbad_unknown_name(text):
+            return None
+        # an error on SIMBAD's side (e.g. "GluTools … HTTP 403" for every name, 26 Oct 2026) is not "unknown"
+        # (fix list 7): a service failure, so the mirror, a cached copy or "SIMBAD did not answer" follows
+        raise FetchError("SIMBAD reported a problem on its side")
     for line in text.splitlines():
         parts = line.split("|")
         if len(parts) < 3:
@@ -972,9 +980,36 @@ def parse_simbad_script(text: str) -> dict | None:
     raise FetchError("SIMBAD sent a reply that could not be read")
 
 
+_SIMBAD_UNKNOWN = ("not found", "incorrect format", "no known catalog", "unknown")
+_SIMBAD_TROUBLE = ("glutools", "http ", "exception", "timeout", "time out", "unavailable", "internal error")
+
+
+def _simbad_unknown_name(text: str) -> bool:
+    """Does SIMBAD's ::error:: reply say it does not know the name ("Identifier not found in the database", "this
+    identifier has an incorrect format for catalog")? False for trouble on its side (GluTools, HTTP 403...)."""
+    low = text.lower()
+    if any(w in low for w in _SIMBAD_TROUBLE):
+        return False
+    return any(w in low for w in _SIMBAD_UNKNOWN)
+
+
 def _fetch_simbad(name: str):
+    """SIMBAD at CDS, then its IDIA mirror when CDS does not answer (fix list 22). A mirror's "unknown name" is an
+    answer like CDS's own."""
     script = f"output console=off script=off\n{_SIMBAD_FMT}\nquery id {_clean(name)}\n"
-    return parse_simbad_script(_get_text(SIMBAD_SCRIPT + urllib.parse.urlencode({"script": script})))
+    query = urllib.parse.urlencode({"script": script})
+    reasons = []
+    for base in SIMBAD_MIRRORS:
+        try:
+            return parse_simbad_script(_get_text(base + query))
+        except FetchError as exc:
+            reasons.append(exc)
+            if base != SIMBAD_MIRRORS[-1]:
+                settings.log(f"SIMBAD did not answer at {urllib.parse.urlparse(base).netloc} ({exc.reason}); "
+                             "trying the next mirror")
+    first = reasons[0]
+    raise FetchError(first.reason if len(reasons) == 1 else f"{first.reason}; its mirror: {reasons[-1].reason}",
+                     first.status)
 
 
 def resolve_simbad(name: str, refresh: bool = False) -> dict:
@@ -989,6 +1024,46 @@ def resolve_simbad(name: str, refresh: bool = False) -> dict:
     out = dict(data)
     out["note"] = note
     return out
+
+
+def _nea_star(name: str) -> dict | None:
+    """A planet host's position, V and name from the NASA Exoplanet Archive ("V1298 Tau" or a planet "V1298 Tau d"
+    → its host), shaped like resolve_simbad's answer; None when the Archive does not know it. FetchError when the
+    Archive does not answer."""
+    host, rows = _host_rows_by_name(name)
+    if not rows and looks_like_planet(name):
+        rows = nea_query(f"select {NEA_COLUMNS} from pscomppars where pl_name = '{_adql_str(_clean(name))}'")
+        host = (rows[0].get("hostname") or "") if rows else ""
+    for r in rows:
+        ra, dec = _f(r.get("ra")), _f(r.get("dec"))
+        if ra is not None and dec is not None:
+            return {"main_id": host or r.get("hostname") or _clean(name), "ra": ra, "dec": dec,
+                    "vmag": _f(r.get("sy_vmag")), "otype": "Star (planet host)", "otype_short": "*",
+                    "via": "NEA"}
+    return None
+
+
+def resolve_star(name: str) -> dict:
+    """A star's position: SIMBAD (CDS, then its mirror); when SIMBAD does not answer (or does not know the name) a
+    planet host's position from the NASA Exoplanet Archive instead (fix list 22: with SIMBAD down an add failed
+    outright). The answer's "note" says when the Archive gave it. NotFound / LookupError_ as resolve_simbad."""
+    first = None
+    try:
+        return resolve_simbad(name)
+    except NotFound as exc:
+        first = exc
+    except LookupError_ as exc:
+        first = exc
+    try:
+        s = _nea_star(name)
+    except FetchError as exc:
+        s = None
+        settings.log(f"the Archive did not answer for {name}'s host ({exc.reason})")
+    if s:
+        why = "SIMBAD did not answer" if not isinstance(first, NotFound) else "SIMBAD does not know the name"
+        s["note"] = f"position from the NASA Exoplanet Archive ({why})"
+        return s
+    raise first
 
 
 # ---- add a target --------------------------------------------------------------------------------------------------
@@ -1036,7 +1111,7 @@ def add_target(name: str, when_jd: float | None = None) -> Target:
     except LookupError_ as exc:
         problems.append(exc.message)
     try:
-        s = resolve_simbad(clean)
+        s = resolve_star(clean)
     except NotFound:
         if problems:
             raise LookupError_(" ".join(problems)) from None

@@ -2646,7 +2646,8 @@ class TargetsPage:
             return
 
         def work():
-            p = pos if pos is not None else tg.resolve_simbad(name)
+            p = pos if pos is not None else (tg.resolve_star(name) if hasattr(tg, "resolve_star")
+                                             else tg.resolve_simbad(name))
             if not isinstance(p, dict):
                 return None
             info, problem = lookup_star_planets(tg, p.get("main_id") or name, p.get("ra"), p.get("dec"),

@@ -195,11 +195,19 @@ class GoldenTest(unittest.TestCase):
         self.assertTrue(any("No HD 219134" in x and "planet c" in x for x in b.notes), b.notes)
 
     def test_flip_notes_wed_thu(self):
+        # 1.2.0 (fix list 24, John 29 Oct): a flexible block that fits wholly before its meridian runs there (no
+        # flip, no settle, no dropped frames) and ends inside the tracking margin; never a mid-run flip
+        margin = float(self.site.past_meridian_min or 0.0)
         for iso in ("2026-10-21", "2026-10-22"):
             b = next(b for b in self.plans[iso].blocks_obj() if b.name == "HD 219134")
-            self.assertTrue(b.flip_in_block, iso)
+            self.assertFalse(b.flip_in_block, iso)
             self.assertLess(b.start, b.meridian)
-            self.assertTrue(any("flip" in x.lower() for x in b.notes), (iso, b.notes))
+            self.assertLessEqual((b.end - b.meridian) * 1440.0, margin + 0.5, iso)
+            self.assertTrue(any("inside your tracking margin" in x for x in b.notes), (iso, b.notes))
+        for iso, p in self.plans.items():
+            for b in p.blocks_obj():
+                if not b.fixed and b.flip_in_block:
+                    self.assertTrue(any("let it flip" in x for x in b.notes), (iso, b.name, b.notes))
 
     def test_k2_29_tracking_margin(self):
         b = next(b for b in self.plans["2026-10-22"].blocks_obj() if b.name == "K2-29 b")

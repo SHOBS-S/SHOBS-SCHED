@@ -75,12 +75,23 @@ class SouthernSite(unittest.TestCase):
         self.assertTrue(az < 2 or az > 358, az)             # meridian to the north
         alt_m = float(sky.target_alt(ra, -10.0, self.site, b.meridian))
         self.assertAlmostEqual(alt_m, sky.culmination_alt(-10.0, -31.27), delta=0.6)
-        # GEM flip rule: start flip_lead before the meridian and let it flip
-        self.assertAlmostEqual((b.meridian - b.start) * 1440, 12, delta=1.5)
-        self.assertTrue(b.flip_in_block)
-        self.assertTrue(any("Start before the meridian and let it flip" in n for n in b.notes), b.notes)
-        self.assertRegex(" ".join(b.notes), r"~\d\d:\d\d")
+        # GEM (1.2.0): the whole block fits before the meridian, so it runs there and needs no flip
+        margin = float(self.site.past_meridian_min or 0.0)
+        self.assertFalse(b.flip_in_block)
+        self.assertLessEqual((b.end - b.meridian) * 1440, margin + 0.5)
+        self.assertRegex(" ".join(b.notes), r"stop by \d\d:\d\d")
         self.assertIn(sky.hhmm(b.meridian, self.site.tz), ("23:29", "23:30", "23:31"))   # precession ~1 min
+
+    def test_flip_at_start_when_it_cannot_end_before(self):
+        # meridian just after dusk: no full block fits before it, so the flip goes at the start (flip_lead)
+        info = sky.night_info(self.d, self.site)
+        mer_wanted = info["dusk"] + 30.0 / 1440.0
+        ra = ra_on_meridian(self.site, mer_wanted)
+        t = campaign("South field 2", ra, -10.0)
+        b = planner.build_night(self.d, self.site, OPTICS, [t], {}).blocks_obj()[0]
+        self.assertTrue(b.flip_in_block)
+        self.assertAlmostEqual((b.meridian - b.start) * 1440, 12, delta=1.5)
+        self.assertTrue(any("Start before the meridian and let it flip" in n for n in b.notes), b.notes)
 
 
 class ZoneNotTheComputers(unittest.TestCase):

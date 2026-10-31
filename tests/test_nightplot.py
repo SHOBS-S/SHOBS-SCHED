@@ -222,12 +222,12 @@ class TestPlot(unittest.TestCase):
         flips = self.marks(p, "v")
         inside = {b.target_id for _i, b in p.blocks
                   if b.start <= sky.target_meridian(*p._coords(b), p.site, 0.5 * (b.start + b.end)) <= b.end}
-        self.assertEqual({p.by_id[t].name for t in inside}, {"HD 219134", "K2-29 b"})
-        # K2-29 b ends 4 min past its meridian, inside the 5-min tracking margin: no flip ("stop by 03:38"), only
-        # a neutral meridian tick
-        self.assertEqual({p.by_id[tid].name for _l, tid in flips}, {"HD 219134"})
+        self.assertEqual({p.by_id[t].name for t in inside}, {"HD 219134", "NGC 7789", "K2-29 b"})
+        # K2-29 b and (1.2.0, fix list 24) HD 219134 end inside the 5-min tracking margin: no flip ("stop by …"),
+        # only a neutral meridian tick; NGC 7789 starts before its meridian and flips there
+        self.assertEqual({p.by_id[tid].name for _l, tid in flips}, {"NGC 7789"})
         ticks = self.marks(p, "|")
-        self.assertEqual({p.by_id[tid].name for _l, tid in ticks}, {"K2-29 b"})
+        self.assertEqual({p.by_id[tid].name for _l, tid in ticks}, {"HD 219134", "K2-29 b"})
         k2 = next(b for _i, b in p.blocks if b.name == "K2-29 b")
         texts = [t.get_text() for t in p.groups[k2.target_id] if hasattr(t, "get_text")]
         self.assertTrue(any(t.startswith("meridian ") for t in texts), texts)
@@ -248,7 +248,7 @@ class TestPlot(unittest.TestCase):
         night = NightPlan.from_dict(p.night.to_dict())
         bl = night.blocks_obj()
         hd = next(b for b in bl if b.name == "HD 219134")
-        hd.start, hd.end, hd.meridian = hd.start + 1.5 / 24, hd.end + 1.5 / 24, None
+        hd.start, hd.end, hd.meridian = hd.start + 3.0 / 24, hd.end + 3.0 / 24, None
         night.blocks = [b.to_dict() for b in bl if b.name in ("HD 219134",)]
         p2 = self.plot(night=night)
         self.assertFalse(self.marks(p2, "v") + self.marks(p2, "|"))

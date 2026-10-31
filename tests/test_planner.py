@@ -491,9 +491,10 @@ class ReviewFixes(unittest.TestCase):
         self.assertIn("Refocus after this block", b.notes)
 
     def _crowded(self, b_kind):
-        """Two targets that both want the 22:00–01:00 window (Wed 21 Oct); A (alphabetically first) fills it."""
+        """Two targets that both want the 22:00–01:00 window (Wed 21 Oct); A (alphabetically first) fills it. Their
+        meridian (01:30) is after the window, so no block flips mid-run (1.2.0 makes a mid-run flip costly)."""
         win = [{"kind": "window", "value": "22:00-01:00"}]
-        ra = ra_on_meridian(self.site, self.jd(23, 30))
+        ra = ra_on_meridian(self.site, self.jd(1, 30))
         a = field_("A big", ra, 45.0, block=180, rules=win)
         if b_kind == "variable":
             b = Target(id="B small", name="B small", kind="variable", mode="V", ra=ra + 5, dec=45.0, vmag=11,
