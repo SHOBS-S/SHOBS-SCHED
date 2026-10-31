@@ -22,7 +22,9 @@ and the program is built around it:
   photometry. SHOBS-SCHED estimates an exposure for each target that keeps the peak under your linear limit, and
   warns you when one of your own exposures may saturate.
 - **Meridian flips matter.** A flip in the middle of a transit costs frames and changes the star's place on the
-  sensor. The planner times flips so that, where it can, the flip happens before the run starts.
+  sensor. On a German equatorial mount the planner times flips so that, where it can, the flip happens before the
+  run starts. A flexible block (a campaign or an any-time variable) that fits wholly before its meridian runs
+  there instead, with no flip at all, as long as that does not push another target out.
 - **Campaigns have goals.** A star you follow for weeks gets a goal such as "three nights a week", and the planner
   pushes it up when it falls behind.
 
@@ -34,15 +36,15 @@ What it does **not** do:
   The ASIAIR and NINA files carry the targets' positions only; times, exposures and notes stay on the plan card.
 - **It does not reduce your frames.** That is SHOBS-P's job (below).
 - **It needs the internet for lookups and the weather.** Target lookups (NASA Exoplanet Archive, AAVSO VSX, VizieR,
-  SIMBAD) and the forecast (Open-Meteo) need a connection. Saved copies are used when a service does not answer, and
-  the plan itself is worked out on your computer.
+  SIMBAD) and the forecast (Open-Meteo) need a connection. When SIMBAD or VizieR does not answer, a mirror of it is
+  asked; when nothing answers, saved copies are used. The plan itself is worked out on your computer.
 
 ## The window
 
 SHOBS-SCHED has one main window. The blue sidebar on the left reads **Shiloh Hill / Observatory / Photometry /
 Scheduler**, with **(SHOBS-SCHED)** under it and the line *Plans each night's photometry: transits, variable stars
 and campaigns*. Below that are the four steps, and at the bottom **Credits and sources** and the version number
-(**Version 1.1.0**).
+(**Version 1.2.0**).
 
 ![The SHOBS-SCHED window: sidebar with the four steps, the white page area with its title, and the status strip along the bottom](img/01-window-parts.png)
 
@@ -62,8 +64,8 @@ to 4.
 
 | Step | Page | What you do there |
 |---|---|---|
-| 1 | **Setup** | Enter your site, time zone, telescope, camera, mount, limits, horizon and weather source, once. |
-| 2 | **Targets** | Keep your list of what you want to measure: Campaigns, Transits and Variables. Tick **Plan** for the ones to schedule. Find suggested transits and variables for the coming nights. |
+| 1 | **Setup** | Enter your site, time zone, telescope, camera, mount, limits, horizon and weather source, once, and the filters the Find buttons use and the darks you already have. |
+| 2 | **Targets** | Keep your list of what you want to measure: Campaigns, Transits and Variables. Tick **Plan** for the ones to schedule. Find suggested transits and variables for the coming nights; ticking a suggestion keeps it. |
 | 3 | **Schedule** | Build the nights. Each night gets a tab with a night plot, the nightly table, flats and darks, what didn't fit and why, and free time. Mark what happened afterwards. |
 | 4 | **OBSPlan** | The plan card on screen. Print it, or send one night at a time to ASIAIR or NINA. |
 

@@ -8,9 +8,11 @@ used.
 
 1. Click **Credits and sources** near the bottom of the sidebar. It is not a step: **Back** returns you to the page
    you came from.
-2. At the top: **SHOBS-SCHED 1.1.0 © 2026 Shiloh Hill Observatory**, and the license line.
+2. At the top: **SHOBS-SCHED 1.2.0 © 2026 Shiloh Hill Observatory**, and the license line.
 3. Below that, the full list, in four parts:
    - **CATALOGS AND SERVICES**: the NASA Exoplanet Archive, AAVSO VSX, VizieR (CDS), SIMBAD (CDS) and Open-Meteo.
+     The VizieR and SIMBAD entries also name the mirrors SHOBS-SCHED asks when CDS does not answer: VizieR's at the
+     CfA and at IDIA (Cape Town), and SIMBAD's at IDIA.
    - **DESIGN AND CODE**: TAPIR (the night plot's design) and SHOBS-P (where SHOBS-SCHED's sky arithmetic started).
    - **LIBRARIES**: Python and Tk, NumPy, Matplotlib, and tzdata (the IANA Time Zone Database).
    - **METHODS**: the Sun and Moon positions (the Astronomical Almanac's low-precision formulas), the moonlit sky
@@ -43,13 +45,16 @@ SHOBS-SCHED suggested, or an ephemeris it chose), include:
 - **AAVSO VSX** (and **VizieR**) for variable-star elements and suggestions;
 - **SIMBAD** for positions of stars added by name.
 
+A mirror serves the same CDS data, so a lookup answered by the CfA or IDIA mirror is credited to VizieR or SIMBAD as
+usual.
+
 When in doubt, include the saved credits text in an appendix or data note.
 
 ## How to cite SHOBS-SCHED
 
 SHOBS-SCHED does not have a DOI or an ASCL entry yet. Once it has one, the Credits and sources page shows a **How to
 cite SHOBS-SCHED** section with the suggested citation and a **Copy** button. Until then, name the program and its
-version, for example: *SHOBS-SCHED (Shiloh Hill Observatory Photometry Scheduler), version 1.1.0, Shiloh Hill
+version, for example: *SHOBS-SCHED (Shiloh Hill Observatory Photometry Scheduler), version 1.2.0, Shiloh Hill
 Observatory.* The version is at the bottom of the sidebar.
 
 SHOBS-P, the sister program, is archived on Zenodo: doi:10.5281/zenodo.23417064.

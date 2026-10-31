@@ -63,8 +63,12 @@ site's clock. They are worked out in the background after the page opens; until 
   minimum) or **max 22:05**. A star with no timed event shows **any time** on the first night it is up long enough.
   A suggested star whose published elements are too old to give a good time shows **any time ⚠ time uncertain ±45
   min** (or **⚠ no usable timing**); a short pulsator suggested for a whole cycle shows **any time (a whole cycle)**.
-- **Campaigns**: **every night**, or, for a campaign with a no-transit window, *every night; next blackout Thu 29 Oct
-  21:43–23:22 (HD 219134 c transits)*.
+- **Campaigns**: **every night**, or, for a campaign with a no-transit window, *every night; next blackout Wed 04 Nov
+  21:43–23:22 (HD 219134 c transits)*. The blackout is looked for from dusk on the first planned night to the end of
+  the last one, so with **Nights** from Mon 02 Nov it never names an earlier day.
+
+Days are written the same way everywhere in SHOBS-SCHED, on the Targets page and in the plan: weekday, day, month,
+as in **Wed 04 Nov**.
 
 The rows are sorted by these events: Transits soonest transit first; Variables night by night, with each night's
 timed minima and maxima first, then its any-time stars; Campaigns by name. Rows with no event in the planned nights
@@ -75,7 +79,7 @@ come last. A row stays in its place when you tick or untick it.
 **Source** says where the target came from: **✔ NEA** or **✔ NEA (most precise)** (the NASA Exoplanet Archive; the
 second when a more precise published ephemeris than the Archive's default was chosen), **✔ VSX** or **✔ VizieR VSX**
 (AAVSO VSX, directly or through VizieR's copy), **✔ SIMBAD**, or **typed**. A suggestion shows *suggested · NEA* or
-*suggested · VizieR VSX*, and keeps showing it after you tick it (until you press **Keep**). A transit whose predicted mid-time is uncertain by more than 10 minutes adds a **⚠ Tc ±**
+*suggested · VizieR VSX* until you tick it or press **Keep**; then it shows **✔ NEA** or **✔ VizieR VSX**. A transit whose predicted mid-time is uncertain by more than 10 minutes adds a **⚠ Tc ±**
 note (see "Ephemeris precision" below).
 
 ### Details of the selected target
@@ -88,7 +92,8 @@ length and notes. A suggestion also shows its score.
 ## The Nights row
 
 Under **Add a target** is the **Nights** row: **from** (tonight, or any of the next 13 nights) **for** (1 to 7
-nights). These are the nights that:
+nights; 1, tonight only, at first). The hint beside it says these nights are *searched by Find, shown in the lists
+below, and built on the Schedule page*. These are the nights that:
 
 - the event columns look at,
 - **Find suggested transits…** and **Find suggested variables…** search,
@@ -100,10 +105,11 @@ remembered between sessions; the first night goes back to tonight each time you 
 ## Add a target by name
 
 1. Type a name in **Add a target**: a planet (`WASP-12 b`, `TrES-3b`, `toi 2046 b`), a variable star (`DY Peg`,
-   `V0404 Lyr`) or any star SIMBAD knows.
+   `V0404 Lyr`) or any star SIMBAD (or the NASA Exoplanet Archive) knows.
 2. Press **Enter** or click **Add**.
 3. The busy bar at the lower left says *Looking up DY Peg…*. When it is done, a result line beside **Add** says
-   *✔ Added DY Peg (VSX).*
+   *✔ Added DY Peg (VSX).* For a planet it names the source and the ephemeris in one bracket, for example
+   *✔ Added WASP-12 b (NEA, most precise).*
 
 The new target is ticked to plan, selected, and its details are shown.
 
@@ -116,7 +122,11 @@ How the name is looked up:
    get its type, period, epoch and range. Eclipsing binaries are planned at their minima (each minimum covered ±60
    minutes, or more for a long eclipse when VSX gives the eclipse length); pulsating and long-period stars are planned
    at any time of night.
-3. Otherwise, the name is looked up at **SIMBAD**, and a window asks what the star is for you (below).
+3. Otherwise, the star's position is looked up at **SIMBAD**, and a window asks what the star is for you (below).
+   SHOBS-SCHED asks SIMBAD at the CDS (Strasbourg) first, then its mirror at IDIA (Cape Town) when the CDS does not
+   answer. When SIMBAD does not answer at all, or does not know the name, a planet host's position is taken from
+   the **NASA Exoplanet Archive** instead. This also works with a planet's name: `V1298 Tau d` gives its star,
+   V1298 Tau.
 
 Some results need a word from you:
 
@@ -131,10 +141,20 @@ Some results need a word from you:
   made from the star gets "no data while … transits" for each of them straight away.
 - **A planet that does not transit** is never added as an empty transit target. SHOBS-SCHED offers its star instead.
 - **A name already in the list** gives *⚠ DY Peg is already in the list.*
+- **A name nobody knows.** When SIMBAD answers that it does not know the name (and no other service knows it
+  either), the result line says *✖ No planet, variable star or SIMBAD object is called Foo 123. Check the
+  spelling.* SHOBS-SCHED says this only when SIMBAD's reply really says the name is unknown. Any other error from
+  SIMBAD counts as SIMBAD not answering (next point), so a problem on SIMBAD's side is never reported as a wrong
+  name.
 - **A service that does not answer.** If the name was looked up before, the saved copy is used, and the result
-  line says so with a ⚠: *⚠ Added DY Peg (VSX). AAVSO VSX did not answer (timed out); using the copy from 3 days ago.*
-  If not, it says so in plain words, for example *✖ The NASA Exoplanet Archive did not answer (HTTP 503) and there
-  is no saved copy for WASP-12 b. Try again later.*
+  line says so with a ⚠: *⚠ Added DY Peg (VSX). AAVSO VSX did not answer (no answer within 30 s); using the copy from 3 days ago.*
+  If not, it says so in plain words, for example *✖ The NASA Exoplanet Archive did not answer (service unavailable,
+  HTTP 503) and there is no saved copy for WASP-12 b. Try again later.* SIMBAD is the same: when neither SIMBAD
+  (at the CDS or its mirror) nor the Archive can give the star's position, the line says, for example, *✖ SIMBAD did
+  not answer (SIMBAD reported a problem on its side; its mirror: no answer within 30 s) and there is no saved copy
+  for HD 12345. Try again later.* When the Archive or VSX did not answer but SIMBAD knows the
+  star, nothing is added: the line names the service that did not answer and ends with what SIMBAD calls the star
+  (*(SIMBAD knows … as ….)*), since the name may still be a planet or a variable. Try again later.
 
 > **Tip:** A campaign that orbits a planet host, for example a star you monitor for flares, should have no data while
 > its planets transit, or your light curve will have dips that are not the star's. SHOBS-SCHED offers these
@@ -144,17 +164,44 @@ Some results need a word from you:
 
 - **Plan.** Click the ☑ / ☐ in a row's **Plan** column to tick or untick it. Only ticked targets are scheduled. The
   line under the boxes says *✔ DY Peg will be planned. Build the schedule to apply.* Unticked rows are shown in gray.
+  Ticking a **suggestion** also keeps it, as **Keep** does: the line adds *Kept: a new Find no longer replaces it
+  (Remove takes it off the list).* It stays in the list even if you untick it later.
 - **Priority.** Click a row's **Priority** cell and choose **High**, **Normal** or **Low**. Priority decides who
   wins when two targets want the same time: flexible targets are placed High first, then Normal, then Low; and
   between two fixed-time targets that collide, the higher priority wins.
-- **Keep** (the button **Keep (a suggestion stays when you Find again)**). Ticking a suggestion does not make it your
-  own: it stays a suggestion (*suggested · …* in Source). A search replaces every suggestion of its kind that is
-  unticked at that moment, so a ticked suggestion survives a search, but once you untick it the next search removes
-  it. Select one or more suggestions and press **Keep** to make them your own: they stay in the list, ticked or not,
-  and Source shows **✔ NEA** or **✔ VizieR VSX**. (Keep on a target that is not a suggestion says *⚠ Select a
+- **Keep** (the button **Keep (a suggestion stays when you Find again)**). A search replaces every suggestion of its
+  kind that is still a suggestion. Select one or more suggestions and press **Keep** to make them your own without
+  ticking them: they stay in the list, and Source shows **✔ NEA** or **✔ VizieR VSX**. The line says, for example,
+  *✔ Kept DY Peg: a new Find no longer replaces it.* (Keep on a target that is not a suggestion says *⚠ Select a
   suggested transit or variable to keep.*)
-- **Remove** removes the selected targets after a question. Blocks already planned for them stay until you rebuild.
+- **Remove** removes the selected targets. A window titled **Remove targets** asks *Remove DY Peg from the list?
+  Blocks already planned stay until you rebuild.*; press **Remove** to go ahead, or **Cancel**. The line then says
+  *✔ Removed DY Peg.*
 - **Edit…** (or double-click a row) opens the Edit dialog for one target.
+
+### Blocks you locked or set by hand
+
+A block you locked, or set by hand on the Schedule page (chapter 6), stays in the schedule through every rebuild.
+So when its target is no longer planned, SHOBS-SCHED asks what to do with it. A window titled **Blocks set by hand**
+asks, for example:
+
+*DY Peg has 2 blocks you locked or set by hand on Wed 04 Nov and Thu 05 Nov. A rebuild keeps blocks set by hand even
+when the target is no longer planned. Remove them too? (No keeps them in the schedule, marked ⚠.)*
+
+It asks:
+
+- when you **untick** a target that has such blocks (from tonight on),
+- when you **Remove** such a target (the middle sentence then reads *A rebuild keeps blocks set by hand even when the
+  target is gone.*),
+- when you press **Build schedule** on the Schedule page and such blocks belong to targets that are unticked or no longer in
+  the list (*Their targets are not ticked to plan (or no longer in your list).*).
+
+Press **Remove** to take the blocks out of the schedule; the line says, for example, *✔ DY Peg will not be planned;
+removed 2 blocks set by hand. Build the schedule to apply.* or *✔ Removed DY Peg and 2 blocks set by hand.* Press
+**Cancel** to keep them. Blocks you chose to keep are not asked about again until you restart SHOBS-SCHED. A kept
+block of a removed target carries *⚠ This target is no longer in your list*.
+
+If a build is running when you untick, the question waits until the next **Build schedule**, and the line says so.
 
 You can select several rows in one box with **Ctrl**-click or **Shift**-click; selecting in one box clears the
 others.
@@ -236,19 +283,23 @@ your site.
 
 1. Press **Find suggested transits…** (bottom right).
 2. A window shows **Show at most** (how many transits; 25 by default, remembered) and the **Nights** it will search
-   (the Nights row). Its text says the planets are *filtered by Setup's Suggested-transits settings (V range, depth,
-   Moon)*; in 1.1.0 the Setup page has no such fields. The filter is set in the settings file only (below).
+   (the Nights row). Its text names the filter and its values, for example *filtered by Setup's “Suggestions and
+   darks” box (host V 9–13, depth at least 0.5 %, baseline 30 min each side, Moon-brightened sky up to 3 mag)*. To
+   change them, go to that box on the Setup page (chapter 4).
 3. Press **Search**.
-4. The busy bar at the lower left counts through the planets: *Finding suggested transits… 120 of 640*. It looks at
-   the Archive's list of transiting planets (refreshed weekly), then checks the best of them again with each planet's
-   most precise published ephemeris.
+4. The busy bar at the lower left counts through the search in two stages, each with its own count. First it
+   looks for the transits of every planet in the Archive's list of transiting planets (refreshed weekly):
+   *Finding suggested transits: transits of each planet… 120 of 640*. Then it checks the best of them again with
+   each planet's most precise published ephemeris: *Finding suggested transits: the best with their most precise
+   ephemeris… 12 of 50*.
 5. The result line says, for example, *✔ 12 suggested transits found, soonest first.*
 
-The suggestions land **unticked** in the Transits box, among your own targets. Tick one to plan it; it is still a
-suggestion. Suggestions that are unticked when you search again are replaced; press **Keep** to keep one for good.
+The suggestions land **unticked** in the Transits box, among your own targets. Tick one to plan it (that keeps it
+too), or press **Keep** to keep it without planning it. Suggestions you neither ticked nor kept are replaced when
+you search again.
 
-What makes a suggestion (the filter: the `suggest_…` values in the settings file, chapter 4; there is no Setup field
-for them):
+What makes a suggestion (the filter is in Setup's **Suggestions and darks** box, chapter 4; the values below are its
+defaults):
 
 1. **A full transit with baseline.** The whole transit, plus 30 minutes of baseline each side, is above your
    minimum altitude, horizon and maximum airmass. The transit itself is in the planning darkness; the baselines may
@@ -260,7 +311,7 @@ for them):
    brightness and the Moon-brightened sky. A planet whose predicted mid-time is uncertain gets a bonus, because new
    timings of it add the most to what is known.
 
-Each planet appears once, on its best night. Planets already in your list (your own, or ticked suggestions) are not
+Each planet appears once, on its best night. Planets already in your list (your own, kept or ticked) are not
 suggested again.
 
 > **Tip:** If SHOBS-P is installed, its *Tonight's transits* finder's V range, depth and baseline were taken as
@@ -277,11 +328,11 @@ nights.
      semi-regulars (M, SR)**, **Cepheids (DCEP, CW)**, **Other types**. The first four are ticked at first. **Include
      uncertain types (marked ":" in VSX)** is off at first.
    - **Period** from … to …, in **days** or **hours** (empty = any).
-   - **Brightness (V at maximum)** from … to … mag (at first, the same range as the suggested transits).
+   - **Brightness (V at maximum)** from … to … mag (at first, the V range in Setup's **Suggestions and darks** box).
    - **Amplitude at least** (0.1 mag at first).
    - **Show at most** (25 at first).
-   - The **Nights** searched. The window says your minimum altitude, horizon, darkness and Moon limit come from
-     Setup; the first three do, but the Moon limit is the settings file's `suggest_moon_penalty_max` (chapter 4).
+   - The **Nights** searched. The window says your *minimum altitude, horizon and darkness from Setup, and the
+     Moon-brightened sky limit from Setup's “Suggestions and darks” box*.
 3. Press **Search**. The busy bar says *Finding suggested variables (VSX at VizieR; up to a minute or two)…* and counts
    through the candidates.
 4. The result line says, for example, *✔ 14 suggested variables found, soonest first.* The line under the boxes says
@@ -297,13 +348,13 @@ A star is suggested when, on at least one of the nights, it offers something you
 | **A whole cycle**: δ Scuti, HADS, SX Phe, short Cepheids, RR Lyrae without a usable epoch | One full cycle plus 30 minutes in one dark stretch above your limits. | A whole cycle in one night shows the full light curve. |
 | **Any time**: Miras, semi-regulars and other long-period stars | At least an hour above your limits in the dark. | One good point a night is what these stars need. |
 
-In every case the Moon must not brighten the sky by more than the suggested-transit limit (`suggest_moon_penalty_max`). A star whose VSX elements
+In every case the Moon must not brighten the sky by more than Setup's **Moon-brightened sky up to**. A star whose VSX elements
 are too old to predict its event to within 30 minutes is not promised at a time: it is offered as a whole-cycle or
 any-time target instead, with **⚠ time uncertain** in its event column.
 
 Suggestions are ranked by amplitude, by brightness within your V range, and by having a timed event soon, with a
-small bonus for being good on many of the nights. They land unticked in the Variables box; tick, **Keep** or ignore
-them as with transits.
+small bonus for being good on many of the nights. They land unticked in the Variables box; tick (which keeps them),
+**Keep** or ignore them as with transits.
 
 If VizieR's row limit was reached, the line under the boxes says so: narrow the V range, the period range or the types
 to reach the rest.

@@ -27,14 +27,23 @@ This chapter covers:
 3. The busy bar at the lower left of the window shows each step: *Getting the forecast from Open-Meteo…*, then
    *Building 7 nights…*, then *Working out twilight and Moon times…*. **Build schedule** and **Re-review
    schedule** are grayed out until it finishes.
-4. When it is done, **✔ Done** appears beside the button, and the line under the controls says what was built, for
-   example *✔ Built 7 nights: 11 blocks; 2 targets didn't fit (see each night).*
+4. When it is done, the busy bar goes, and the line under the controls says what was built, for example *✔ Built 7
+   nights: 11 blocks; 2 targets didn't fit (see each night).* That line is the only result: nothing extra appears
+   beside the button.
 
 If the forecast could not be fetched, the plan is still built, and the line says so with a ⚠: *⚠ Built 7 nights: 11
 blocks. No forecast (Open-Meteo did not answer (timed out)), so it was built without weather.* When an older saved
 forecast was used instead, the line says how old it is.
 
 The schedule is saved after every change, so it is there the next time you start SHOBS-SCHED.
+
+Before it builds, SHOBS-SCHED checks for blocks you locked or set by hand (and have not marked yet), from the first
+night on, whose target is no longer ticked or no longer in your list. If there are any, it asks first, for example:
+*BL Cam has 2 blocks you locked or set by hand on Tue 03 Nov and Wed 04 Nov. Their targets are not ticked to plan (or
+no longer in your list). Remove them too? (No keeps them in the schedule, marked ⚠.)* **Remove** takes them out;
+**Cancel** keeps them. If you keep them, Build does not ask about the same blocks again until you restart
+SHOBS-SCHED. The Targets page asks the same question when you untick or remove such a target (chapter 5), but not
+while a build is running. **Re-review schedule** does not ask.
 
 Building again keeps your work: every block you **locked**, set the times of, or **marked** (Done, Partial, Clouded
 out) stays on its night with its times and its mark, and the rest of the night is rebuilt around it. A build that
@@ -60,23 +69,61 @@ The planner fills each night in a fixed order. Knowing it helps you read the pla
 3. **Flexible targets last.** Campaigns and any-time variables, High priority first, then Normal, then Low. A
    campaign behind its weekly goal moves up one level. Each gets at most one block a night, of its **Block length**
    (or less when there is less room, but never under its **Shortest useful block**), placed at the best part of the
-   night for it: on an equatorial mount starting about 12 minutes before its meridian (so the mount flips at the start
-   and the whole run is on one side of the pier), on an alt-az mount centred on the meridian. Its own rules apply:
-   **Own minimum altitude**, **Moon at least**, **Only between**, and its no-transit windows.
+   night for it: on an equatorial mount wholly before its meridian when a full block fits there, otherwise starting
+   about 12 minutes before its meridian (see *Flexible blocks and the meridian flip*, below); on an alt-az mount
+   centred on the meridian. Its own rules apply: **Own minimum altitude**, **Moon at least**, **Only between**, and its
+   no-transit windows.
 4. **Overheads.** A few minutes between blocks for slewing and plate solving, autofocus at the start of the night,
    and a refocus after a defocused target.
 5. **Weather.** With the dew setting on, flexible blocks end when dew is expected (Setup, chapter 4).
 
+### Flexible blocks and the meridian flip
+
+This applies to a German equatorial mount (**Mount** in Setup). An alt-az mount never flips.
+
+When a target crosses the meridian, an equatorial mount must turn to the other side of the pier. The star then lands
+on a different part of the sensor, the field is turned 180°, and the guiding and plate solve start again. For a
+campaign or an any-time variable you want one long, even series, so a flip in the **middle** of a run is the worst
+place for it: it leaves a step in the light curve. The planner places flexible blocks so that this does not happen:
+
+1. **No flip, if a full block fits.** When a whole block of the target's **Block length** fits in the dark before
+   the meridian, the block runs wholly before it, ending inside your **Tracks past the meridian** margin (Setup). There
+   is no flip at all, and no frames to drop. The note says, for example, *Ends 5 min past its meridian, inside your
+   tracking margin; stop by 23:47 at the latest*: stop the run by then, or the mount flips.
+2. **Otherwise, flip at the start.** When a full block does not fit before the meridian, the block starts about 12
+   minutes before the meridian. The mount flips while you are there at the start, and the rest of the run is on one
+   side of the pier. The note says *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*.
+3. **A flip in the middle only as a last resort.** The planner counts a mid-run flip as a heavy cost (as bad as
+   starting 4 hours from the best time), so it only places one there when nothing better fits. The block then gets
+   *⚠ Meridian flip in the middle of the run (~01:10): a pier-side step in the series*.
+
+**No flip, but not at another target's cost.** Running a block wholly before the meridian puts it earlier in the
+night than a flip-at-start block. Sometimes that takes the room another target needed. When targets didn't fit, the
+planner tries each no-flip block at flip-at-start instead, and keeps the change only when every target that fitted
+still fits and at least one more does. The moved block then says *Flips at the start (not run wholly before its
+meridian) so another target fits tonight*. Blocks you locked or set the times of are never changed this way.
+
+Fixed-time blocks (transits, timed events) cannot move: their flip falls where it falls, with a note (and a ⚠ when it
+is inside the transit).
+
 ## The night tabs
 
-Each night has a tab named by its date, for example **Tue 20 Oct**. A **⚠** in front of the name means the night has
-a caution, a target that didn't fit, or a night-wide warning. A night that has passed says **(past)**.
+Each night has a tab named by its date, for example **Tue 20 Oct**. A **⚠** in front of the name means the night
+needs your attention: a block still planned (not yet marked) has a caution you should act on, or the night has a
+night-wide ✖ (no dark time). A target that didn't fit, a cloudy forecast, a night-wide ⚠ line above the plot (such as
+*⚠ Dew expected from 04:05*; a block that the dew reaches still has its own caution), and the
+cautions *⚠ Baseline trimmed*, *⚠ Ephemeris uncertain* and *⚠ This target is no longer in your list* do not put a ⚠
+on the tab; you still see them on the night itself. A night that has passed says **(past)**.
 
 A tab is built the first time you open it. At the top is the night's line: the date, the dark hours and which darkness
-(*Dark 19:42–05:58 (astronomical)*), the Moon (*Moon 62 % (rises 23:10)*) and the weather summary (*Clear until
-02:00, then 60–80 % cloud; dew from 04:05*). Under it come any night-wide warnings, such as *⚠ Dew expected from
+(*Dark 19:42–05:58 (astronomical)*), the Moon (below) and the weather summary (*Clear until 02:00, then 60–80 %
+cloud; dew from 04:05*). Under it come any night-wide warnings, such as *⚠ Dew expected from
 04:05*, or *✖ No dark time tonight: the Sun gets no lower than −15.2° (planning darkness −18.0°); nautical darkness
-(Sun below −12°) is possible if you allow it in Setup.*
+(Sun below −12°) is possible if you allow it in Setup*.
+
+The Moon is given in the order the dark night meets it: whether it is up or down at dusk, then what it does before
+dawn. For example *Moon 62 % (down at dusk, rises 23:10)*, *Moon 48 % (up at dusk, sets 01:35)*, or, when it does not
+rise or set in the dark, *Moon 95 % (up all night)* or *Moon 3 % (down all night)*.
 
 ![A night tab (Tue 03 Nov): the night's line and a ⚠ dew line, the weather strip above the night plot, the HAT-P-6 b transit selected and drawn bright, the nightly table with its notes, and the selected block's notes, cautions and buttons](img/06-night-tab.png)
 
@@ -127,8 +174,8 @@ One row per block, in time order, tinted by the target's type:
 | **Target** | The name, with *· locked*, *· set by you*, or the mark (*· Done*, *· Partial*, *· Clouded out*). |
 | **RA / Dec (J2000)** | The target's position. |
 | **Alt** | The highest altitude in the block and its airmass, e.g. *62° (X 1.13)*. |
-| **Meridian** | When the target crosses the meridian (a flip during the block is in the notes). |
-| **Exposure** | The exposure, e.g. *40 s* (the OBSPlan page and the plan card add *est.* when SHOBS-SCHED estimated it). |
+| **Meridian** | When the target crosses the meridian; *(flip)* when the mount flips during the block, e.g. *22:44 (flip)* (the flip's time is in the notes). |
+| **Exposure** | The exposure, e.g. *40 s*, with *(est.)* when SHOBS-SCHED estimated it (*40 s (est.)*). The OBSPlan page and the plan card write *est.* |
 | **Frames** | About how many frames fit (*~240*); for a transit also how many fall in the transit (*~240 (~135 in transit)*). |
 | **Notes** | What to know about this block (below), then its cautions. |
 
@@ -144,9 +191,12 @@ full, with each caution on its own ⚠ line.
 - **Campaigns with a goal**: *Goal: 3 nights a week*, and when it is behind, *Behind its weekly goal (0 of 3 so
   far): moved up one priority level*.
 - **No-transit windows**: *No HD 219134 after 04:28 (planet c transit)*.
-- **Flips**: *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*, *Meridian flip at
-  ~01:10; drop the frames during the flip*, or *Ends 3 min past its meridian, inside your tracking margin; stop by
-  03:38 at the latest*.
+- **Flips** (equatorial mount; see *Flexible blocks and the meridian flip*): *Ends 3 min past its meridian, inside
+  your tracking margin; stop by 03:38 at the latest* (or *Ends at its meridian; stop by 03:40 at the latest*), *Start
+  before the meridian and let it flip (~22:40); drop the pre-flip frames*, *Meridian flip at ~01:10; drop the frames
+  during the flip*, and *Flips at the start (not run wholly before its meridian) so another target fits tonight*.
+- **Room for the next block**: *Ends 12 min early so DY Peg can start before its meridian*.
+- **Clouds**: *Cloud ≥ 70 % forecast for most of this block*. A plain note, not a caution.
 - **Your own frame interval**: *Frames every 45 s (your seconds between frames)*.
 - **Defocused targets**: *Refocus after this block*.
 - Your own notes from the target's Edit dialog.
@@ -158,15 +208,19 @@ full, with each caution on its own ⚠ line.
 | *⚠ Ephemeris uncertain: mid-time ± 25 min* | The transit may come early or late. Worth observing; consider extra baseline. |
 | *⚠ Baseline trimmed (next to WASP-12 b)* | It shares the night with another fixed-time target; its baseline is shorter. |
 | *⚠ Meridian flip during the transit (23:05)* | The flip falls between ingress and egress. Expect a gap and a step in the light curve. |
+| *⚠ Meridian flip in the middle of the run (~01:10): a pier-side step in the series* | A flexible block that could not avoid a mid-run flip. Expect a step in the light curve at the flip. |
 | *⚠ Starts 20 min after its meridian: the mount may flip at once (start before 22:40 if you can)* | Start before the meridian time if you can. |
 | *⚠ Counterweight up beyond HA ±6 h (04:10)* | Equatorial mount: the target is more than 6 hours from the meridian during the block, so the mount runs counterweight-up. Check your mount allows it. |
 | *⚠ Zenith keyhole: 87° at 23:40* | Alt-az mount: the target passes too near the zenith to track smoothly. |
 | *⚠ estimate: peak ~45k, near your 32k limit — check a frame* | Your exposure may go past the linear limit. Take a test frame. |
 | *⚠ estimate: even 0.75 s may saturate…; defocus* | A star too bright for the shortest standard exposure. Defocus, and write "defocus" in its notes. |
 | *⚠ Dew expected from 04:05* | Dew is forecast during the block (*…: the block ends there* when the dew setting cut it short). |
-| *⚠ Cloud ≥ 70 % forecast for most of this block* | The forecast is poor; the block stays (you decide). |
 | *⚠ Below your limits 03:10–03:40* | One of your own (locked) blocks now runs below your limits. |
 | *⚠ Overlaps your block …* / *⚠ Inside a blackout: …* | One of your own blocks clashes with another or with a no-transit window. |
+| *⚠ This target is no longer in your list* | A block you locked or set by hand, kept when its target was unticked or removed. Remove it if you no longer want it. |
+
+*⚠ Baseline trimmed*, *⚠ Ephemeris uncertain* and *⚠ This target is no longer in your list* are for your
+information: they do not put a ⚠ on the night's tab. The others do, while the block is still planned.
 
 ## Change a block
 
@@ -175,9 +229,9 @@ Select a row, then use the buttons under the table. A result line under the butt
 - **Lock** keeps the block's times through every rebuild (*✔ HAT-P-23 b locked: it keeps its times when you
   rebuild.*). The button reads **Unlock** for a locked block or one you set the times of.
 - **Remove** takes the block off this night (*it comes back when you rebuild unless you untick it*).
-- **Move to night…** moves a flexible block to another night of the schedule, at the same place in the sky (about 4
-  minutes earlier on the clock each night later). The block is kept there (the table says *set by you*), and that
-  night is rebuilt around it. A
+- **Move to night…** moves a flexible block to another night of the schedule. It keeps its place in the sky, so it
+  starts about 4 minutes earlier on the clock for each night later (later for an earlier night); the planner checks
+  it is still up. The block is kept there (the table says *set by you*), and that night is rebuilt around it. A
   transit or a timed event cannot move: its time is set by the sky, so the button is grayed for those.
 - **Edit times…** asks for a new start and end (`HH:MM` on the site's clock). The block is marked *set by you*, keeps
   those times through rebuilds, and the night is rebuilt around it. The times must be between sunset and sunrise, and
@@ -196,8 +250,9 @@ Under the table are three boxes.
 
 **Flats and darks to shoot.** For example *Flats: one set at the night's camera angle; a meridian flip's 180° turn
 needs no new flats*, and *Darks to shoot: 0.75 s, 45 s, 60 s*. A defocused target adds *flats at the defocus position
-too*. Darks you already have can be listed in the settings file (`darks_on_hand`, chapter 4); then the line says
-*Darks: all on hand (…)*.
+too*. List the darks you already have under **Darks you already have** in Setup's **Suggestions and darks** box
+(chapter 4), for example `60, 120, 180`. *Darks to shoot* then lists only the exposures your library does not cover,
+and when it covers them all the line says *Darks: all on hand (45 s, 60 s)*.
 
 Why one set of flats is enough after a flip: a flip turns the camera 180° with the telescope, so the dust and
 vignetting stay where they were relative to the sensor. A rotator angle change is different, which is why the plan
@@ -205,9 +260,9 @@ keeps the camera angle fixed.
 
 **Didn't fit, and why.** Every ticked target that got no block, with the reason and its next chance, for example:
 
-- *WASP-12 b: collides with HAT-P-23 b; next chance 23 Oct*
-- *BL Cam: below your limits all night (highest 24°; limit 30° there); next chance 26 Oct*
-- *DY Peg: no free stretch of 45 min left tonight (longest 19 min); next chance 4 Nov*
+- *WASP-12 b: collides with HAT-P-23 b; next chance Fri 23 Oct*
+- *BL Cam: below your limits all night (highest 24°; limit 30° there); next chance Mon 26 Oct*
+- *DY Peg: no free stretch of 45 min left tonight (longest 19 min); next chance Wed 04 Nov*
 - *KELT-1 b: no transit tonight*
 
 When another block took the room (a collision, or no free stretch left), a green **Plan this instead** button appears
@@ -223,7 +278,7 @@ The forecast comes from Open-Meteo for your site each time you build or re-revie
 
 - in the night's line (the summary),
 - in the weather strip over the night plot,
-- in the blocks' cautions (dew, cloud),
+- in the blocks' cautions (dew) and notes (cloud),
 - on the plan card.
 
 Why dew matters for photometry: a dewing corrector or mirror dims the stars gradually, which looks like a slow
@@ -231,8 +286,9 @@ trend in your light curve, or ruins a transit's egress. With **End dew-sensitive
 ticked in Setup, flexible blocks end at the dew onset (*⚠ Dew expected from 04:05: the block ends there*). Fixed-time
 blocks are not cut: a transit happens when it happens, so it gets a ⚠ instead, and you decide.
 
-Cloudy hours are not removed from the plan. A block that is mostly under 70 % cloud or more gets a ⚠; the plan
-stays, because forecasts change.
+Cloudy hours are not removed from the plan. A block that is mostly under 70 % cloud or more gets the note *Cloud ≥
+70 % forecast for most of this block*. It is a plain note, not a ⚠, and it does not put a ⚠ on the night's tab: the
+plan stays, because forecasts change, and you decide on the night.
 
 ## After the night: mark what happened
 

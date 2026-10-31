@@ -27,7 +27,11 @@ tagged *from SHOBS-P*; check them and go on.
    value, tick **Linear limit is from the spec sheet** so the plan marks it as an estimate.
 5. In **Mount and limits**, choose **Equatorial (flips)** or **Alt-az**, and check **Minimum altitude** (30° by
    default) and **Darkness to plan in** (astronomical by default).
-6. Press the green **Save** button at the bottom. It says **✔ Saved.**
+6. If you keep a library of darks, type its exposures in **Darks you already have**, in the **Suggestions and
+   darks** box (for example `60, 120, 180`). The night's **Darks to shoot** then lists only the others. The other
+   fields in that box filter **Find suggested transits…** and **Find suggested variables…**; their starting values
+   will do for now.
+7. Press the green **Save** button at the bottom. It says **✔ Saved.**
 
 ![The Setup page filled in for Example Observatory (40.0, −100.0, America/Chicago, 250 mm aperture), with "✔ Saved." beside the Save button](img/03-setup-saved.png)
 
@@ -36,8 +40,8 @@ tagged *from SHOBS-P*; check them and go on.
 1. Click **2 Targets** in the sidebar.
 2. In **Add a target** at the top, type `WASP-12 b` and press **Enter** (or click **Add**).
 3. The busy bar appears at the lower left of the window, in the status strip, with the words *Looking up WASP-12
-   b…*. When it finishes, a result line appears beside the **Add** button, for example *✔ Added WASP-12 b (NEA (most
-   precise)).* The planet is in the **Transits** box, ticked to plan (☑).
+   b…*. When it finishes, a result line appears beside the **Add** button, for example *✔ Added WASP-12 b (NEA, most
+   precise).* The planet is in the **Transits** box, ticked to plan (☑).
 4. Type `DY Peg` and press **Enter**. It is looked up at AAVSO VSX (or its copy at VizieR, as in the picture) and
    lands in the **Variables** box, also ticked.
 
@@ -55,14 +59,18 @@ transit is in the dark this week. Pick another planet, or try **Find suggested t
    shows; change them on either page.
 3. Press **Build schedule**.
 4. The busy bar at the lower left says what it is doing, step by step: first *Getting the forecast from
-   Open-Meteo…*, then *Building 7 nights…*, then *Working out twilight and Moon times…*. When it is done, *✔ Done* appears beside the button, and the line under
-   it says what was built, for example *✔ Built 7 nights: 9 blocks; 1 target didn't fit (see each night).*
+   Open-Meteo…*, then *Building 7 nights…*, then *Working out twilight and Moon times…*. When it is done, the busy
+   bar goes, and the line under the button says what was built, for example *✔ Built 7 nights: 9 blocks; 1 target
+   didn't fit (see each night).*
 
 Each night gets a tab, named by its date (for example **Mon 02 Nov**). A **⚠** in front of a tab's name means that
-night has a caution or a target that didn't fit.
+night has something that needs your attention, for example a meridian flip during a transit, dew cutting a block,
+or no dark time. A target that didn't fit, or a cloudy forecast, is listed on the tab but puts no ⚠ on it.
 
 5. Click the tab of the night you want to observe. You see:
-   - a line with the dark hours, the Moon and the weather summary;
+   - a line with the dark hours, the Moon and the weather summary, for example *Dark 19:08–05:40 (astronomical) ·
+     Moon 35 % (down at dusk, rises 01:12) · Clear all night*. The Moon's part follows the dark hours: *down at
+     dusk, rises 01:12*, *up at dusk, sets 22:40*, or *up all night*;
    - the **night plot**: each target's airmass through the night, its block in bold, twilight shading, the Moon, and
      the hourly weather above;
    - the **nightly table**: one row per block, with the time, target, position (RA / Dec), altitude, meridian time,

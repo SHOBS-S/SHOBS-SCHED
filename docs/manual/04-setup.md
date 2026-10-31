@@ -15,13 +15,15 @@ This chapter covers:
 - the Mount and limits box (meridian flips, minimum altitude, airmass, darkness),
 - the Horizon profile box,
 - the Weather box (forecast source and dew),
+- the Suggestions and darks box (the filter for the Find buttons, and the darks you already have),
 - saving, and leaving the page with unsaved changes,
 - the planner settings that are not on the page.
 
-![The Setup page: Site and Telescope and camera boxes on the left, Mount and limits, Horizon profile and Weather on the right, Save at the bottom](img/04-setup-page.png)
+![The Setup page: Site, Mount and limits and Weather on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
 
-The boxes sit in two columns when the window is wide enough, and in one column otherwise. The page scrolls when it
-does not fit.
+The boxes sit in two columns when the window is wide enough: **Site**, **Mount and limits** and **Weather** on the
+left; **Telescope and camera**, **Horizon profile** and **Suggestions and darks** on the right. In a narrow window
+they sit in one column, in the order this chapter follows. The page scrolls when it does not fit.
 
 ## Where the values came from
 
@@ -48,7 +50,8 @@ Beside many fields, a small gray **tag** says where that one value came from:
 The tag changes as soon as you type: a value you change shows *set here* at once. If you type a field back to exactly
 SHOBS-P's value and save, it follows SHOBS-P again.
 
-> **Note:** The minimum altitude, the darkness and the suggested-transits filter are taken from SHOBS-P's finder only
+> **Note:** The minimum altitude, the darkness and the suggested-transits filter (the V range, depth and baseline in
+> the **Suggestions and darks** box) are taken from SHOBS-P's finder only
 > **once**, and only while SHOBS-SCHED still has its own default there. After that, changing them in SHOBS-P does
 > not move them here. This stops a later change in one program from quietly changing your plans in the other.
 
@@ -155,17 +158,38 @@ On an equatorial mount, a target crossing the meridian makes the mount flip to t
 costs a few minutes (slew, plate solve, guiding restarts), turns the field on the sensor by 180°, and moves the star to
 other pixels, which is unwelcome in the middle of a transit.
 
-SHOBS-SCHED plans around this:
+SHOBS-SCHED plans around this. Blocks at a fixed time (transits, eclipse minima) and flexible blocks (campaigns
+and any-time variables) are placed a little differently.
 
-- **It never starts a block within an hour after its target's meridian.** The start moves to about 12 minutes
-  *before* the meridian instead, so the mount flips right at the start, while you are there, and the whole run is on
-  one side of the pier. The note says *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*.
+For every block:
+
+- **It never starts a block within an hour after its target's meridian.** A start there would make the mount flip
+  at once, while the run is under way.
 - **A block that ends just past the meridian** but inside your **Tracks past the meridian** margin needs no flip at
   all. The note says, for example, *Ends 3 min past its meridian, inside your tracking margin; stop by 03:38 at the
   latest*.
-- **A flip in the middle of a block** is noted (*Meridian flip at ~01:10; drop the frames during the flip*), and a
-  flip during a transit gets a caution: *⚠ Meridian flip during the transit (23:05)*.
+- **A block that must cross the meridian flips at the start.** It starts about 12 minutes *before* the meridian, so
+  the mount flips right at the start, while you are there, and the rest of the run is on one side of the pier. The
+  note says *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*.
 - **The flip costs time.** The frame count of a block with a flip allows for a few minutes of lost time.
+
+For a **fixed-time block**, a flip in the middle is noted (*Meridian flip at ~01:10; drop the frames during the
+flip*), and a flip during a transit gets a caution: *⚠ Meridian flip during the transit (23:05)*.
+
+For a **flexible block**, the planner tries to avoid the flip altogether:
+
+1. **No flip, when a whole block fits before the meridian.** If a full-length block fits in the dark and ends no
+   later than your **Tracks past the meridian** margin after the meridian, the block goes there. There is no flip,
+   no settling and no lost frames.
+2. **Otherwise, the flip at the start**, as above.
+3. **A flip in the middle of the run is the last choice.** It puts a pier-side step into a campaign's series, so the
+   planner counts it as costly (about as bad as starting four hours away from the best time) and picks it only
+   when the other places are worse still. Such a block gets *⚠ Meridian flip in the
+   middle of the run (~01:10): a pier-side step in the series*.
+4. **Never at another target's cost.** If running a block wholly before its meridian leaves another target off the
+   night, the planner moves that block back to flip-at-start, as long as everything that fitted still fits and more
+   targets fit. The block's note then says *Flips at the start (not run wholly before its meridian) so another
+   target fits tonight*.
 
 Set **Tracks past the meridian** to what your mount really does (in ASIAIR this is its meridian-flip setting). A
 generous margin lets more blocks finish without a flip.
@@ -214,12 +238,50 @@ magnetic declination, east positive) so the profile is turned to true north.
 
 | Field | What it does |
 |---|---|
-| **Forecast source** | Where the forecast comes from. In 1.1.0 the only source is **Open-Meteo** (free, no account). |
+| **Forecast source** | Where the forecast comes from. In 1.2.0 the only source is **Open-Meteo** (free, no account). |
 | **Dew when temp − dew point under** | The dew threshold: dew is expected from the first moment in the dark when the air temperature is less than this many degrees above the dew point. 2.5 °C by default. |
 | **End dew-sensitive runs at the predicted dew onset** | When ticked (the default), flexible blocks (campaigns and any-time variables) end when dew is expected. Fixed-time blocks are not cut; they get a ⚠ instead. |
 
 The forecast is fetched each time you build a schedule (chapter 6). It covers up to 16 days ahead, and is fetched
 again when the saved one is more than three hours old.
+
+## Suggestions and darks
+
+This box holds the filter that **Find suggested transits…** and **Find suggested variables…** use (chapter 5), and
+the exposures you already have darks for.
+
+| Field | Unit | Default | What it does |
+|---|---|---|---|
+| **Host star brighter than V** | mag | 13 | The faint end of the V range. **Find suggested transits…** keeps only planets whose host star is brighter than this. |
+| **… and fainter than V** | mag | 9 | The bright end of the V range: the host star must be fainter than this. |
+| **Transit depth at least** | % | 0.5 | The shallowest transit **Find suggested transits…** offers. |
+| **Baseline each side at least** | min | 30 | The baseline before ingress and after egress that a suggested transit must have, with the star above your limits. |
+| **Moon-brightened sky up to** | mag | 3 | How much the Moon may brighten the sky. Both Finds skip targets whose sky the Moon brightens by more than this. |
+| **Darks you already have** | s | (none) | The exposures your dark library covers, for example `60, 120, 180`. |
+
+Two gray lines in the box say the same in short: *Find suggested transits keeps only full transits (with this
+baseline) of hosts in this V range; both Finds skip targets whose sky the Moon brightens by more than this.* and
+*Exposures your dark library covers (at your usual gain and temperature); “Darks to shoot” lists only the others.*
+
+Some details:
+
+- **The V range.** Remember that a brighter star has the smaller V. The bright limit (**Host star brighter than V**)
+  is the bigger number. If the two are the wrong way round, Save says *The V range is upside down: brighter than V 9
+  and fainter than V 13 leaves nothing (the bright limit is the bigger number).*
+- **The V range and variables.** **Find suggested variables…** starts its own **Brightness** range from this V
+  range. Once you have searched, that window remembers its own range.
+- **The depth** is typed in percent (`0.5` for 0.5 %). The settings file keeps it as a fraction (0.005).
+- **An empty field** goes back to its default when you save.
+- **The limits:** V from −2 to 25, depth 0 to 100 %, baseline 0 to 600 minutes, Moon-brightened sky 0 to 15 mag.
+- **Darks you already have.** Separate the exposures with commas, semicolons or spaces; a trailing `s` is allowed
+  (`60s`). Each must be more than 0 and at most 7200 seconds. A value that is not a number gives *Darks you already
+  have: “abc” is not an exposure in seconds (e.g. 60, 120, 180).* The night's **Darks to shoot** line (chapter 6)
+  leaves these exposures out. When every exposure of the night is on hand, it says *Darks: all on hand (…)* instead.
+- **The tags.** The V range, depth and baseline show a source tag like the other fields (*from SHOBS-P* when
+  SHOBS-P's finder seeded them, see the note above). The Moon limit and the darks have no tag.
+
+Why the Moon limit matters for photometry: moonlight raises the sky background, and the sky's noise rises with it.
+A 1 % transit on a V 12 star that is easy on a dark night can be lost in the noise when the Moon is near and bright.
 
 ## Saving
 
@@ -251,17 +313,13 @@ editing the file by hand.
 | `flip_lead_min` | 12 | How long before the meridian a block starts so the mount flips at the start. |
 | `flip_settle_min` | 4 | Minutes lost to a flip. |
 | `min_gap_report_min` | 15 | Free gaps shorter than this are not listed. |
-| `suggest_vmin`, `suggest_vmax` | 9, 13 | The V range for **Find suggested transits…** (and the starting V range for variables). |
-| `suggest_min_depth` | 0.005 | The shallowest suggested transit (0.005 = 0.5 %). |
-| `suggest_baseline_min` | 30 | Baseline each side that a suggested transit must have in the dark and above your limits. |
-| `suggest_moon_penalty_max` | 3.0 | How much the Moon may brighten the sky (in magnitudes) for a suggestion. |
 | `tc_sigma_warn_min` | 10 | A transit whose predicted mid-time uncertainty is larger than this many minutes gets a ⚠. |
 | `fwhm_arcsec` | 3.0 | Typical seeing (star width), for the exposure estimate. |
 | `target_peak_frac` | 0.8 | The exposure estimate aims the star's peak at this fraction of the linear limit. |
-| `darks_on_hand` | (none) | A list of exposures (in seconds) you already have darks for; the night's **Darks to shoot** leaves them out. |
 
-When SHOBS-P's finder seeded these limits, the minimum altitude, darkness and the `suggest_…` filter came from there
-(once), as the line at the top of the page says.
+The suggestion filter (`suggest_vmin`, `suggest_vmax`, `suggest_min_depth`, `suggest_baseline_min`,
+`suggest_moon_penalty_max`) and `darks_on_hand` are kept in the same `options` section, but you set them in the
+**Suggestions and darks** box (above).
 
 ---
 

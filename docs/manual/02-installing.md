@@ -5,10 +5,11 @@ else up. It takes a few minutes, most of it waiting for downloads.
 
 ## What you need
 
-- **Windows 10 or 11.** The start files that come with SHOBS-SCHED are for Windows. It also runs on Linux and a Mac,
-  started by hand (see "Linux and the Mac" below).
-- **Python 3.11 or newer, with Tkinter** (the window toolkit). Python from python.org includes it. Anaconda or
-  Miniconda also works.
+- **Windows 10 or 11, Linux, or a Mac.** SHOBS-SCHED comes with start files for all three. The Linux start file
+  has been tested on Linux. The Mac start files are new in 1.2.0 and have not yet been tested on a Mac by a user
+  (see "Linux and the Mac" below).
+- **Python 3.11 or newer, with Tkinter** (the window toolkit). Python from python.org includes it. On Windows,
+  Anaconda or Miniconda also works.
 - **An internet connection**, for the install and later for target lookups and the weather.
 
 SHOBS-SCHED uses only three packages on top of Python: **NumPy**, **tzdata** (the world's time zones, so your site's
@@ -55,7 +56,8 @@ If you ever move the SHOBS-SCHED folder, run **Create shortcuts.bat** again so t
 
 ## Check the install with the self-test
 
-1. In the SHOBS-SCHED folder, double-click **Run self-test.bat**.
+1. In the SHOBS-SCHED folder, double-click **Run self-test.bat** (on Linux or a Mac, see "Linux and the Mac"
+   below).
 2. Wait for it to finish. It says `Running the SHOBS-SCHED self-test. It takes under a minute...`; on a slow
    computer the window test can take a little longer. A SHOBS-SCHED window may open and close by itself; that is
    part of the test.
@@ -65,7 +67,7 @@ The test changes none of your settings, targets or schedule: it works in a tempo
 end. It checks, in six sections: your Python and its packages (Matplotlib and time zones included); the sky
 arithmetic (dark times, meridian times, transit times) against a known week of plans; the planner; the weather
 reader and the exports; the window itself (every page, a build and the ASIAIR list, with the network switched off);
-and, for information only, whether the online services answer.
+and, for information only, whether the online services and the SIMBAD and VizieR mirrors answer.
 
 Each check is marked `PASS` or `FAIL`. In the last section a service that does not answer is marked `NOTE`, not a
 failure: SHOBS-SCHED falls back on its saved copies. The window section says `SKIP` when there is no screen.
@@ -90,17 +92,50 @@ and the window stays open with `The app did not start. Leave this window open an
 
 ### Linux and the Mac
 
-SHOBS-SCHED 1.1.0 comes with Windows start files only, but the program itself runs anywhere Python 3.11+ with Tkinter
-does:
+SHOBS-SCHED 1.2.0 comes with start files for Linux and the Mac. They do the same job as **Create shortcuts.bat** on
+Windows: find a Python that can run SHOBS-SCHED, give SHOBS-SCHED its own Python environment, install the packages,
+and start the program. They do not make a Desktop icon.
 
-1. Install Python 3.11 or newer with Tkinter (on Debian or Ubuntu: `sudo apt install python3-tk`).
-2. Install the packages: `python3 -m pip install -r requirements.txt` in the SHOBS-SCHED folder (or install NumPy,
-   tzdata and Matplotlib from your package manager).
-3. Start it with `python3 sched_app.py` in that folder.
-4. Run the self-test with `python3 selftest.py`.
+> **Note:** The Linux start file has been tested on Linux. The Mac start files are new and have not yet been tested
+> on a Mac by a user. If one does not work for you, please report it (chapter 10).
 
-Times, settings files and exports work the same way. Buttons that open a file or folder use the system's own opener
-(`xdg-open` on Linux, `open` on the Mac); **Open in Notepad** opens your default text editor there.
+**Install Python.**
+
+- **Mac:** install Python 3.13 from [python.org/downloads](https://www.python.org/downloads/). When it has
+  installed, run **Install Certificates.command** in its folder under Applications (the lookups need it).
+- **Linux:** Python 3.11 or newer with Tkinter will do. On Debian or Ubuntu, install Tkinter with
+  `sudo apt install python3-tk`.
+
+**Start SHOBS-SCHED.**
+
+1. Unzip SHOBS-SCHED where you want to keep it.
+2. Start it:
+   - **Mac:** double-click **Start SHOBS-SCHED.command**. The first time, macOS may refuse to open it. Then
+     Control-click (or right-click) it, choose **Open**, and **Open** again.
+   - **Linux:** in a terminal, in the SHOBS-SCHED folder, type `bash start_linux.sh`.
+3. The first time, it says `Setting up SHOBS-SCHED's own Python environment (one time; a few minutes)…`, then
+   `Trying` and the path of each Python it tries. A Python that cannot run SHOBS-SCHED is marked `not usable:` with
+   the reason. When one works it says `✔ Using` and that Python's path, and SHOBS-SCHED opens. Later starts skip all
+   this.
+
+It tries Python 3.13 first, then 3.12, then 3.11, then any newer one. Python 3.13, 3.12 and 3.11 have
+ready-made copies of NumPy and Matplotlib, and it never compiles a package: a brand-new Python may have none yet. When the packages will not install on one Python, the next one
+is tried, and a line says why (for example `A package has no ready-made copy for this Python and would have to be
+compiled. Trying an older Python.`).
+
+If it ends with `✖ No Python on this computer can run SHOBS-SCHED yet.`, install Python 3.13 from python.org (on a
+Mac, then run its **Install Certificates.command**) and start again. On the Mac, a window that fails stays open with
+`SHOBS-SCHED did not start. Leave this window open and copy the message above.`
+
+The Terminal window stays open while SHOBS-SCHED runs. Leave it open until you have closed SHOBS-SCHED.
+
+**The self-test.** On a Mac, double-click **Run self-test.command**. On Linux, type
+`bash start_linux.sh selftest`. It is the same test as on Windows (above); the log goes to `selftest_log.txt` in the
+SHOBS-SCHED folder and a copy to `SHOBS-SCHED_selftest_log.txt` in your Downloads folder.
+
+Times, settings files and exports work the same way as on Windows. Buttons that open a file or folder use the
+system's own opener (`xdg-open` on Linux, `open` on the Mac); **Open in Notepad** opens your default text editor
+there.
 
 ## Where SHOBS-SCHED keeps your things
 
@@ -109,7 +144,7 @@ in the program folder, so an update never loses it:
 
 | File or folder | What it holds |
 |---|---|
-| `.shobs_sched_settings.json` | Setup (site, telescope and camera, mount, limits, horizon, weather), the remembered search choices, the ASIAIR export folder and the **Include night plots** tick. |
+| `.shobs_sched_settings.json` | Setup (site, telescope and camera, mount, limits, horizon, weather, suggestions and darks), the remembered search choices, the ASIAIR export folder and the **Include night plots** tick. |
 | `.shobs_sched_targets.json` | Your target list: every Campaign, Transit and Variable, with priorities, ticks, goals, rules and notes. |
 | `.shobs_sched\schedule.json` | The saved schedule: every night, its blocks and your Done / Partial / Clouded out marks, plus the history of past nights. |
 | `.shobs_sched\cache\` | Saved answers from the online services (lookups, the transit catalog, the forecast) and the latest plan card (`plan_card.html`). |
@@ -118,7 +153,9 @@ in the program folder, so an update never loses it:
 The names start with a dot, so Windows Explorer may hide them. Type `%USERPROFILE%` into the Explorer address bar
 and turn on **Hidden items** under **View** to see them.
 
-The Python environment in `%LOCALAPPDATA%\SHOBS-SCHED` is separate again: it holds only Python and its packages.
+The Python environment is separate again: it holds only Python and its packages. It is in
+`%LOCALAPPDATA%\SHOBS-SCHED` on Windows, `~/Library/Application Support/SHOBS-SCHED` on a Mac, and
+`~/.local/share/SHOBS-SCHED` on Linux.
 
 > **Note:** Each file is written in one go (to a temporary file first, then swapped in), so a crash never leaves a
 > half-written file. If a file ever cannot be read, SHOBS-SCHED keeps a copy beside it with `.bad` added to its name
@@ -127,8 +164,10 @@ The Python environment in `%LOCALAPPDATA%\SHOBS-SCHED` is separate again: it hol
 ## Updating to a new version
 
 1. Unzip the new version, over the old folder or beside it.
-2. Double-click **Create shortcuts.bat** in the new folder. It points the shortcuts at it and installs any new packages
-   the new version needs. The Python environment is shared by every SHOBS-SCHED version, so this is quick.
+2. On Windows, double-click **Create shortcuts.bat** in the new folder. It points the shortcuts at it and installs
+   any new packages the new version needs. The Python environment is shared by every SHOBS-SCHED version, so this is
+   quick. On Linux or a Mac, just start the new version with its start file: it checks the packages each time and
+   sets the environment up again if one is missing.
 
 Your settings, targets and schedule stay where they are, in your user folder.
 

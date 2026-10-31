@@ -33,16 +33,19 @@ observer code if SHOBS-P gave one (*Example Observatory · 40.000° N, 100.000°
 
 For each night:
 
-- **The date**, with the dark hours and which darkness (*Dark 19:42–05:58 (astronomical)*), the Moon (*Moon 62 %,
-  rises 23:10*), and which clock the times are on (*Times: Local time (UTC−5)*).
+- **The date**, with the dark hours and which darkness (*Dark 19:42–05:58 (astronomical)*), the Moon in the order
+  the dark night meets it (*Moon 62 %, down at dusk, rises 23:10*, or *Moon 95 %, up all night*; the same words as the
+  Schedule page, chapter 6), and which clock the times are on (*Times: Local time (UTC−5)*).
 - **The weather**: *Weather (Open-Meteo): Clear until 02:00, then 60–80 % cloud. High 12 °C, low 4 °C, wind up
   to 15 km/h. ⚠ Dew from 04:05*.
 - **The night plot** (when **Include night plots** is ticked; printed card only).
 - **The nightly table**: **Time**, **Target**, **RA / Dec (J2000)**, **Alt**, **Meridian**, **Exposure**, **Frames**
   and **Notes**. The times are big and bold, so you can read them at the telescope. On screen each target's name sits on
   its type's color (the printed card is plain black on white). Locked blocks say *(locked)*, blocks you timed say *(set by you)*, and marked blocks show their mark
-  in brackets (*[Done]*). Estimated exposures say *est.*
-- **Flats**, **Darks** and **Free time**, as lists under the table.
+  in brackets (*[Done]*). Estimated exposures say *est.* (the Schedule page's table writes *(est.)*). The **Meridian**
+  column gives the time only; a flip during the block is in the notes.
+- **Flats**, **Darks** and **Free time**, as lists under the table. Under **Darks**, *To shoot: …* lists the
+  exposures not covered by Setup's **Darks you already have**, or *All on hand (…)* when they all are.
 
 The footer gives the clock once more, with the time zone's name: *SHOBS-SCHED · all times Local time (UTC−5)
 (America/Chicago)* on the printed card, *All times Local time (UTC−5) (America/Chicago)* on screen.
@@ -107,8 +110,12 @@ folder line shows *⚠ not found: files go to Downloads*, and the export says wh
 ### Copy ASIAIR list
 
 **Copy ASIAIR list** puts the same list on the clipboard instead of in a file: *✔ Copied 3 targets for Tue 20 Oct.
-In ASIAIR's Plan: Add → Import, and paste. Position angle 0.00° (set your usual camera angle in Setup).* Use it when ASIAIR runs on the same computer, or you paste through a
-remote-desktop app.
+In ASIAIR's Plan: Add → Import, and paste. Position angle 0.00° (set your usual camera angle in Setup).* Use it when
+ASIAIR runs on the same computer, or you paste through a remote-desktop app.
+
+When some targets have no position, they are left out and the line says so with a ⚠, still with the ASIAIR steps:
+*⚠ Copied 2 targets for Tue 20 Oct; left out (no coordinates): DY Peg. In ASIAIR's Plan: Add → Import, and paste.
+Position angle 0.00° (set your usual camera angle in Setup).*
 
 ## Export to NINA
 

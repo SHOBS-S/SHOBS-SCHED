@@ -53,7 +53,7 @@ future event is predicted. Its uncertainty grows with every cycle away from the 
 
 **Exposure estimate** — SHOBS-SCHED's first guess of a good exposure for a star, from its V magnitude, your aperture,
 camera and the seeing: the longest standard exposure that keeps the star's peak under about 80 % of your **linear
-limit**. Marked *est.* on the plan.
+limit**. Marked *(est.)* in the Schedule page's table and *est.* on the plan card.
 
 **Fixed-time target** — A target whose block is set by the sky: a transit, or a timed minimum or maximum. Planned
 before the flexible ones.
@@ -62,7 +62,8 @@ before the flexible ones.
 camera angle (and focus) as the lights.
 
 **Flexible block** — A block placed where its target is best (near its meridian), of the target's **Block length**.
-Campaigns and **any-time variables** get flexible blocks.
+Campaigns and **any-time variables** get flexible blocks. On an equatorial mount it runs wholly before the meridian
+when a full block fits there, otherwise it starts just before the meridian (see **meridian flip**).
 
 **Goal** — A campaign's wanted number of **Done** nights a week (Monday to Sunday). A campaign behind its goal is
 planned one priority level higher.
@@ -79,17 +80,24 @@ star peaks under it.
 meridian.
 
 **Meridian flip** — On a German equatorial mount, the turn to the other side of the pier when a target crosses the
-**meridian**. It costs a few minutes and moves the star on the sensor. SHOBS-SCHED starts blocks just before the
-meridian so the flip happens at the start.
+**meridian**. It costs a few minutes and moves the star on the sensor, so a flip in the middle of a run leaves a step
+in the light curve. For a **flexible block** SHOBS-SCHED avoids the flip when it can: the block runs wholly before the
+meridian, ending inside your **tracking margin**. When a full block does not fit there, or when running it there
+would leave another target without a block that night, the block starts about 12 minutes before the meridian, so the
+flip happens at the start. A flip in the middle of a flexible run is a last resort, with a ⚠.
 
 **Minimum, maximum** — The faintest or brightest point in a variable star's cycle. An eclipsing binary's minimum or an
 RR Lyrae star's maximum can be timed to minutes.
+
+**Mirror** — A copy of a service on another server. When SIMBAD or VizieR at CDS does not answer, SHOBS-SCHED asks a
+mirror (VizieR at the CfA, SIMBAD and VizieR at IDIA in Cape Town).
 
 **Most precise ephemeris** — Of all the ephemerides published for a planet, the one with the smallest predicted
 **Tc** uncertainty for the coming weeks. SHOBS-SCHED uses it for planets you add, plan or keep.
 
 **Moon penalty** — How much the Moon brightens the sky at a target, in magnitudes, from the Moon's phase, height and
-distance (Krisciunas & Schaefer 1991). A brighter sky means more noise. Suggestions are limited to 3 magnitudes.
+distance (Krisciunas & Schaefer 1991). A brighter sky means more noise. Suggestions are limited by Setup's
+**Moon-brightened sky up to** (3 magnitudes by default).
 
 **No-transit window** (blackout) — A time when a campaign or variable must not be observed, because one of its star's
 planets is transiting. Set in the target's Edit dialog.
@@ -121,6 +129,10 @@ on it, labeled for example *Local time (UTC−5)*.
 
 **Tc (T0, mid-transit time)** — The moment the planet is in the middle of its transit. The ephemeris' reference time
 is one Tc; **Tc ±** is the predicted uncertainty of a future one.
+
+**Tracking margin** — How long your equatorial mount can track past the **meridian** before it must flip: Setup's
+**Tracks past the meridian** (5 minutes by default). A block that ends inside it needs no flip; its note says when to
+stop at the latest (*stop by 23:47 at the latest*).
 
 **Transit** — A planet passing in front of its star, dimming it by the transit's **depth** for its **duration**. One
 of the three target types (green).
