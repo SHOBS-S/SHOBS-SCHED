@@ -35,7 +35,8 @@ meridian. A target whose meridian is before dusk thus starts as early as it can,
 runs as late as it can. Second GEM ideal (1.2.0, John 29 Oct): when a full-length block fits in the dark wholly
 BEFORE the meridian (ending inside `site.past_meridian_min`), that is the ideal instead: no flip, no settle, no
 dropped frames. A placement with the flip in the MIDDLE of the run costs MIDFLIP_COST_MIN extra (a pier-side step
-in a campaign series); settle time only matters for a flip at the start.
+in a campaign series); settle time only matters for a flip at the start. No flip if it can, but never at another
+target's cost (John 31 Oct): build_night retries a no-flip block at flip-at-start when that fits more targets.
 
 Times: JD (UTC) inside; the site's zone (site.tz) for every clock time in a note, never the computer's."""
 from __future__ import annotations
@@ -419,6 +420,8 @@ class _Night:
         self.weather = weather or None
         self.history = list(history or [])
         self.prefer = set(prefer or ())
+        self.flip_at_start: set = set()   # targets that give up the no-flip spot so another fits (fix list 24)
+        self.used_noflip: set = set()     # targets placed wholly before their meridian by the no-flip ideal
         self.tz = site.tz
         self.placed: list[_P] = []
         self.done_ids: set[str] = set()
@@ -1106,7 +1109,7 @@ class _Night:
             whole = [r for r in pool if r[1] >= want and g[r[0]] + r[1] * MIN <= m_ideal + margin * MIN + EPS
                      and not any(g[r[0]] < m < g[r[0]] + r[1] * MIN and (g[r[0]] + r[1] * MIN - m) * 1440.0 > margin
                                  for m in mers)]
-            if whole:
+            if whole and t.id not in self.flip_at_start:
                 ideal = before
 
         def cost(r):     # absolute, so costs of different free layouts compare (the nudge)
@@ -1116,6 +1119,7 @@ class _Night:
         best = min(pool, key=lambda r: (cost(r), r[0]))
         s, L = best[0], best[1]
         p = _P(tg=t, tid=t.id, name=t.name, kind="flex", start=g[s], end=g[s] + L * MIN)
+        p.noflip_ideal = bool(self.gem and ideal != m_ideal - lead * MIN)
         p.fallback_flip = not cands
         if self.dew is not None and self.o.get("dew_sensitive_end") and abs(p.end - self.dew) <= 2 * MIN:
             p.dew_cut = True
@@ -1325,8 +1329,41 @@ class _Night:
 def build_night(d: date, site, optics, targets: list, options: dict, locked: list = (),
                 weather: dict | None = None, history: list | None = None,
                 prefer: set = frozenset()) -> NightPlan:
-    """Plan the night that starts on local date d (see the module docstring for the rules)."""
-    return _Night(d, site, optics, targets, options, locked, weather, history, prefer).build()
+    """Plan the night that starts on local date d (see the module docstring for the rules).
+
+    No flip if it can, but never at another target's cost (John 31 Oct): when flexible targets didn't fit, each block
+    that took its no-flip spot (wholly before its meridian) is tried at flip-at-start instead; the first change that
+    gets more targets onto the night is kept (and again, until no change helps)."""
+    def one(flip_at_start: set) -> tuple:
+        n = _Night(d, site, optics, targets, options, locked, weather, history, prefer)
+        n.flip_at_start = set(flip_at_start)
+        plan = n.build()
+        used = {p.tid for p in n.placed if p.kind == "flex" and getattr(p, "noflip_ideal", False)}
+        return plan, used
+
+    def fitted(plan) -> int:
+        return len({b.get("target_id") for b in plan.blocks})
+
+    fas: set = set()
+    plan, used = one(fas)
+    for _round in range(4):
+        if not plan.didnt_fit or not used:
+            break
+        better = None
+        for tid in sorted(used):
+            trial, trial_used = one(fas | {tid})
+            if fitted(trial) > fitted(plan):
+                better = (tid, trial, trial_used)
+                break
+        if better is None:
+            break
+        tid, plan, used = better
+        fas.add(tid)
+        for b in plan.blocks:
+            if b.get("target_id") == tid:
+                b.setdefault("notes", []).append("Flips at the start (not run wholly before its meridian) so "
+                                                 "another target fits tonight")
+    return plan
 
 
 # ---- several nights --------------------------------------------------------------------------------------------

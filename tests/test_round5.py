@@ -187,6 +187,27 @@ class TestFlexFlip(unittest.TestCase):
                                     sky.hhmm(b.meridian, SITE.tz)))
 
 
+    def test_flip_at_start_when_no_flip_bumps_another(self):
+        # John 31 Oct: no flip if it can, but drop back to flip-at-start when the no-flip spot bumps a target
+        d = date(2026, 10, 29)
+        w = sky.night_window(d, SITE)
+        mer = w[0] + 2.6 / 24
+        a = Target(id="A", name="A", kind="campaign", mode="D", ra=ra_on_meridian(SITE, mer), dec=57.0, vmag=6.0,
+                   block_min=120, min_block_min=90, exposure_s=1.0, enabled=True, priority="High")
+        lo, hi = sky.to_local(w[0], SITE.tz), sky.to_local(w[0] + 1.9 / 24, SITE.tz)
+        win = [{"kind": "window", "value": f"{lo:%H:%M}-{hi:%H:%M}"}]
+        b = Target(id="B", name="B", kind="campaign", mode="D", ra=ra_on_meridian(SITE, w[0] + 1.0 / 24), dec=40.0,
+                   vmag=8.0, block_min=90, min_block_min=80, exposure_s=10.0, enabled=True, priority="Low",
+                   rules=win)
+        alone = planner.build_night(d, SITE, OPTICS, [a], {}).blocks_obj()[0]
+        self.assertFalse(alone.flip_in_block, "alone, A runs wholly before its meridian")
+        plan = planner.build_night(d, SITE, OPTICS, [a, b], {})
+        names = {x.name: x for x in plan.blocks_obj()}
+        self.assertEqual(set(names), {"A", "B"}, plan.didnt_fit)
+        self.assertTrue(names["A"].flip_in_block)
+        self.assertTrue(any("so another target fits" in n for n in names["A"].notes), names["A"].notes)
+
+
 class TestProgress(unittest.TestCase):
     def test_each_stage_counts_up_to_its_own_total(self):
         # fix list 9: one count over two passes ran backwards ("299 of 303" then "292 of 302")
