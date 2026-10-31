@@ -1,8 +1,9 @@
 # SHOBS-SCHED — Shiloh Hill Observatory Photometry Scheduler
 
 SHOBS-SCHED plans each night's **photometry** — **transits**, **variable stars** and **campaigns** (stars or fields you
-visit on many nights) — for tonight (the default) or up to seven nights ahead (the Nights setting, shared by the Targets and Schedule pages), and exports each night for ASIAIR or NINA (a target
-file to import) plus a printable plan card.
+visit on many nights) — for tonight (the default) or up to seven nights ahead (the Nights setting, shared by the
+Targets and Schedule pages), and exports each night for ASIAIR or NINA (a target file to import) plus a printable
+plan card.
 
 It is a *photometry* scheduler: it knows about transit baselines, timed minima and maxima, saturation
 and the camera's linear limit, defocus, and campaign goals. It is not meant for deep-sky imaging plans (hours of
@@ -15,7 +16,8 @@ SHOBS-SCHED reads its site and equipment settings so you type them once (it neve
 
 1. **Setup** — your site (latitude, longitude, elevation, time zone), optics and camera, mount (German equatorial
    with meridian flips, or alt-az), minimum altitude, maximum airmass, darkness, the horizon profile from a site
-   survey, and the weather source.
+   survey, the weather source, and the filters the Find buttons use (host V range, transit depth, baseline,
+   Moon-brightened sky) with the exposures your dark library already covers.
 2. **Targets** — three boxes, each with its own scroll bar: **Campaigns** (long-running stars and fields with
    priorities, weekly goals and rules such as "no data while a planet transits"), **Transits** (ephemerides from
    the NASA Exoplanet Archive, the most precise published one for the coming weeks, with the predicted mid-transit
@@ -25,11 +27,15 @@ SHOBS-SCHED reads its site and equipment settings so you type them once (it neve
    first. **Find suggested transits…** and **Find suggested variables…** (eclipsing minima, RR Lyrae maxima, short
    pulsators with a whole cycle in the dark, and long-period fillers from VSX, by type, period, brightness and
    amplitude; up to 25 of each by default) add other good targets unticked into the same boxes; the **Plan** tick
-   (first column) decides what is built, and **Keep** stops a suggestion being replaced by the next search. Add any
-   target by name.
+   (first column) decides what is built, and ticking a suggestion (or **Keep**) keeps it: the next search no longer
+   replaces it. Add any target by name (when SIMBAD at CDS does not answer, its mirror at IDIA in Cape Town is
+   asked, and a planet host's position can come from the NASA Exoplanet Archive).
 3. **Schedule** — builds each night: fixed-time targets first (transits with baseline, timed minima/maxima), then
    campaigns and any-time variables by priority at their best airmass, with twilight, the Moon, your horizon,
-   meridian flips (start 10–15 min before the meridian and let the mount flip), overheads and the dew forecast.
+   meridian flips (a campaign block that fits wholly before its meridian runs there with no flip; otherwise it
+   starts 10–15 min before the meridian and lets the mount flip, never in the middle of the run), overheads and the
+   dew forecast. A night's tab carries ⚠ only when something needs action (a flip in a transit, dew cutting a block,
+   counterweight up, no dark time); what didn't fit and cloud forecasts are listed but raise no ⚠.
    Each night shows a night plot (every block's airmass through the night over the twilight shading, with the
    Moon, transits and meridian flips, and the hourly weather above it; click a block or a table row to pick it
    out), the nightly table, flats and darks to shoot, what didn't fit and why (with *Plan this instead*), and free
@@ -55,12 +61,24 @@ camera angle), and every Setup value is tagged with where it came from: *from SH
 Upgrading: after unzipping a new version over the old one, double-click **Create shortcuts.bat** again (it installs
 any new packages, e.g. matplotlib for the night plot).
 
+## Install (Mac and Linux)
+
+1. Install Python 3.13 from [python.org](https://www.python.org/downloads/) (on a Mac, then run its *Install
+   Certificates.command*). On Linux, a Python 3.11 or newer with Tkinter (e.g. the `python3-tk` package) will do.
+2. Unzip SHOBS-SCHED anywhere.
+3. **Mac:** double-click **Start SHOBS-SCHED.command** (the first time macOS may refuse: Control-click it, choose
+   Open, then Open again). **Linux:** `bash start_linux.sh`.
+   The first start gives SHOBS-SCHED its own environment (`~/Library/Application Support/SHOBS-SCHED` on a Mac,
+   `~/.local/share/SHOBS-SCHED` on Linux) and installs the packages; it prefers Python 3.13, 3.12 or 3.11, whose
+   packages come ready-made, so nothing has to be compiled.
+4. **Run self-test.command** (Mac) or `bash start_linux.sh selftest` checks the install.
+
 Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_targets.json` and the
 `.shobs_sched` folder (saved schedule, cache, log).
 
 ## Documentation
 
-**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (version 1.1.0) walks you through the program step by
+**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (written for version 1.1.0; the 1.2.0 changes are listed in the README above) walks you through the program step by
 step: installing, your first night, the Setup, Targets, Schedule and OBSPlan pages, the busy bar and messages,
 troubleshooting and a glossary. A PDF of the whole manual can be built with `python tools/build_manual_pdf.py`.
 

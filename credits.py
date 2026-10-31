@@ -39,11 +39,12 @@ CREDITS = [
          "Watson, C. L., Henden, A. A. & Price, A. 2006, Society for Astronomical Sciences Annual Symposium 25, 47.",
          "https://vsx.aavso.org"),
         ("VizieR (CDS)", "Access to VSX (catalog B/vsx) when VSX itself does not answer, and for the variable "
-         "search.",
+         "search (at CDS, or its mirrors at the CfA and IDIA, Cape Town).",
          "\"This research has made use of the VizieR catalogue access tool, CDS, Strasbourg Astronomical "
          "Observatory, France (DOI : 10.26093/cds/vizier).\" Ochsenbein, F. et al. 2000, A&AS 143, 23.",
          "https://vizier.cds.unistra.fr"),
-        ("SIMBAD (CDS)", "Positions and V magnitudes of stars added by name (campaigns and other targets).",
+        ("SIMBAD (CDS)", "Positions and V magnitudes of stars added by name (campaigns and other targets), at "
+         "CDS or its mirror at IDIA, Cape Town.",
          "\"This research has made use of the SIMBAD database, CDS, Strasbourg Astronomical Observatory, France.\" "
          "Wenger, M. et al. 2000, A&AS 143, 9.", "https://simbad.cds.unistra.fr"),
         ("Open-Meteo", "Hourly cloud cover, temperature, dew point and wind for each planned night (the weather "
