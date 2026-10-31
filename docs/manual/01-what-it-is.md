@@ -2,7 +2,7 @@
 
 SHOBS-SCHED, the Shiloh Hill Observatory Photometry Scheduler, is a desktop program that plans your nights of
 **photometry**: exoplanet transits, variable stars, and campaigns (stars or fields you come back to night after
-night). It plans one night or a rolling seven, prints a plan card you can keep at the telescope, and writes each
+night). It plans tonight (the default) or up to seven nights ahead, prints a plan card you can keep at the telescope, and writes each
 night's target list for ASIAIR or NINA.
 
 You do not need to be a programmer to use it. If you know your site, your telescope and your camera, you can plan a

@@ -1,7 +1,7 @@
 # SHOBS-SCHED — Shiloh Hill Observatory Photometry Scheduler
 
 SHOBS-SCHED plans each night's **photometry** — **transits**, **variable stars** and **campaigns** (stars or fields you
-visit on many nights) — for one night or a rolling seven nights, and exports each night for ASIAIR or NINA (a target
+visit on many nights) — for tonight (the default) or up to seven nights ahead (the Nights setting, shared by the Targets and Schedule pages), and exports each night for ASIAIR or NINA (a target
 file to import) plus a printable plan card.
 
 It is a *photometry* scheduler: it knows about transit baselines, timed minima and maxima, saturation

@@ -6,7 +6,7 @@
 > and the code disagree, the code (and README.md) are current.
 
 SHOBS-SCHED plans each night's targets for the three SHOBS-P modes (Variables = V, Transits = T, Discovery = D),
-for one night or a rolling 7 nights, and exports the plan for ASIAIR (coordinate CSV + printable plan card).
+for one night (the default) or up to 7 nights, and exports the plan for ASIAIR (coordinate CSV + printable plan card).
 Owner: John (amateur observatory, 14" RC f/8, ZWO ASI2600MC color camera, EQ8-R German equatorial mount (GEM) with
 meridian flips, ASIAIR control). Sibling app: SHOBS-P (photometry; repo SHOBS-S/SHOBS-P, read-only reference at
 /home/claude/shobs-p). SCHED is a separate app in this repo: /home/claude/shobs-sched.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SHOBS-SCHED — Shiloh Hill Observatory Photometry Scheduler (the app).
 
-Plans each night's targets (transits, variable stars and campaigns), for one night or a rolling seven, and exports
+Plans each night's targets (transits, variable stars and campaigns), for tonight (the default) or up to seven nights, and exports
 the plan for ASIAIR and NINA. Four pages, as the numbered steps in the blue sidebar:
 
   1 Setup     site, optics and camera, mount, limits, horizon, weather source
@@ -36,7 +36,7 @@ import webbrowser
 from datetime import date, datetime, timedelta, timezone
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 from tkinter import font as tkfont
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1108,6 +1108,7 @@ class SetupPage:
         self.groups.append(self._mount_group(g))
         self.groups.append(self._horizon_group(g))
         self.groups.append(self._weather_group(g))
+        self.groups.append(self._suggest_group(g))
         self._columns = 0
         g.bind("<Configure>", self._layout, add="+")
         self._layout()
@@ -1125,8 +1126,9 @@ class SetupPage:
         self._columns = cols
         for w in self.groups:
             w.pack_forget()
-        left = (0, 2, 4) if cols == 2 else (0, 1, 2, 3, 4)
-        for k in range(5):
+        n = len(self.groups)
+        left = tuple(range(0, n, 2)) if cols == 2 else tuple(range(n))
+        for k in range(n):
             col = self.col_frames[0] if k in left else self.col_frames[1]
             self.groups[k].pack(in_=col, fill=tk.X, pady=(0, px(self.app, 10)))
         g = self.body.inner
@@ -1325,6 +1327,23 @@ class SetupPage:
             row=2, column=0, columnspan=2, sticky="w", pady=px(self.app, 2))
         return box
 
+    def _suggest_group(self, g):
+        """The filters Find suggested transits / variables use, and the darks you already have (fix list 1, 2, 13)."""
+        box = self._box(g, "Suggestions and darks")
+        self._entry(box, 0, "Host star brighter than V", "options.suggest_vmax", "", width=6)
+        self._entry(box, 1, "… and fainter than V", "options.suggest_vmin", "", width=6)
+        self._entry(box, 2, "Transit depth at least", "options.suggest_min_depth", "%", width=6)
+        self._entry(box, 3, "Baseline each side at least", "options.suggest_baseline_min", "min", width=6)
+        self._entry(box, 4, "Moon-brightened sky up to", "options.suggest_moon_penalty_max", "mag", width=6,
+                    tag=False)
+        self._hint(box, 5, "Find suggested transits keeps only full transits (with this baseline) of hosts in this "
+                           "V range; both Finds skip targets whose sky the Moon brightens by more than this.")
+        self._entry(box, 6, "Darks you already have", "options.darks_on_hand", "s, e.g. 60, 120, 180", width=18,
+                    tag=False)
+        self._hint(box, 7, "Exposures your dark library covers (at your usual gain and temperature); “Darks to "
+                           "shoot” lists only the others.")
+        return box
+
     # ---- fill / read ----
     def refresh(self):
         if self.dirty:
@@ -1382,6 +1401,12 @@ class SetupPage:
         spread = float(opts.get("dew_spread_c", 2.5))
         v["options.dew_spread_c"].set(fmt_num(spread * 1.8 if tu == "F" else spread, 1))
         v["options.dew_sensitive_end"].set(bool(opts.get("dew_sensitive_end", True)))
+        d = settings.DEFAULT_OPTIONS
+        for k in ("suggest_vmin", "suggest_vmax", "suggest_baseline_min", "suggest_moon_penalty_max"):
+            v[f"options.{k}"].set(fmt_num(opts.get(k, d[k])))
+        v["options.suggest_min_depth"].set(fmt_num(100.0 * float(opts.get("suggest_min_depth",
+                                                                          d["suggest_min_depth"])), 3))
+        v["options.darks_on_hand"].set(", ".join(fmt_num(x) for x in (opts.get("darks_on_hand") or [])))
         self._loading = False
         self.fits_pending = {}
         self._units_changed()
@@ -1686,6 +1711,37 @@ class SetupPage:
         tu = site["temp_unit"]
         opts["dew_spread_c"] = (sp / 1.8 if tu == "F" else sp) if sp is not None else 2.5
         opts["dew_sensitive_end"] = bool(v["options.dew_sensitive_end"].get())
+        d = settings.DEFAULT_OPTIONS
+        vmin = num("options.suggest_vmin", "The faint V limit", -2, 25, required=False)
+        vmax = num("options.suggest_vmax", "The bright V limit", -2, 25, required=False)
+        vmin = d["suggest_vmin"] if vmin is None else vmin
+        vmax = d["suggest_vmax"] if vmax is None else vmax
+        if vmin > vmax:
+            errors.append(f"The V range is upside down: brighter than V {fmt_num(vmax)} and fainter than V "
+                          f"{fmt_num(vmin)} leaves nothing (the bright limit is the bigger number).")
+        opts["suggest_vmin"], opts["suggest_vmax"] = vmin, vmax
+        dep = num("options.suggest_min_depth", "The transit depth", 0, 100, required=False, what="(percent)")
+        opts["suggest_min_depth"] = round(dep / 100.0, 9) if dep is not None else d["suggest_min_depth"]
+        bl = num("options.suggest_baseline_min", "The baseline", 0, 600, required=False, what="minutes")
+        opts["suggest_baseline_min"] = bl if bl is not None else d["suggest_baseline_min"]
+        mp = num("options.suggest_moon_penalty_max", "The Moon-brightened sky limit", 0, 15, required=False,
+                 what="magnitudes")
+        opts["suggest_moon_penalty_max"] = mp if mp is not None else d["suggest_moon_penalty_max"]
+        on_hand, bad = [], []
+        for part in re.split(r"[,;\s]+", str(v["options.darks_on_hand"].get()).strip()):
+            part = part.strip().lower().rstrip("s").strip()
+            if not part:
+                continue
+            try:
+                x = float(part.replace(",", "."))
+                if not (0 < x <= 7200) or not math.isfinite(x):
+                    raise ValueError
+                on_hand.append(x)
+            except ValueError:
+                bad.append(part)
+        if bad:
+            errors.append(f"Darks you already have: “{bad[0]}” is not an exposure in seconds (e.g. 60, 120, 180).")
+        opts["darks_on_hand"] = sorted(set(on_hand))
         if errors:
             return None, None, None, errors
         return site, op, opts, []
@@ -2645,9 +2701,8 @@ class TargetsPage:
             set_msg(self.msg_var, self.msg, "⚠ Select one or more targets first.")
             return
         names = ", ".join(t.name for t in ts)
-        if not self.app.testing and not messagebox.askyesno(
-                "Remove targets", f"Remove {names} from the list? Blocks already planned stay until you rebuild.",
-                parent=self.app):
+        if not ask_yes_no(self.app, "Remove targets", f"Remove {names} from the list? Blocks already planned "
+                                                       "stay until you rebuild.", "Remove"):
             return
         self.remove_ids({t.id for t in ts})
         set_msg(self.msg_var, self.msg, f"✔ Removed {names}.")
@@ -2883,8 +2938,12 @@ class TransitSearchDialog:
         o = app.options
         self.win, body = _dialog(app, "Find suggested transits")
         ttk.Label(body, text="Transiting planets with a full transit (and its baselines) in the dark on the nights "
-                             "below, from your site, filtered by Setup's Suggested-transits settings (V range, "
-                             "depth, Moon). They land unticked in Transits, soonest first.",
+                             "below, from your site, filtered by Setup's “Suggestions and darks” box (host V "
+                             f"{fmt_num(o.get('suggest_vmin', 9))}–{fmt_num(o.get('suggest_vmax', 13))}, depth at least "
+                             f"{fmt_num(100 * float(o.get('suggest_min_depth', 0.005)), 3)} %, baseline "
+                             f"{fmt_num(o.get('suggest_baseline_min', 30))} min each side, Moon-brightened sky up to "
+                             f"{fmt_num(o.get('suggest_moon_penalty_max', 3))} mag). They land unticked in Transits, "
+                             "soonest first.",
                   style="Hint.TLabel", wraplength=px(app, 460), justify=tk.LEFT).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, px(app, 6)))
         ttk.Label(body, text="Show at most", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=px(app, 3))
@@ -3001,7 +3060,8 @@ class VarSearchDialog:
                                                             if len(nights) > 1 else "")) if nights else "—"
         label("Nights", r)
         ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}: the Targets page's "
-                             "Nights row); your minimum altitude, horizon, darkness and Moon limit from Setup",
+                             "Nights row); your minimum altitude, horizon and darkness from Setup, and the "
+                             "Moon-brightened sky limit from Setup's “Suggestions and darks” box",
                   style="Card.TLabel", wraplength=px(app, 380), justify=tk.LEFT).grid(
             row=r, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
         r += 1

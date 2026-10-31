@@ -78,6 +78,7 @@ DEFAULT_OPTIONS = {
     "suggest_baseline_min": 30.0,
     "suggest_max": 25,                 # Find suggested transits: how many (the Find pop-up sets it; John 24 Oct)
     "suggest_moon_penalty_max": 3.0,   # magnitudes of Moon-brightened sky allowed
+    "darks_on_hand": [],               # exposures (s) the dark library already covers (Setup; fix list 2)
     "tc_sigma_warn_min": 10.0,         # ⚠ when a transit's predicted Tc uncertainty is over this
     # sky
     "dark_sky_v": 21.5,                # mag/arcsec², for the Moon penalty
