@@ -1264,7 +1264,8 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
          into nautical twilight (Sun ≤ −12°, or the planning darkness if that is brighter), as the planner does
          (rule 2 in SPEC B: the plan doc's HAT-P-23 b baseline starts in twilight);
       2. host V in [suggest_vmin, suggest_vmax];  3. depth ≥ suggest_min_depth;
-      4. mean sky.moon_sky_penalty over the window ≤ suggest_moon_penalty_max;
+      4. mean sky.moon_sky_penalty over the window ≤ suggest_moon_penalty_max, and the Moon (while up) never
+         nearer than Setup's default Moon distance (settings.default_moon_sep, by the phase that night) in it;
       5. ranked by S/N = depth × sqrt(minutes in transit) / noise_per_minute(V, Moon-brightened sky, airmass),
          × (1 + 0.5 × min(1, Tc sigma / 30 min)) — new timings of an uncertain ephemeris add the most (no errors
          given: the half bonus).
@@ -1295,6 +1296,9 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
             continue
         wb = sky.night_window(d, site, base_level) or w
         wins.append((d, w[0], w[1], min(wb[0], w[0]), max(wb[1], w[1])))
+    # Setup's default Moon distance per night (the Moon's phase at the middle of the dark, as the planner)
+    moon_lim = {x[0]: settings.default_moon_sep(o, float(sky.moon_radec(0.5 * (x[1] + x[2]))[2]))[0]
+                for x in wins}
     if not wins:
         return []
     jd_lo, jd_hi = min(x[3] for x in wins), max(x[4] for x in wins)
@@ -1318,6 +1322,12 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
             grid = np.linspace(s, e, max(9, int((e - s) * 1440 / 5) + 1))
             if not bool(np.all(sky.up_mask(p["ra"], p["dec"], site, grid))):
                 continue
+            lim = moon_lim.get(night[0])
+            if lim is not None:
+                near = (np.asarray(sky.target_moon_sep(p["ra"], p["dec"], grid)) < lim) & \
+                       (np.asarray(sky.moon_alt_at(site, grid)) > 0.0)
+                if bool(np.any(near)):
+                    continue
             pen = float(np.mean(sky.moon_sky_penalty(p["ra"], p["dec"], site, grid, dark_v)))
             if pen > moon_max:
                 continue

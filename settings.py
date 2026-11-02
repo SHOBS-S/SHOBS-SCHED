@@ -80,6 +80,17 @@ DEFAULT_OPTIONS = {
     "suggest_moon_penalty_max": 3.0,   # magnitudes of Moon-brightened sky allowed
     "darks_on_hand": [],               # exposures (s) the dark library already covers (Setup; fix list 2)
     "tc_sigma_warn_min": 10.0,         # ⚠ when a transit's predicted Tc uncertainty is over this
+    # the site-wide default Moon distance (John 26 Oct; Setup's "Mount and limits" box): "phase" = by the Moon's
+    # phase that night, "fixed" = moon_sep_fixed every night, "off" = none. A target's own "Moon at least" wins.
+    # Applies only while the Moon is up. Per-phase values are mid-range of John's (crescent ~15–20°, quarter
+    # 30–40°, gibbous 45–60°, full 60–90°): a little nearer the generous end, as the Moon-brightened sky limit
+    # already rejects the worst sky.
+    "moon_sep_mode": "phase",
+    "moon_sep_fixed": 30.0,
+    "moon_sep_crescent": 20.0,
+    "moon_sep_quarter": 35.0,
+    "moon_sep_gibbous": 50.0,
+    "moon_sep_full": 70.0,
     # sky
     "dark_sky_v": 21.5,                # mag/arcsec², for the Moon penalty
     # weather
@@ -205,6 +216,62 @@ def migrate_list_caps(s: dict) -> None:
     o["list_caps_25"] = True
 
 
+MOON_PHASES = ("crescent", "quarter", "gibbous", "full")
+MOON_SEP_MODES = ("phase", "fixed", "off")
+
+
+def moon_phase_name(illum) -> str:
+    """The Moon's phase in words from its illuminated fraction (0–1): under 0.30 crescent, under 0.70 quarter,
+    under 0.95 gibbous, else full (waxing and waning alike)."""
+    f = _num(illum)
+    f = 0.0 if f is None else f
+    if f < 0.30:
+        return "crescent"
+    if f < 0.70:
+        return "quarter"
+    if f < 0.95:
+        return "gibbous"
+    return "full"
+
+
+def _opt_deg(o: dict, key: str) -> float:
+    x = _num((o or {}).get(key))
+    return float(DEFAULT_OPTIONS[key]) if x is None or not (0.0 <= x <= 180.0) else x
+
+
+def moon_sep_mode(options: dict | None) -> str:
+    m = str((options or {}).get("moon_sep_mode") or DEFAULT_OPTIONS["moon_sep_mode"]).strip().lower()
+    return m if m in MOON_SEP_MODES else DEFAULT_OPTIONS["moon_sep_mode"]
+
+
+def default_moon_sep(options: dict | None, illum) -> tuple[float | None, str]:
+    """Setup's default minimum Moon distance for a night whose Moon (at the middle of the night) is this
+    illuminated, and the words saying which limit it is ("default for a gibbous Moon 50°"). (None, "") when the
+    default is Off. A target's own "Moon at least" rule overrides it (the planner checks that first)."""
+    o = options or {}
+    mode = moon_sep_mode(o)
+    if mode == "off":
+        return None, ""
+    if mode == "fixed":
+        v = _opt_deg(o, "moon_sep_fixed")
+        return v, f"Setup's default {v:g}°"
+    ph = moon_phase_name(illum)
+    v = _opt_deg(o, f"moon_sep_{ph}")
+    return v, f"default for a {ph} Moon {v:g}°"
+
+
+def moon_sep_text(options: dict | None) -> str:
+    """Setup's Moon distance default in a few words, for pop-ups ("by phase, 20–70°", "30°", "off")."""
+    o = options or {}
+    mode = moon_sep_mode(o)
+    if mode == "off":
+        return "off"
+    if mode == "fixed":
+        return f"{_opt_deg(o, 'moon_sep_fixed'):g}°"
+    vals = [_opt_deg(o, f"moon_sep_{p}") for p in MOON_PHASES]
+    return f"by phase, {min(vals):g}–{max(vals):g}°"
+
+
 def _default_of(dotted: str):
     section, _, field = dotted.partition(".")
     if section == "site":
@@ -280,8 +347,9 @@ def _num(v):
 
 # SHOBS-P's "Tonight's transits" finder limits (its settings' "finder" section) → SCHED's starting values.
 # finder key -> (section, SCHED key, lowest, highest, scale). The finder's depth is in PERCENT, SCHED's a fraction;
-# its "full transit + baseline" filter is SCHED's Suggested filter. "moon" (minimum Moon separation) has no SCHED
-# counterpart (SCHED limits Moon-brightened sky instead); the finder's time strings and switches are its own.
+# its "full transit + baseline" filter is SCHED's Suggested filter. "moon" (minimum Moon separation) is not
+# seeded: SCHED's default Moon distance is phase-aware (Setup's own); the finder's time strings and switches are
+# its own.
 FINDER_FIELDS = {
     "min_alt": ("site", "min_alt", 0.0, 89.0, 1.0),
     "sun_alt": ("site", "sun_alt", -24.0, -6.0, 1.0),

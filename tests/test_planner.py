@@ -20,6 +20,11 @@ FIXTURE = os.path.join(HERE, "fixtures", "golden_oct19_24.json")
 MIN = 1 / 1440
 
 
+# Setup's default Moon distance off: for tests of the flip rule and weekly goals whose made-up fields sit
+# 47-50 degrees from the gibbous / full Moon of 21-24 Oct 2026 (the 1.3.0 default, by phase, rightly keeps them out)
+NO_MOON_DEFAULT = {"moon_sep_mode": "off"}
+
+
 def golden():
     with open(FIXTURE, encoding="utf-8") as fh:
         g = json.load(fh)
@@ -144,7 +149,7 @@ class NightBasics(unittest.TestCase):
         # a field whose meridian is at 21:00: the block starts flip_lead before it, never just after
         mer = sky.local_jd(self.d, 21, 0, self.site.tz)
         t = field_("F", ra_on_meridian(self.site, mer), 40.0)
-        b = self.build([t]).blocks_obj()[0]
+        b = self.build([t], options=NO_MOON_DEFAULT).blocks_obj()[0]
         self.assertAlmostEqual((b.meridian - b.start) * 1440, 12, delta=1.5)
         self.assertTrue(b.flip_in_block)
         self.assertIn("Start before the meridian and let it flip (~21:0", " ".join(b.notes))
@@ -174,7 +179,7 @@ class NightBasics(unittest.TestCase):
         site.mount = "altaz"
         mer = sky.local_jd(self.d, 23, 0, site.tz)
         t = field_("Zenith", ra_on_meridian(site, mer), site.lat + 1.0)
-        b = planner.build_night(self.d, site, self.optics, [t], {}).blocks_obj()[0]
+        b = planner.build_night(self.d, site, self.optics, [t], NO_MOON_DEFAULT).blocks_obj()[0]
         self.assertFalse(b.flip_in_block)
         self.assertFalse(any("flip" in n.lower() for n in b.notes))
         self.assertTrue(any("Zenith keyhole" in c for c in b.cautions))
@@ -188,7 +193,7 @@ class NightBasics(unittest.TestCase):
         t = Target(id="P", name="P b", kind="transit", mode="T", ra=ra, dec=30.0, vmag=11,
                    planet={"name": "P b", "period": 2.5, "t0": t0, "t14": 2 / 24, "depth": 0.01,
                            "t0_err": 0.02, "period_err": 0.0})
-        b = self.build([t]).blocks_obj()[0]
+        b = self.build([t], options=NO_MOON_DEFAULT).blocks_obj()[0]
         self.assertTrue(any("Meridian flip during the transit" in c for c in b.cautions), b.cautions)
         self.assertTrue(any("Ephemeris uncertain" in c for c in b.cautions), b.cautions)   # 0.02 d = 29 min
 
@@ -400,7 +405,7 @@ class WeeklyGoal(unittest.TestCase):
         ngc = gtarget(self.g, "NGC 7789", goal_per_week=goal, block_min=120)
         hist = [{"date": (d - timedelta(days=k)).isoformat(), "target_id": "NGC 7789", "status": "done"}
                 for k in done_days]
-        p = planner.build_night(d, self.site, self.optics, [ngc], {}, history=hist)
+        p = planner.build_night(d, self.site, self.optics, [ngc], NO_MOON_DEFAULT, history=hist)
         b = p.blocks_obj()[0]
         return any("Behind its weekly goal" in n for n in b.notes)
 

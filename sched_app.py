@@ -1346,6 +1346,24 @@ class SetupPage:
                                      state="readonly", width=24)
         self.dark_box.pack(side=tk.LEFT)
         self._tag(f, "site.sun_alt")
+        # the site-wide default Moon distance (John 26 Oct): by the Moon's phase, fixed, or off
+        self._radios(box, 5, "Moon distance at least", "options.moon_sep_mode",
+                     (("By Moon phase", "phase"), ("Fixed", "fixed"), ("Off", "off")))
+        self._entry(box, 6, "Fixed", "options.moon_sep_fixed", "°", width=6, tag=False)
+        ttk.Label(box, text="By phase", style="Card.TLabel").grid(row=7, column=0, sticky="w", pady=px(self.app, 2))
+        f = ttk.Frame(box, style="Card.TFrame")
+        f.grid(row=7, column=1, sticky="w", padx=px(self.app, 6), pady=px(self.app, 2))
+        for i, ph in enumerate(settings.MOON_PHASES):          # 2 × 2, so the box keeps Setup's two columns
+            key = f"options.moon_sep_{ph}"
+            self.vars[key] = tk.StringVar()
+            r, c = divmod(i, 2)
+            ttk.Label(f, text=ph, style="Hint.TLabel").grid(row=r, column=3 * c, sticky="w",
+                                                            padx=(px(self.app, 10) if c else 0, px(self.app, 3)))
+            ttk.Entry(f, textvariable=self.vars[key], width=4).grid(row=r, column=3 * c + 1, pady=(0, 1))
+            ttk.Label(f, text="°", style="Hint.TLabel").grid(row=r, column=3 * c + 2, sticky="w")
+        self._hint(box, 8, "While the Moon is up, targets stay at least this far from it (by phase: the Moon's lit "
+                           "fraction at the middle of the night). A target's own “Moon at least” (Edit) wins; "
+                           "Find suggested transits uses it too.")
         return box
 
     def _horizon_group(self, g):
@@ -1475,6 +1493,10 @@ class SetupPage:
         for k in ("suggest_vmin", "suggest_vmax", "suggest_baseline_min", "suggest_moon_penalty_max"):
             v[f"options.{k}"].set(fmt_num(opt_num(k)))
         v["options.suggest_min_depth"].set(fmt_num(100.0 * opt_num("suggest_min_depth"), 3))
+        v["options.moon_sep_mode"].set(settings.moon_sep_mode(opts))
+        for k in ("moon_sep_fixed",) + tuple(f"moon_sep_{ph}" for ph in settings.MOON_PHASES):
+            x = opt_num(k)
+            v[f"options.{k}"].set(fmt_num(x if 0 <= x <= 180 else d[k]))
         hand = opts.get("darks_on_hand") if isinstance(opts.get("darks_on_hand"), list) else []
         v["options.darks_on_hand"].set(", ".join(fmt_num(x) for x in (settings._num(y) for y in hand)
                                                  if x is not None))
@@ -1786,6 +1808,12 @@ class SetupPage:
         opts["dew_spread_c"] = (sp / 1.8 if tu == "F" else sp) if sp is not None else 2.5
         opts["dew_sensitive_end"] = bool(v["options.dew_sensitive_end"].get())
         d = settings.DEFAULT_OPTIONS
+        mode = v["options.moon_sep_mode"].get()
+        opts["moon_sep_mode"] = mode if mode in settings.MOON_SEP_MODES else d["moon_sep_mode"]
+        for k, label in (("moon_sep_fixed", "Fixed Moon distance"),) + tuple(
+                (f"moon_sep_{ph}", f"Moon distance for a {ph} Moon") for ph in settings.MOON_PHASES):
+            x = num(f"options.{k}", label, 0, 180, required=False, what="degrees")
+            opts[k] = x if x is not None else d[k]
         vmin = num("options.suggest_vmin", "The faint V limit", -2, 25, required=False)
         vmax = num("options.suggest_vmax", "The bright V limit", -2, 25, required=False)
         vmin = d["suggest_vmin"] if vmin is None else vmin
@@ -3049,7 +3077,8 @@ class TransitSearchDialog:
                              f"{fmt_num(_opt(o, 'suggest_vmin'))}–{fmt_num(_opt(o, 'suggest_vmax'))}, depth at least "
                              f"{fmt_num(100 * _opt(o, 'suggest_min_depth'), 3)} %, baseline "
                              f"{fmt_num(_opt(o, 'suggest_baseline_min'))} min each side, Moon-brightened sky up to "
-                             f"{fmt_num(_opt(o, 'suggest_moon_penalty_max'))} mag). They land unticked in Transits, "
+                             f"{fmt_num(_opt(o, 'suggest_moon_penalty_max'))} mag) and Setup's Moon distance "
+                             f"({settings.moon_sep_text(o)}). They land unticked in Transits, "
                              "soonest first.",
                   style="Hint.TLabel", wraplength=px(app, 460), justify=tk.LEFT).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, px(app, 6)))
@@ -3320,7 +3349,7 @@ class EditTargetDialog:
         row("Own minimum altitude", "min_alt", fmt_num((rules.get("min_alt") or {}).get("value")),
             "° (empty = the site's)", 8)
         row("Moon at least", "min_moon_sep", fmt_num((rules.get("min_moon_sep") or {}).get("value")),
-            "° away (empty = no limit)", 8)
+            "° away (empty = Setup's default)", 8)
         tz = app.site.tz
         row("Only between", "window", (rules.get("window") or {}).get("value") or "",
             f"HH:MM-HH:MM, {sky.local_label(tz)}; empty = any time", 12)

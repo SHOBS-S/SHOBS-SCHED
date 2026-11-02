@@ -88,7 +88,8 @@ class SouthernSite(unittest.TestCase):
         mer_wanted = info["dusk"] + 30.0 / 1440.0
         ra = ra_on_meridian(self.site, mer_wanted)
         t = campaign("South field 2", ra, -10.0)
-        b = planner.build_night(self.d, self.site, OPTICS, [t], {}).blocks_obj()[0]
+        # Setup's default Moon distance off: this made-up field is about the flip, not the Moon (1.3.0)
+        b = planner.build_night(self.d, self.site, OPTICS, [t], {"moon_sep_mode": "off"}).blocks_obj()[0]
         self.assertTrue(b.flip_in_block)
         self.assertAlmostEqual((b.meridian - b.start) * 1440, 12, delta=1.5)
         self.assertTrue(any("Start before the meridian and let it flip" in n for n in b.notes), b.notes)
@@ -172,7 +173,8 @@ class DaylightSavingNight(unittest.TestCase):
         # a field whose meridian is near dawn: its block runs up to dawn, across the 02:00 change
         ra = ra_on_meridian(site, info["dawn"] + 1 / 24)
         t = campaign("Dawn field", ra, 40.0, block=600)
-        plan = planner.build_night(d, site, OPTICS, [t], {})
+        # Setup's default Moon distance off: this made-up field is about the clock change, not the Moon (1.3.0)
+        plan = planner.build_night(d, site, OPTICS, [t], {"moon_sep_mode": "off"})
         b = plan.blocks_obj()[0]
         self.assertLessEqual(b.end, plan.dawn + 1e-6)
         self.assertGreater(b.end, plan.dawn - 3 / 1440)

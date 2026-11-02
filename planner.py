@@ -11,7 +11,8 @@ One night (build_night), in this order:
      (next feasible full event within 60 nights), then the better S/N (depth / noise by V).
   3. Flexible targets (campaigns incl. Discovery fields, any-time variables) by priority (a campaign behind its
      weekly goal moves up one level), each at most once, in free time near its ideal spot (below), never inside
-     its blackouts, inside its own rules (min_alt, min_moon_sep, window) and the site limits. A campaign behind
+     its blackouts, inside its own rules (min_alt, min_moon_sep, window) and the site limits (Setup's default
+     Moon distance, by phase, for a target without its own min_moon_sep; fixed-time targets too). A campaign behind
      its weekly goal that finds no room may shrink other flexible blocks toward their minimum ("shorten for goals
      only"); nothing else does.
   4. Flip rule (GEM): never START a block within an hour after its target's meridian; the start goes to
@@ -50,7 +51,7 @@ import numpy as np
 import events
 import sky
 from models import PRIORITY_RANK, Block, NightPlan, Schedule, Target
-from settings import DEFAULT_OPTIONS
+from settings import DEFAULT_OPTIONS, default_moon_sep
 
 MIN = 1.0 / 1440.0
 SIDEREAL_DAY = 0.99726957
@@ -427,6 +428,7 @@ class _Night:
         self.plan = NightPlan(date=d.isoformat())
         self._arrays: dict = {}
         self._next: dict = {}
+        self.info: dict = {}
 
     # -- small utilities --
     def hh(self, jd):
@@ -470,6 +472,18 @@ class _Night:
              "moon": np.asarray(sky.target_moon_sep(t.ra, t.dec, g), dtype=float)}
         self._arrays[t.id] = a
         return a
+
+    def moon_limit(self, t: Target) -> tuple[float | None, str]:
+        """The minimum Moon distance for t tonight and the words naming it: its own "Moon at least" rule (even a
+        low one) wins; otherwise Setup's default (by the Moon's phase at the middle of the night, fixed, or off).
+        Like the rule, it only applies while the Moon is up."""
+        own = None
+        for r in t.rules_obj():
+            if r.kind == "min_moon_sep" and r.value is not None:
+                own = float(r.value)
+        if own is not None:
+            return own, f"your limit {own:g}°"
+        return default_moon_sep(self.o, (self.info or {}).get("moon_illum"))
 
     def idx(self, jd: float) -> int:
         return int(round((jd - self.grid[0]) * 1440.0))
@@ -608,10 +622,7 @@ class _Night:
             want = float(el.event_halfwidth_min or 60.0) * MIN
         a = self.arr(t)
         up = a["up"]
-        moon_lim = None
-        for r in t.rules_obj():
-            if r.kind == "min_moon_sep" and r.value is not None:
-                moon_lim = float(r.value)
+        moon_lim, moon_words = self.moon_limit(t)
         out, reasons = [], []
         for e in evs:
             if t.kind == "transit":
@@ -636,7 +647,7 @@ class _Night:
                 near = (a["moon"][sl] < moon_lim) & self.moon_up[sl]
                 if np.any(near):
                     reasons.append(f"Moon too close during the {label} ({np.min(a['moon'][sl][near]):.0f}°; "
-                                   f"your limit {moon_lim:g}°)")
+                                   f"{moon_words})")
                     continue
             blk = [b for b in events.blackouts(t, c_lo - min_side, c_hi + min_side)]
             if blk:
@@ -904,14 +915,15 @@ class _Night:
                 k = int(np.argmax(np.where(dark, a["alt"], -99.0)))
                 return m, (f"below your limits all night (highest {hi:.0f}°; limit {a['lim'][k]:.0f}° there)"), []
             return m, f"up only {longest(m)} min in a row in the dark (needs {need})", []
+        moon_lim, moon_words = self.moon_limit(t)
+        if moon_lim is not None:
+            m2 = m & ((a["moon"] >= moon_lim) | ~self.moon_up)
+            if longest(m2) < need:
+                best = float(np.max(a["moon"][m])) if np.any(m) else 0.0
+                return m2, f"Moon too close ({best:.0f}° at best; {moon_words})", []
+            m = m2
         for r in t.rules_obj():
-            if r.kind == "min_moon_sep" and r.value is not None:
-                m2 = m & ((a["moon"] >= float(r.value)) | ~self.moon_up)
-                if longest(m2) < need:
-                    best = float(np.max(a["moon"][m])) if np.any(m) else 0.0
-                    return m2, f"Moon too close ({best:.0f}° at best; your limit {float(r.value):g}°)", []
-                m = m2
-            elif r.kind == "window":
+            if r.kind == "window":
                 w = events.clock_window(r, self.d, self.tz)
                 if w:
                     m2 = m & (self.grid >= w[0] - EPS) & (self.grid + MIN <= w[1] + EPS)
