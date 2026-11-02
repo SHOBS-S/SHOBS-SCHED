@@ -368,7 +368,7 @@ How it works:
 - **Planets not yet in the Archive.** Many TESS candidates are not in the NASA Exoplanet Archive's list yet. These
   come from ExoFOP's own values (period, epoch, depth and duration), and their V is estimated from the TESS magnitude
   (V ≈ TESS mag + 0.5, about right for a Sun-like star). Their notes say so, for example *V 11.4 (est. from TESS
-  mag)*. A planet only ExoClock lists comes from ExoClock's values the same way.
+  mag, Sun-like star)*. A red dwarf is fainter in V than that, so check its V before you plan it. A planet only ExoClock lists comes from ExoClock's values the same way.
 - **The lists are saved.** Each list is downloaded once a week and kept, like the Archive's planet list. The ExoFOP
   table is big (about 4 MB), so the first search with it takes a little longer.
 - **The results show their priority.** The result line adds what was used, for example *✔ 9 suggested transits
@@ -385,7 +385,8 @@ When a list can't be had:
   used instead (*…; using the saved copy from 3 days ago*). When none of the lists you chose can be had, every planet
   is searched, as with no priority.
 - **✖ The list arrived in a form SCHED can't read.** The server answered, but not with the list SHOBS-SCHED expects
-  (the site changed its format, or there is a bug in SHOBS-SCHED). The search stops with a ✖: *✖ No suggestions:
+  (the site changed its format, or there is a bug in SHOBS-SCHED). A plain web page in place of the list counts
+  here too, unless it is a login page. The search stops with a ✖: *✖ No suggestions:
   …. ExoFOP answered, but its list is not in the form SCHED knows (a format change or a SCHED bug; please report it).
   Untick its priorities to search without it.* Please do report it (chapter 10). Meanwhile, untick that list's
   levels (or set ExoFOP to **Don't use**) to search without it.

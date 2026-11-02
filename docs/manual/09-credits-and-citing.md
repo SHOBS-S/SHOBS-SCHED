@@ -28,7 +28,8 @@ used.
 
 The saved text starts with the same citation (*How to cite SHOBS-SCHED:*) before the list.
 
-The second line of the status strip is a short version of the same credits, always on screen.
+The second line of the status strip is a short version of the same credits, always on screen (in 1.3.0 it names
+ExoClock and ExoFOP too).
 
 ## The night plot and TAPIR
 

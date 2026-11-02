@@ -245,6 +245,10 @@ Moon limit on each target by hand.
 - **Fixed** uses the one distance in **Fixed** every night, whatever the phase.
 - **Off** sets no default; only the targets with their own Moon limit have one.
 
+Coming from 1.2.0? The first time 1.3.0 opens your settings it says so once in the status line: *New in 1.3.0: a
+site-wide Moon distance (by Moon phase) now applies to every target without its own “Moon at least”. Setup → Mount
+and limits; Off works as before.* Choose **Off** if you want 1.2.0's plans back exactly.
+
 The gray line under the boxes sums it up: *While the Moon is up, targets stay at least this far from it (by phase:
 the Moon's lit fraction at the middle of the night). A target's own “Moon at least” (Edit) wins; Find suggested
 transits uses it too.*
