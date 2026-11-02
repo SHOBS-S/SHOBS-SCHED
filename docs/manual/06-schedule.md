@@ -38,12 +38,15 @@ forecast was used instead, the line says how old it is.
 The schedule is saved after every change, so it is there the next time you start SHOBS-SCHED.
 
 Before it builds, SHOBS-SCHED checks for blocks you locked or set by hand (and have not marked yet), from the first
-night on, whose target is no longer ticked or no longer in your list. If there are any, it asks first, for example:
-*BL Cam has 2 blocks you locked or set by hand on Tue 03 Nov and Wed 04 Nov. Their targets are not ticked to plan (or
-no longer in your list). Remove them too? (No keeps them in the schedule, marked ⚠.)* **Remove** takes them out;
-**Cancel** keeps them. If you keep them, Build does not ask about the same blocks again until you restart
-SHOBS-SCHED. The Targets page asks the same question when you untick or remove such a target (chapter 5), but not
-while a build is running. **Re-review schedule** does not ask.
+night on, whose target is no longer ticked or no longer in your list. If there are any, a window titled **Blocks set
+by hand** asks first, for example: *BL Cam has 2 blocks you locked or set by hand on Tue 03 Nov and Wed 04 Nov.
+Their targets are not ticked to plan. Remove them too? (Cancel keeps them in the schedule, with a note that the
+target is not planned.)* The middle sentence says *… no longer in your list.* for removed targets, and *Their targets
+are not ticked to plan, or no longer in your list.* for a mix. **Remove** takes them out; **Cancel** keeps them, and
+each kept block gets the note *⚠ This target is not ticked to plan* (or *⚠ This target is no longer in your list*).
+If you keep them, SHOBS-SCHED does not ask about the same blocks again until you restart it. **Re-review schedule**
+asks the same question (from tonight on), and so does the Targets page when you untick or remove such a target
+(chapter 5), but not while a build is running.
 
 Building again keeps your work: every block you **locked**, set the times of, or **marked** (Done, Partial, Clouded
 out) stays on its night with its times and its mark, and the rest of the night is rebuilt around it. A build that
@@ -59,10 +62,13 @@ The planner fills each night in a fixed order. Knowing it helps you read the pla
 
 1. **Your blocks first.** Locked blocks, blocks whose times you set, and blocks already marked stay exactly as they
    are. If one is no longer possible (the target is below your limits, outside the darkness, inside a no-transit
-   window, or overlapping another of your blocks), it stays and gets a ⚠.
+   window, or overlapping another of your blocks), it stays and gets a ⚠. One whose target you unticked or removed
+   stays too, with an information note (see the Build question above).
 2. **Fixed-time targets next.** Transits (from the baseline before ingress to the baseline after egress) and timed
    variable events (a minimum or maximum ± its half-width). The transit itself must be in the planning darkness and
-   above your limits; the baselines may run into nautical twilight, and may be shortened to fit the night. When two
+   above your limits, and, while the Moon is up, no closer to it than the target's **Moon at least** or Setup's
+   default **Moon distance at least** (chapter 4); the baselines may run into nautical twilight, and may be shortened
+   to fit the night. When two
    fixed-time targets collide, their baselines are trimmed first, down to 20 minutes a side (*⚠ Baseline trimmed*).
    If they still collide, one wins: higher priority first, then the rarer chance (a transit not seen again for a
    month beats one that comes back in three nights), then the better signal-to-noise.
@@ -71,8 +77,9 @@ The planner fills each night in a fixed order. Knowing it helps you read the pla
    (or less when there is less room, but never under its **Shortest useful block**), placed at the best part of the
    night for it: on an equatorial mount wholly before its meridian when a full block fits there, otherwise starting
    about 12 minutes before its meridian (see *Flexible blocks and the meridian flip*, below); on an alt-az mount
-   centred on the meridian. Its own rules apply: **Own minimum altitude**, **Moon at least**, **Only between**, and its
-   no-transit windows.
+   centred on the meridian. Its own rules apply: **Own minimum altitude**, **Moon at least** (or, when that is empty,
+   Setup's default **Moon distance at least**, by the Moon's phase that night), **Only between**, and its no-transit
+   windows.
 4. **Overheads.** A few minutes between blocks for slewing and plate solving, autofocus at the start of the night,
    and a refocus after a defocused target.
 5. **Weather.** With the dew setting on, flexible blocks end when dew is expected (Setup, chapter 4).
@@ -100,8 +107,10 @@ place for it: it leaves a step in the light curve. The planner places flexible b
 **No flip, but not at another target's cost.** Running a block wholly before the meridian puts it earlier in the
 night than a flip-at-start block. Sometimes that takes the room another target needed. When targets didn't fit, the
 planner tries each no-flip block at flip-at-start instead, and keeps the change only when every target that fitted
-still fits and at least one more does. The moved block then says *Flips at the start (not run wholly before its
-meridian) so another target fits tonight*. Blocks you locked or set the times of are never changed this way.
+still fits and at least one more does. Every block moved this way then says *Flips at the start (not run wholly
+before its meridian) so another target fits tonight*. Blocks you locked or set the times of are never changed this
+way. Only a room that holds the **whole** block counts as "fits before the meridian": a shorter no-flip run never wins
+over a full flip-at-start block.
 
 Fixed-time blocks (transits, timed events) cannot move: their flip falls where it falls, with a note (and a ⚠ when it
 is inside the transit).
@@ -112,8 +121,8 @@ Each night has a tab named by its date, for example **Tue 20 Oct**. A **⚠** in
 needs your attention: a block still planned (not yet marked) has a caution you should act on, or the night has a
 night-wide ✖ (no dark time). A target that didn't fit, a cloudy forecast, a night-wide ⚠ line above the plot (such as
 *⚠ Dew expected from 04:05*; a block that the dew reaches still has its own caution), and the
-cautions *⚠ Baseline trimmed*, *⚠ Ephemeris uncertain* and *⚠ This target is no longer in your list* do not put a ⚠
-on the tab; you still see them on the night itself. A night that has passed says **(past)**.
+cautions *⚠ Baseline trimmed*, *⚠ Ephemeris uncertain*, *⚠ This target is no longer in your list* and *⚠ This target
+is not ticked to plan* do not put a ⚠ on the tab; you still see them on the night itself. A night that has passed says **(past)**.
 
 A tab is built the first time you open it. At the top is the night's line: the date, the dark hours and which darkness
 (*Dark 19:42–05:58 (astronomical)*), the Moon (below) and the weather summary (*Clear until 02:00, then 60–80 %
@@ -162,7 +171,8 @@ the blocks to clear it. A legend under the plot repeats these meanings.
 The plot grows with the window: a taller window gives a taller plot.
 
 > **Note:** If Matplotlib is missing, the plot's place shows *⚠ Night plot needs matplotlib — run Create
-> shortcuts.bat again*. Everything else on the page works. See chapter 10.
+> shortcuts.bat again* on Windows (on a Mac and on Linux it names that system's start file instead). Everything else
+> on the page works. See chapter 10.
 
 ## The nightly table
 
@@ -217,10 +227,12 @@ full, with each caution on its own ⚠ line.
 | *⚠ Dew expected from 04:05* | Dew is forecast during the block (*…: the block ends there* when the dew setting cut it short). |
 | *⚠ Below your limits 03:10–03:40* | One of your own (locked) blocks now runs below your limits. |
 | *⚠ Overlaps your block …* / *⚠ Inside a blackout: …* | One of your own blocks clashes with another or with a no-transit window. |
-| *⚠ This target is no longer in your list* | A block you locked or set by hand, kept when its target was unticked or removed. Remove it if you no longer want it. |
+| *⚠ This target is no longer in your list* | A block you locked or set by hand, kept when its target was removed. Remove it if you no longer want it. |
+| *⚠ This target is not ticked to plan* | A block you locked or set by hand, kept when its target was unticked (it is still in your list). Remove it, or tick the target again. |
 
-*⚠ Baseline trimmed*, *⚠ Ephemeris uncertain* and *⚠ This target is no longer in your list* are for your
-information: they do not put a ⚠ on the night's tab. The others do, while the block is still planned.
+*⚠ Baseline trimmed*, *⚠ Ephemeris uncertain*, *⚠ This target is no longer in your list* and *⚠ This target is not
+ticked to plan* are for your information: they do not put a ⚠ on the night's tab. The others do, while the block is
+still planned.
 
 ## Change a block
 
@@ -232,7 +244,9 @@ Select a row, then use the buttons under the table. A result line under the butt
 - **Move to night…** moves a flexible block to another night of the schedule. It keeps its place in the sky, so it
   starts about 4 minutes earlier on the clock for each night later (later for an earlier night); the planner checks
   it is still up. The block is kept there (the table says *set by you*), and that night is rebuilt around it. A
-  transit or a timed event cannot move: its time is set by the sky, so the button is grayed for those.
+  transit or a timed event cannot move: its time is set by the sky, so the button is grayed for those (should you get
+  there anyway, the line says *✖ WASP-12 b happens at a time set by the sky (a transit or a timed event); it cannot
+  move to another night.*).
 - **Edit times…** asks for a new start and end (`HH:MM` on the site's clock). The block is marked *set by you*, keeps
   those times through rebuilds, and the night is rebuilt around it. The times must be between sunset and sunrise, and
   must not overlap a block that stays put (fixed, locked, set by you, or marked).
@@ -264,10 +278,14 @@ keeps the camera angle fixed.
 - *BL Cam: below your limits all night (highest 24°; limit 30° there); next chance Mon 26 Oct*
 - *DY Peg: no free stretch of 45 min left tonight (longest 19 min); next chance Wed 04 Nov*
 - *KELT-1 b: no transit tonight*
+- *BL Cam: Moon too close (38° at best; default for a gibbous Moon 50°)*, or for a transit *Moon too close during
+  the transit 22:10–00:45 (31°; your limit 40°)*. The words in brackets say which limit was used: *your limit 40°* is
+  the target's own **Moon at least**; *default for a gibbous Moon 50°* (crescent, quarter, gibbous or full) is Setup's
+  **Moon distance at least** by phase; *Setup's default 30°* is its **Fixed** value (chapter 4).
 
 When another block took the room (a collision, or no free stretch left), a green **Plan this instead** button appears
-under the line. It rebuilds the night with that target first; the one that gave way then appears here instead. The
-result line says *✔ Rebuilt with WASP-12 b first.*, or *✖ Still didn't fit: …* when it cannot be done.
+under the line. It rebuilds the night with that target first; the one that gave way then appears here instead. It
+only ever plans a ticked target. The result line says *✔ Rebuilt with WASP-12 b first.*, or *✖ Still didn't fit: …* when it cannot be done.
 
 **Free time.** Gaps of 15 minutes or more in the dark with nothing planned, for example *Free 00:36–01:02 (26 min)*. A good place
 for an extra any-time variable, or for flats and darks.
@@ -317,7 +335,8 @@ What each mark means for the planner:
    partly observed are back in the pool and get planned again where they fit.
 
 If locked blocks on past nights were never marked, SHOBS-SCHED asks first: they would go to the history as Planned,
-not Done. Mark them first if you observed them.
+not Done. Mark them first if you observed them. Like **Build schedule**, it also asks about blocks you locked or set
+by hand whose targets are unticked or removed (see "Build a schedule" above).
 
 The busy bar says *Re-reviewing 7 nights…* while it works, and the line under the controls reports the result as for a build.
 

@@ -15,8 +15,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAN = ROOT / "docs" / "manual"
-VERSION = "1.2.0"
-EDITION = "Second edition"
+VERSION = "1.3.0"
+EDITION = "Third edition"
 TITLE = "SHOBS-SCHED User's Manual"
 
 CSS = """

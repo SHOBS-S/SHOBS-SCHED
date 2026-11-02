@@ -44,7 +44,7 @@ What it does **not** do:
 SHOBS-SCHED has one main window. The blue sidebar on the left reads **Shiloh Hill / Observatory / Photometry /
 Scheduler**, with **(SHOBS-SCHED)** under it and the line *Plans each night's photometry: transits, variable stars
 and campaigns*. Below that are the four steps, and at the bottom **Credits and sources** and the version number
-(**Version 1.2.0**).
+(**Version 1.3.0**).
 
 ![The SHOBS-SCHED window: sidebar with the four steps, the white page area with its title, and the status strip along the bottom](img/01-window-parts.png)
 
@@ -52,7 +52,7 @@ The white area on the right is the page you are working on. Every page has its t
 under it saying what the page is for.
 
 Along the bottom runs the **status strip**. Its first line holds the latest news (for example **✔ Setup saved.**);
-its second line is a short credits line. While the program is working, a busy bar appears at the lower left of the
+its second line is a short credits line. While the program is working, a green busy bar appears at the lower left of the
 status strip; chapter 8 explains it.
 
 SHOBS-SCHED always opens on the Setup page.

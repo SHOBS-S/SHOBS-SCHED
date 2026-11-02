@@ -12,14 +12,14 @@ This chapter covers:
 - the line at the top (where the values came from) and the source tags,
 - the Site box, including the time zone,
 - the Telescope and camera box, including **Read from a FITS frame…**,
-- the Mount and limits box (meridian flips, minimum altitude, airmass, darkness),
+- the Mount and limits box (meridian flips, minimum altitude, airmass, darkness, and the default Moon distance),
 - the Horizon profile box,
 - the Weather box (forecast source and dew),
 - the Suggestions and darks box (the filter for the Find buttons, and the darks you already have),
 - saving, and leaving the page with unsaved changes,
 - the planner settings that are not on the page.
 
-![The Setup page: Site, Mount and limits and Weather on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
+![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values) and Weather on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
 
 The boxes sit in two columns when the window is wide enough: **Site**, **Mount and limits** and **Weather** on the
 left; **Telescope and camera**, **Horizon profile** and **Suggestions and darks** on the right. In a narrow window
@@ -35,8 +35,8 @@ The line at the top of the page says where the values on the page came from:
   SHOBS-P (settings of 2026-10-20). Change them there, or override here. Camera values read from a FITS frame. Tags:
   from SHOBS-P, from FITS, set here.*
 - When SHOBS-P's *Tonight's transits* finder gave SHOBS-SCHED its first limits, the line adds: *The minimum altitude,
-  darkness and the Suggested-transits filter started from SHOBS-P's Tonight's-transits finder (once; later changes
-  there do not move them).*
+  darkness and the “Suggestions and darks” filter started from SHOBS-P's Tonight's-transits finder (once; later
+  changes there do not move them).*
 
 Beside many fields, a small gray **tag** says where that one value came from:
 
@@ -151,6 +151,9 @@ Values read from a frame are tagged *from FITS* and win over SHOBS-P's. Type ove
 | **Minimum altitude** | Degrees. No block is planned below it. 30° by default. |
 | **Maximum airmass** | No block is planned at a higher airmass. 2.0 by default (about 30° altitude). |
 | **Darkness to plan in** | **Astronomical (Sun −18°)** or **Nautical (Sun −12°)**. |
+| **Moon distance at least** | **By Moon phase** (the default), **Fixed** or **Off**: how close the Moon may come to any target that has no Moon limit of its own (see "The Moon distance" below). |
+| **Fixed** | Degrees, used when **Fixed** is chosen. 30° by default. |
+| **By phase** | Four small boxes, **crescent**, **quarter**, **gibbous** and **full**, used when **By Moon phase** is chosen. 20°, 35°, 50° and 70° by default. |
 
 ### Meridian flips
 
@@ -193,7 +196,9 @@ For a **flexible block**, the planner tries to avoid the flip altogether:
    target fits tonight*.
 
 Set **Tracks past the meridian** to what your mount really does (in ASIAIR this is its meridian-flip setting). A
-generous margin lets more blocks finish without a flip.
+generous margin lets more blocks finish without a flip. If you clear the field and save, SHOBS-SCHED keeps the value
+you had saved before (or the 5-minute default); it never turns an empty field into 0, which would make every block
+flip at once.
 
 On an **Alt-az** mount there are no flips. Instead, a target that passes higher than 85° gets *⚠ Zenith keyhole*
 with the time: an alt-az mount cannot track smoothly through the zenith.
@@ -221,6 +226,47 @@ later.
 
 If SHOBS-P's finder used another darkness (for example Sun −15°), that value appears in the drop-down too.
 
+### The Moon distance
+
+A bright Moon near your target brightens the sky around it, and the brighter the Moon, the farther that glow
+reaches. **Moon distance at least** keeps every target at least this far from the Moon, so you don't have to set a
+Moon limit on each target by hand.
+
+- **By Moon phase** (the default) picks the distance from how much of the Moon is lit at the middle of the night:
+
+  | The Moon's lit fraction | Phase | Default distance |
+  |---|---|---|
+  | under 30 % | crescent | 20° |
+  | 30 % to under 70 % | quarter | 35° |
+  | 70 % to under 95 % | gibbous | 50° |
+  | 95 % or more | full | 70° |
+
+  Waxing and waning count the same. Type your own values in the four **By phase** boxes.
+- **Fixed** uses the one distance in **Fixed** every night, whatever the phase.
+- **Off** sets no default; only the targets with their own Moon limit have one.
+
+The gray line under the boxes sums it up: *While the Moon is up, targets stay at least this far from it (by phase:
+the Moon's lit fraction at the middle of the night). A target's own “Moon at least” (Edit) wins; Find suggested
+transits uses it too.*
+
+Some details:
+
+- **Only while the Moon is up.** Once the Moon has set (or before it rises), the distance does not matter.
+- **A target's own limit wins.** A target with its own **Moon at least** in its Edit dialog (chapter 5) uses that,
+  even when it is smaller than the default. Leave a target's field empty to use this default.
+- **It applies to every block**, fixed-time ones (transits, timed minima) as well as flexible ones.
+- **Find suggested transits…** skips a transit if the Moon comes closer than this at any time during it, while the
+  Moon is up (chapter 5).
+- **When the Moon spoils a target**, the reason says which limit was used, for example *Moon too close (38° at best;
+  default for a gibbous Moon 50°)*, *Moon too close (38° at best; Setup's default 30°)* with **Fixed**, or *Moon too
+  close (38° at best; your limit 40°)* for a target's own limit (chapter 6).
+- **The limits:** each value is 0 to 180 degrees. An empty box goes back to its default when you save. A wrong
+  value gives, for example, *Moon distance for a gibbous Moon must be between 0 and 180 degrees.*
+
+How this differs from **Moon-brightened sky up to** (in **Suggestions and darks**, below): that one is about how
+much the Moon brightens the sky over the whole transit, and is used only by the two Finds. **Moon distance at least**
+is a plain distance, used by the planner for every block and by **Find suggested transits…**.
+
 ## Horizon profile
 
 If trees or buildings block part of your sky, give SHOBS-SCHED your horizon:
@@ -239,7 +285,7 @@ magnetic declination, east positive) so the profile is turned to true north.
 
 | Field | What it does |
 |---|---|
-| **Forecast source** | Where the forecast comes from. In 1.2.0 the only source is **Open-Meteo** (free, no account). |
+| **Forecast source** | Where the forecast comes from. In 1.3.0 the only source is **Open-Meteo** (free, no account). |
 | **Dew when temp − dew point under** | The dew threshold: dew is expected from the first moment in the dark when the air temperature is less than this many degrees above the dew point. 2.5 °C by default. |
 | **End dew-sensitive runs at the predicted dew onset** | When ticked (the default), flexible blocks (campaigns and any-time variables) end when dew is expected. Fixed-time blocks are not cut; they get a ⚠ instead. |
 
@@ -320,7 +366,10 @@ editing the file by hand.
 
 The suggestion filter (`suggest_vmin`, `suggest_vmax`, `suggest_min_depth`, `suggest_baseline_min`,
 `suggest_moon_penalty_max`) and `darks_on_hand` are kept in the same `options` section, but you set them in the
-**Suggestions and darks** box (above).
+**Suggestions and darks** box (above). So are the Moon distance (`moon_sep_mode`, `moon_sep_fixed`,
+`moon_sep_crescent`, `moon_sep_quarter`, `moon_sep_gibbous`, `moon_sep_full`), set in **Mount and limits**, and the
+Priority choices of **Find suggested transits…** (`suggest_exoclock_levels`, `suggest_exofop_max`), set in its
+window (chapter 5).
 
 ---
 

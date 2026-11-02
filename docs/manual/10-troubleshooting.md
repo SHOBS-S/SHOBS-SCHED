@@ -34,12 +34,17 @@ The sections:
    ASIAIR list copied. Without a screen it says `SKIP`.
 6. **Live services (information only)**: whether the NASA Exoplanet Archive, SIMBAD, VizieR (VSX copy), SIMBAD
    mirror (IDIA), VizieR mirror (IDIA), AAVSO VSX and Open-Meteo answer. Each is `OK` or `NOTE`; never a failure.
-   A `NOTE` says `did not answer (…); SCHED falls back to its saved copies`.
+   A `NOTE` says `did not answer (…); SCHED falls back to its saved copies`. Then the two Priority lists of **Find
+   suggested transits…**: `OK    ExoClock planet list answered: … planets` and `OK    ExoFOP TOI table answered:
+   … TOIs (not FP/FA)`, or a `NOTE` ending `Find suggested transits searches without it`. (The ExoFOP table is large;
+   this check can take a minute.)
 
 Each check is `PASS` or `FAIL`. If the end says `FAILED: N check(s): …`, the lines marked `FAIL` say which.
 
 **The log** goes to `selftest_log.txt` in the program folder and a copy to `SHOBS-SCHED_selftest_log.txt` in your
-Downloads folder. Attach it to any problem report.
+Downloads folder. Attach it to any problem report. On a Mac, **Run self-test.command** says where both are when it
+finishes. If it says *The self-test did not pass or could not run*, leave the window open and copy the message above
+it; when no Python could be set up, the test never ran and there is no log, so that message is all there is.
 
 ## The program's log
 
@@ -54,21 +59,35 @@ If something goes wrong inside the window, the status strip says *✖ Something 
 The folder name starts with a dot. On Windows, type `%USERPROFILE%\.shobs_sched` into the Explorer address bar to
 open it. On Linux or a Mac it is `~/.shobs_sched`.
 
+**On a Mac, when SHOBS-SCHED does not start.** If **Start SHOBS-SCHED.command** fails, its Terminal window stays
+open and says *SHOBS-SCHED did not start. Leave this window open and copy the message above.* It then names the two
+logs: *The package install log is ~/Library/Application Support/SHOBS-SCHED/pip_log.txt; the program's own log is
+~/.shobs_sched/sched.log.* Send both with your report. (In Finder, **Go → Go to Folder…** and paste the path.)
+
 ## "Night plot needs matplotlib"
 
-If a night tab shows *⚠ Night plot needs matplotlib — run Create shortcuts.bat again* where the plot should be,
-Matplotlib is not installed in SHOBS-SCHED's environment (for example after updating from a version that did not
-need it).
+If a night tab shows *⚠ Night plot needs matplotlib — …* where the plot should be, Matplotlib is not installed in
+SHOBS-SCHED's environment (for example after updating from a version that did not need it). The message names the
+fix for your system:
 
-1. Close SHOBS-SCHED.
-2. Double-click **Create shortcuts.bat**. It installs any missing package. (On Linux or a Mac, the message still
-   names Create shortcuts.bat: start SHOBS-SCHED again with its start file instead, which checks the packages each
-   time and installs a missing one.)
-3. Start SHOBS-SCHED again.
+| System | The message ends | What to do |
+|---|---|---|
+| Windows | *— run Create shortcuts.bat again* | Close SHOBS-SCHED, double-click **Create shortcuts.bat** (it installs any missing package), and start SHOBS-SCHED again. |
+| Mac | *— start SHOBS-SCHED again with Start SHOBS-SCHED.command (it installs what is missing)* | Close SHOBS-SCHED and double-click **Start SHOBS-SCHED.command**. |
+| Linux | *— start SHOBS-SCHED again with bash start_linux.sh (it installs what is missing)* | Close SHOBS-SCHED and type `bash start_linux.sh` in a terminal in the program folder. |
+
+The self-test's Environment section says the same (*matplotlib does not load (…); run Create shortcuts.bat again*,
+or the Mac or Linux start file).
 
 If the message instead says *matplotlib is installed but its Tk backend does not load (…)*, Matplotlib cannot draw in
-a window with this Python. Run **Create shortcuts.bat** again; if the message stays, reinstall Python from
-python.org with **tcl/tk and IDLE** ticked.
+a window with this Python. Do the step above first; if the message stays:
+
+- **Windows:** reinstall Python from python.org with **tcl/tk and IDLE** ticked.
+- **Mac:** install Python 3.13 from python.org (it includes Tk).
+- **Linux:** install your Python's Tkinter package (e.g. `python3-tk`).
+
+If the message reads *⚠ Night plot needs matplotlib (nightplot.py did not load): install SHOBS-SCHED again*, a
+program file is missing or damaged: unzip SHOBS-SCHED again.
 
 Everything else works without the plot, and **Print plan card** simply prints without plots.
 
@@ -98,6 +117,20 @@ SHOBS-SCHED tells a service that does not answer from one that does not know the
 
 The plan itself never needs the network: once your targets are in the list, you can build offline.
 
+### ExoClock and ExoFOP (Find suggested transits' Priority lists)
+
+These two are asked only when you choose a **Priority** in **Find suggested transits…** (chapter 5), and each list
+is saved for a week.
+
+- **The server does not answer, or the list needs a login now.** The search goes on without that list and says so
+  with a ⚠ (*⚠ ExoFOP did not answer (…) — searched without its priorities.*). With a saved copy, that copy is used
+  (*…; using the saved copy from 3 days ago*). Nothing for you to fix: try again later. ExoFOP's table is large
+  (about 4 MB) and its server can be slow; SHOBS-SCHED waits up to two minutes for it.
+- **✖ … answered, but its list is not in the form SCHED knows (a format change or a SCHED bug; please report it).**
+  The site changed its list, or SHOBS-SCHED has a bug. This is never hidden, because a quietly wrong list would give
+  wrong suggestions. Please report it (below), with the log. Until it is fixed, untick that list's ExoClock levels
+  (or set ExoFOP SG1 to **Don't use**) and the search runs without it.
+
 ## The cache
 
 Saved answers from the services are kept in `.shobs_sched\cache` in your user folder, one small file per lookup.
@@ -105,6 +138,7 @@ Saved answers from the services are kept in `.shobs_sched\cache` in your user fo
 | What | Fetched again after |
 |---|---|
 | Planet ephemerides and the transit list | 7 days |
+| The ExoClock and ExoFOP Priority lists | 7 days |
 | VSX and SIMBAD answers | 30 days |
 | The variable-star search | 1 day |
 | The forecast | 3 hours |
@@ -129,7 +163,10 @@ The latest printed card, `plan_card.html`, is kept in the same folder.
 | Setup changes "did not stick". | They were saved, but the schedule was built before. | Press **Build schedule** (the ⚠ line says so). |
 | **Find suggested transits…** finds few planets, or none. | The filters in Setup's **Suggestions and darks** box (host V range, depth, baseline, Moon-brightened sky) are tight for your nights. The Find suggested transits pop-up shows the values it uses. | Widen them in Setup and **Save**, then Find again. |
 | **Darks to shoot** lists exposures you already have. | **Darks you already have** in Setup's **Suggestions and darks** box is empty or missing them. | Type them there (for example `60, 120, 180`) and **Save**, then **Build schedule**. |
-| On untick, **Remove** or **Build schedule**, a question *Blocks set by hand* comes up. | A target that is no longer planned still has blocks you locked or set by hand; a rebuild keeps those. | **Remove** takes the blocks out too; **Cancel** keeps them in the schedule, marked ⚠. |
+| On untick, **Remove**, **Build schedule** or **Re-review schedule**, a question *Blocks set by hand* comes up. | A target that is no longer planned still has blocks you locked or set by hand; a rebuild keeps those. | **Remove** takes the blocks out too; **Cancel** keeps them in the schedule, with a note (*⚠ This target is not ticked to plan* or *⚠ This target is no longer in your list*) that does not mark the night's tab. |
+| A target often says *Moon too close* in **Didn't fit**, even with the Moon well away from where you would worry. | Setup's **Moon distance at least** (by phase) is stricter than you need, or the target's own **Moon at least** is. The brackets name the limit used. | Lower the by-phase values (or choose **Fixed** or **Off**) in Setup, or give the target its own **Moon at least**, which wins. |
+| **Find suggested transits…** finds fewer planets than in 1.2.0. | 1.3.0 also keeps suggestions clear of the Moon by Setup's **Moon distance at least**; or a Priority is chosen, so only listed planets are searched. | Check the window's text (it names the Moon distance) and the Priority rows. |
+| Every equatorial block suddenly flips at its start. | **Tracks past the meridian** was saved as 0 by an older version (an empty field once saved 0). | Type your mount's real value (5 by default) and **Save**. In 1.3.0 an empty field keeps the saved value. |
 | SHOBS-P's site does not appear. | The fields were typed in SHOBS-SCHED (tagged *set here*), which win. | Type SHOBS-P's value back into the field and **Save**: it follows SHOBS-P again. |
 
 ## Starting afresh
