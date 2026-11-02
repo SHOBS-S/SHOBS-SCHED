@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import io
 import math
+import sys
 import threading
 from datetime import date, timedelta
 
@@ -67,9 +68,30 @@ def available(force: bool = False) -> bool:
     return _load(force) is not None
 
 
-MISSING_TEXT = "⚠ Night plot needs matplotlib — run Create shortcuts.bat again"
-TK_MISSING_TEXT = ("⚠ Night plot: matplotlib is installed but its Tk backend does not load ({why}). Run Create "
-                   "shortcuts.bat again; if this stays, reinstall Python with “tcl/tk and IDLE” ticked.")
+def reinstall_hint(platform: str | None = None) -> str:
+    """What puts the packages back on this computer (1.3.0: Mac and Linux users were told to run a .bat): the
+    launcher that sets up SHOBS-SCHED's environment, as the README names it."""
+    platform = sys.platform if platform is None else platform
+    if platform.startswith("win"):
+        return "run Create shortcuts.bat again"
+    if platform == "darwin":
+        return "start SHOBS-SCHED again with Start SHOBS-SCHED.command (it installs what is missing)"
+    return "start SHOBS-SCHED again with bash start_linux.sh (it installs what is missing)"
+
+
+def tk_fix_hint(platform: str | None = None) -> str:
+    """The second step when the Tk backend still does not load: reinstall Python with Tk."""
+    platform = sys.platform if platform is None else platform
+    if platform.startswith("win"):
+        return "reinstall Python with “tcl/tk and IDLE” ticked"
+    if platform == "darwin":
+        return "install Python 3.13 from python.org (it includes Tk)"
+    return "install your Python's Tkinter package (e.g. python3-tk)"
+
+
+MISSING_TEXT = f"⚠ Night plot needs matplotlib — {reinstall_hint()}"
+TK_MISSING_TEXT = ("⚠ Night plot: matplotlib is installed but its Tk backend does not load ({why}). "
+                   f"{reinstall_hint()[:1].upper() + reinstall_hint()[1:]}; if this stays, {tk_fix_hint()}.")
 TK_PROBLEM = ""            # why the Tk backend did not load (set by tk_canvas)
 
 

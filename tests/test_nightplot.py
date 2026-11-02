@@ -623,7 +623,7 @@ class TestScheduleTabPlot(Base):
             tab = page.tabs[0]
             self.assertIsNone(tab.mpl_canvas)
             self.assertEqual(tab.plot_missing.cget("text"),
-                             "⚠ Night plot needs matplotlib — run Create shortcuts.bat again")
+                             "⚠ Night plot needs matplotlib — " + nightplot.reinstall_hint())
             self.assertEqual(str(tab.plot_missing.cget("style")), "Warn.TLabel")
             rows = tab.table.get_children()
             self.assertGreater(len(rows), 3, "the table still works")

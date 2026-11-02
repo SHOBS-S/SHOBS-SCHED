@@ -91,7 +91,8 @@ class TestTypesAndCredits(unittest.TestCase):
                   "Jensen", "NumPy", "Matplotlib", "tzdata", "SHOBS-P"):
             self.assertIn(s, text)
         self.assertIn("Shiloh Hill Observatory", credits.COPYRIGHT)
-        self.assertEqual(credits.citation_text("1.1.0"), "", "no DOI yet: no How to cite line")
+        # 1.3.0: SCHED has its Zenodo concept DOI, so How to cite is shown (tests/test_round6.py checks the text)
+        self.assertIn("doi:10.5281/zenodo.23674791", credits.citation_text("1.3.0"))
 
 
 class TestCapsMigration(unittest.TestCase):

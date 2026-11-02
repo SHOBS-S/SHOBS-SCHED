@@ -108,6 +108,11 @@ def planet_pick(name: str) -> str:
     return f"{name}: transiting planet (a transit target)"
 
 
+def fixed_move_refusal(name: str) -> str:
+    """Move to night on a fixed-time block: one wording for the button and for move_block (1.3.0)."""
+    return f"✖ {name} happens at a time set by the sky (a transit or a timed event); it cannot move to another night."
+
+
 def and_list(names) -> str:
     names = [str(n) for n in names]
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1] if names else ""
@@ -882,9 +887,12 @@ class App(tk.Tk):
         days = sorted({d for d, _b in pairs})
         when = and_list([night_label(d, self.site) for d in days])
         n = len(pairs)
+        it = 'it' if n == 1 else 'them'
+        # the buttons are Remove and Cancel; a kept block only carries an information note (it raises no ⚠ on the
+        # night's tab), so the text says just that (1.3.0 review)
         msg = (f"{and_list(names)} {'has' if len(names) == 1 else 'have'} {n} block{'s' if n != 1 else ''} you "
-               f"locked or set by hand on {when}. {why} Remove {'it' if n == 1 else 'them'} too? (No keeps "
-               f"{'it' if n == 1 else 'them'} in the schedule, marked ⚠.)")
+               f"locked or set by hand on {when}. {why} Remove {it} too? (Cancel keeps {it} in the schedule, "
+               "with a note that the target is not planned.)")
         if ask_yes_no(self, "Blocks set by hand", msg, "Remove"):
             return self.drop_blocks(pairs)
         # kept: not asked again this session for these blocks (review)
@@ -892,6 +900,24 @@ class App(tk.Tk):
                                                                          round(float(b.get("start") or 0), 6))
                                                                         for d, b in pairs}
         return 0
+
+    def ask_stale_hand_set(self, start: date) -> int:
+        """Build and Re-review: blocks set by hand from `start` on whose targets are unticked or removed — ask
+        whether they go (the same question as Untick and Remove), except those already kept this session."""
+        kept = getattr(self, "_kept_hand_set", set())
+        stale = [(d, b) for d, b in self.hand_set_blocks(None, start.isoformat())
+                 if (d, b.get("target_id"), round(float(b.get("start") or 0), 6)) not in kept]
+        if not stale:
+            return 0
+        ids = {t.id for t in self.targets}
+        gone = {b.get("target_id") for _d, b in stale} - ids
+        if not gone:
+            why = f"{'Its target is' if len(stale) == 1 else 'Their targets are'} not ticked to plan."
+        elif len(gone) == len({b.get("target_id") for _d, b in stale}):
+            why = f"{'Its target is' if len(stale) == 1 else 'Their targets are'} no longer in your list."
+        else:
+            why = "Their targets are not ticked to plan, or no longer in your list."
+        return self.ask_drop_hand_set(stale, why)
 
     def plan_nights(self) -> list[date]:
         """The nights the Targets page searches and shows events for (John 24 Oct): first night plan_start (never
@@ -902,9 +928,9 @@ class App(tk.Tk):
         if not isinstance(start, date) or start < tonight:
             start = tonight
         try:
-            n = min(7, max(1, int(self.options.get("nights", 7) or 7)))
+            n = min(7, max(1, int(self.options.get("nights", 1) or 1)))
         except (TypeError, ValueError):
-            n = 7
+            n = 1                                   # the default: tonight only (1.3.0; was 7)
         return [start + timedelta(days=k) for k in range(n)]
 
     def set_plan_span(self, start: date | None = None, n: int | None = None, source=None):
@@ -1589,8 +1615,8 @@ class SetupPage:
         if fits:
             bits.append("Camera values read from a FITS frame.")
         if finder:
-            bits.append("The minimum altitude, darkness and the Suggested-transits filter started from SHOBS-P's "
-                        "Tonight's-transits finder (once; later changes there do not move them).")
+            bits.append("The minimum altitude, darkness and the “Suggestions and darks” filter started from "
+                        "SHOBS-P's Tonight's-transits finder (once; later changes there do not move them).")
         if bits:
             text = "✔ " + " ".join(bits) + " Tags: from SHOBS-P, from FITS, set here."
         else:
@@ -1788,8 +1814,17 @@ class SetupPage:
         dfw = num("options.defocus_fwhm_factor", "Defocus widens stars", 1, 20, required=False, what="times")
         opts["defocus_fwhm_factor"] = dfw if dfw is not None else 1.5
         site["mount"] = v["site.mount"].get() or "GEM"
-        pm = num("site.past_meridian_min", "Tracking past the meridian", 0, 120, required=False, what="minutes")
-        site["past_meridian_min"] = pm if pm is not None else 0.0
+        # the error names the field as the form does; an empty field keeps the saved value (or the 5-min default),
+        # never 0 (1.3.0: an empty field saved 0 and every GEM block then had to flip at once)
+        pm = num("site.past_meridian_min", "Tracks past the meridian", 0, 120, required=False, what="minutes")
+        if pm is None:
+            try:
+                pm = float(site.get("past_meridian_min"))
+            except (TypeError, ValueError):
+                pm = None
+            if pm is None or not math.isfinite(pm):
+                pm = Site().past_meridian_min
+        site["past_meridian_min"] = pm
         ma = num("site.min_alt", "Minimum altitude", 0, 89, what="(degrees)")
         site["min_alt"] = ma if ma is not None else 30.0
         mx = num("site.max_airmass", "Maximum airmass", 1.0, 8.0, required=False)
@@ -2642,7 +2677,8 @@ class TargetsPage:
         if needs is not None and isinstance(exc, needs):
             label = getattr(exc, "main_id", "") or name
             pos = {"ra": getattr(exc, "ra", None), "dec": getattr(exc, "dec", None),
-                   "vmag": getattr(exc, "vmag", None), "main_id": label}
+                   "vmag": getattr(exc, "vmag", None), "main_id": label,
+                   "via": str(getattr(exc, "via", "") or ""), "note": str(getattr(exc, "note", "") or "")}
             if "exoplanet" in str(getattr(exc, "source", "")).lower():
                 # a planet that does not transit (or has no transit ephemeris): never an empty transit target —
                 # offer its star instead (same position), with the star's transiting planets if it has any
@@ -2678,8 +2714,9 @@ class TargetsPage:
         self.add_ind.finish(f"✖ {exc}" if str(exc) else f"✖ Could not add {name} ({exc.__class__.__name__}).")
 
     def add_star_lookup(self, system: str):
-        """The host star of a planet system as its own target: its position from SIMBAD (cached) and its planets
-        from the Archive, then ask what it is (a campaign, a variable or a Discovery field)."""
+        """The host star of a planet system as its own target: its position (SIMBAD at CDS or its mirror, else the
+        NASA Exoplanet Archive's host position; cached) and its planets from the Archive, then ask what it is (a
+        campaign, a variable or a Discovery field)."""
         tg = mod("targets")
         if tg is None or not hasattr(tg, "resolve_simbad"):
             self.add_ind.finish(missing("targets"))
@@ -2687,8 +2724,9 @@ class TargetsPage:
         self.star_lookup(system, None, "", typed_transit=False)
 
     def star_lookup(self, name: str, pos: dict | None, why: str, typed_transit: bool = True):
-        """In the background: the star's position from SIMBAD when pos is None, and its known planets from the NASA
-        Exoplanet Archive (by name, else by position); then the "which mode?" question."""
+        """In the background: the star's position when pos is None (SIMBAD, its mirror, else the Archive's host
+        position: targets.resolve_star), and its known planets from the NASA Exoplanet Archive (by name, else by
+        position); then the "which mode?" question."""
         tg = mod("targets")
         if tg is None:
             self.add_ind.finish(missing("targets"))
@@ -2705,11 +2743,15 @@ class TargetsPage:
 
         def done(res, exc):
             if exc is not None or not res or res[0].get("ra") is None:
-                self.add_ind.finish(f"✖ Could not find {name}'s position: {exc or 'SIMBAD gave none'}.")
+                reason = (str(exc).strip().rstrip(".") if exc is not None and str(exc).strip() else
+                          "neither SIMBAD nor the NASA Exoplanet Archive gave one")
+                self.add_ind.finish(f"✖ Could not find {name}'s position: {reason}.")
                 return
             p, info, problem = res
             self.ask_star_mode(name, p, why, info, problem, typed_transit)
-        self.app.jobs.run(work, done, self.add_ind, f"Looking up the star {name}")
+        # with a position already in hand only its planets are looked up
+        self.app.jobs.run(work, done, self.add_ind,
+                          f"Looking up the star {name}" if pos is None else f"Looking up {name}'s known planets")
 
     def ask_star_mode(self, name: str, pos: dict, why: str, info: dict | None, problem: str = "",
                       typed_transit: bool = True):
@@ -2761,8 +2803,11 @@ class TargetsPage:
             self.add_ind.finish("⚠ Not added.")
             return
         kind, mode = km
+        # the position's real source: resolve_star falls back to the Archive's host position when SIMBAD fails
+        via_nea = str(pos.get("via") or "") == "NEA"
         t = Target(name=name, kind=kind, mode=mode, ra=pos.get("ra"), dec=pos.get("dec"), vmag=pos.get("vmag"),
-                   source="SIMBAD")
+                   source="NASA Exoplanet Archive" if via_nea else "SIMBAD")
+        t.lookup_note = str(pos.get("note") or "")        # e.g. "position from the NASA Exoplanet Archive (…)"
         if kind == "variable":
             t.elements = {"vtype": "", "any_time": True}
         windows = []
@@ -2805,7 +2850,7 @@ class TargetsPage:
         note = str(getattr(t, "lookup_note", "") or "").strip()
         src = re.sub(r"\s*\((.*)\)\s*$", r", \1", str(t.source or "").strip())   # no nested brackets (fix 11)
         done = f"Added {t.name}" + (f" ({src})" if src else "") + "."
-        self.add_ind.finish(f"⚠ {done} {note[:1].upper() + note[1:]}." .replace("..", ".") if note else "✔ " + done,
+        self.add_ind.finish(f"⚠ {done} {note[:1].upper() + note[1:].rstrip('.')}." if note else "✔ " + done,
                             linger_ms=0 if note else 6000)
 
     # ---- remove / keep / edit ----
@@ -2994,8 +3039,8 @@ class TargetsPage:
         n = len(self.suggestion_nights())
         nights = "tonight" if n == 1 else f"the next {n} nights"
         text = (f"{len(added)} suggested transit{'s' if len(added) != 1 else ''} found, soonest first."
-                if added else f"Done: no new full transits fit {nights} (planets already listed are not "
-                              "suggested again).")
+                if added else f"Done: no new full transits fit {nights} with Setup's “Suggestions and darks” "
+                              "filter (planets already listed are not suggested again).")
         note = str(note or "").strip().rstrip(".")
         # the planet list is refreshed weekly (the timings are not: each suggestion gets the most precise published
         # ephemeris, fetched now); only an Archive that did not answer is a caution (John 24 Oct: "stale?")
@@ -3070,7 +3115,8 @@ class TargetsPage:
         self.fill()
         self._start_next_events()
         text = (f"{len(added)} suggested variable{'s' if len(added) != 1 else ''} found, soonest first."
-                if added else "Done: no new variables fit these nights and settings.")
+                if added else "Done: no new variables fit these nights, this search and Setup's “Suggestions "
+                              "and darks” Moon limit.")
         info = str(info or "").strip().rstrip(".")
         set_msg(self.msg_var, self.msg, f"Suggested variables: {info}." if info else "")
         note = str(note or "").strip().rstrip(".")
@@ -4215,12 +4261,10 @@ class SchedulePage:
         if start >= app.tonight():
             app.plan_start = start                      # the Targets page follows the built nights
         site, optics, opts = app.site, app.optics, dict(app.options)
-        kept = getattr(app, "_kept_hand_set", set())
-        stale = [(d, b) for d, b in app.hand_set_blocks(None, start.isoformat())
-                 if (d, b.get("target_id"), round(float(b.get("start") or 0), 6)) not in kept]
-        if stale:
-            app.ask_drop_hand_set(stale, "Their targets are not ticked to plan (or no longer in your list).")
-        targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
+        app.ask_stale_hand_set(start)
+        # every target goes to the planner (it plans only the ticked ones): a kept hand-set block of an unticked
+        # target then says "not ticked to plan", not "no longer in your list" (1.3.0)
+        targets = [Target.from_dict(t.to_dict()) for t in app.targets]
         pl = mod("planner")
         prior = Schedule.from_dict(app.schedule.to_dict())
         if hasattr(pl, "roll_forward") and any(nd.get("date", "") < start.isoformat() for nd in prior.nights):
@@ -4261,8 +4305,9 @@ class SchedulePage:
                                    "history as Planned (not Done). Mark them first if you observed them. Continue?"):
             return
         n = max(1, len(app.schedule.nights) or int(self.n_var.get() or 1))
+        app.ask_stale_hand_set(today)                   # the same question as Build, Untick and Remove (1.3.0)
         site, optics, opts = app.site, app.optics, dict(app.options)
-        targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
+        targets = [Target.from_dict(t.to_dict()) for t in app.targets]      # the planner plans the ticked ones
         prior = Schedule.from_dict(app.schedule.to_dict())
 
         def work(step):
@@ -4382,7 +4427,8 @@ class SchedulePage:
         locked = [b for b in night.blocks_obj() if (b.locked or b.set_by_user or b.status != "planned")
                   and not (drop is not None and same(b, drop))] + list(extra_locked or [])
         site, optics, opts = app.site, app.optics, dict(app.options)
-        targets = [Target.from_dict(t.to_dict()) for t in app.planner_targets()]
+        targets = [Target.from_dict(t.to_dict()) for t in app.targets]      # the planner plans the ticked ones
+        ticked = {t.id for t in targets if t.enabled}       # "Plan this instead" never plans an unticked target
         # the history plus the earlier nights' blocks, exactly as build_schedule passes them (weekly-goal pacing)
         if hasattr(pl, "history_for_night"):
             history = pl.history_for_night(Schedule.from_dict(app.schedule.to_dict()), night.date)
@@ -4392,7 +4438,7 @@ class SchedulePage:
 
         def work():
             return pl.build_night(d, site, optics, targets, opts, locked=locked, weather=night.weather,
-                                  history=history, prefer=set(prefer))
+                                  history=history, prefer=set(prefer) & ticked)
 
         def done(new, exc):
             if exc is not None:
@@ -4519,7 +4565,7 @@ class NightTab:
             self.mpl_canvas.mpl_connect("figure_leave_event", lambda _e: self.hover_var.set(""))
         else:
             text = np_mod.missing_text() if np_mod is not None else \
-                "⚠ Night plot needs matplotlib — run Create shortcuts.bat again"
+                "⚠ Night plot needs matplotlib (nightplot.py did not load): install SHOBS-SCHED again"
             self.plot_missing = ttk.Label(self.plot_box, text=text, style=style.status_style("warn"),
                                           justify=tk.LEFT)
             self.plot_missing.pack(anchor="w", fill=tk.X, pady=px(app, 4))
@@ -4905,8 +4951,7 @@ class NightTab:
             return
         i, b = s
         if b.fixed:
-            self._act(f"✖ {b.name} happens at a time set by the sky (a transit or a timed event); it cannot move "
-                      "to another night.")
+            self._act(fixed_move_refusal(b.name))
             return
         nights = self.app.schedule.nights
         others = [(k, night_label(n["date"], self.app.site)) for k, n in enumerate(nights) if k != self.idx]
@@ -4931,7 +4976,7 @@ class NightTab:
         night = self.night()
         b = night.blocks_obj()[i]
         if b.fixed:
-            self._act(f"✖ {b.name} happens at a time set by the sky; it cannot move to another night.")
+            self._act(fixed_move_refusal(b.name))
             return False
         dst = self.page.night(k)
         days = (date.fromisoformat(dst.date) - date.fromisoformat(night.date)).days

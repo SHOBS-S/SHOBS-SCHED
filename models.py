@@ -339,7 +339,8 @@ class Schedule:
 
 # Block cautions that are information, not a call to act: they never raise a night tab's ⚠ (fix list 25)
 INFO_CAUTIONS = ("⚠ Baseline trimmed", "⚠ Ephemeris uncertain",
-                 "⚠ This target is no longer in your list")   # a hand-set block the user chose to keep (review)
+                 "⚠ This target is no longer in your list",    # a hand-set block the user chose to keep (review)
+                 "⚠ This target is not ticked to plan")        # the same, its target unticked but listed (1.3.0)
 
 
 def serious_caution(text: str) -> bool:

@@ -30,9 +30,10 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
+import settings
 import sky
 
-USER_AGENT = "SHOBS-SCHED/1.0"
+USER_AGENT = f"SHOBS-SCHED/{settings.APP_VERSION}"
 TIMEOUT_S = 20
 MAX_AGE_H = 3.0                 # forecasts older than this are fetched again
 MAX_FORECAST_DAYS = 16          # Open-Meteo's limit

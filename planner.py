@@ -582,7 +582,9 @@ class _Night:
                     p.cautions.append(f"⚠ Overlaps your block {q.name} ({self.hh(q.start)}–{self.hh(q.end)})")
             if t is None:
                 p.cautions.append("⚠ This target is no longer in your list")
-            elif t.ra is not None:
+            elif not t.enabled and t.id not in self.prefer:
+                p.cautions.append("⚠ This target is not ticked to plan")
+            if t is not None and t.ra is not None:
                 jd = np.linspace(b.start, b.end, max(3, int(b.minutes() / 2) + 1))
                 up = sky.up_mask(t.ra, t.dec, self.site, jd, _rule_min_alt(t))
                 if not np.all(up):
@@ -1117,9 +1119,10 @@ class _Night:
             # a second ideal (fix list 24, John 29 Oct): the WHOLE block before the meridian, ending inside the
             # tracking margin (no flip, no settle, no dropped frames). It wins whenever a full-length block fits in
             # the dark before the meridian; otherwise the flip goes at the start (flip_lead before the meridian).
+            # Only a FULL block counts (1.3.0): a room shorter than the wanted block never makes a short no-flip run
+            # beat the flip-at-start placement.
             before = m_ideal + margin * MIN - want * MIN
-            longest = max(r[1] for r in pool)
-            whole = [r for r in pool if r[1] >= min(want, longest)
+            whole = [r for r in pool if r[1] >= want
                      and g[r[0]] + r[1] * MIN <= m_ideal + margin * MIN + EPS
                      and not any(g[r[0]] < m < g[r[0]] + r[1] * MIN and (g[r[0]] + r[1] * MIN - m) * 1440.0 > margin
                                  for m in mers)]
@@ -1341,6 +1344,9 @@ class _Night:
         return b
 
 
+FLIP_AT_START_NOTE = "Flips at the start (not run wholly before its meridian) so another target fits tonight"
+
+
 def build_night(d: date, site, optics, targets: list, options: dict, locked: list = (),
                 weather: dict | None = None, history: list | None = None,
                 prefer: set = frozenset()) -> NightPlan:
@@ -1374,10 +1380,11 @@ def build_night(d: date, site, optics, targets: list, options: dict, locked: lis
             break
         tid, plan, used = better
         fas.add(tid)
-        for b in plan.blocks:
-            if b.get("target_id") == tid and not (b.get("locked") or b.get("set_by_user")):
-                b.setdefault("notes", []).append("Flips at the start (not run wholly before its meridian) so "
-                                                 "another target fits tonight")
+    # the note goes on every block that gave up its no-flip spot, after the last round: each round builds a new plan,
+    # so a note put on an earlier round's plan was lost (1.3.0)
+    for b in plan.blocks:
+        if b.get("target_id") in fas and not (b.get("locked") or b.get("set_by_user")):
+            b.setdefault("notes", []).append(FLIP_AT_START_NOTE)
     return plan
 
 
