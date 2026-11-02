@@ -225,7 +225,7 @@ class TestApply(Base):
                          ("ExoFOP", "ExoFOP", "ExoFOP-TESS TOI table"))
         self.assertAlmostEqual(t.vmag, 10.91)
         self.assertIn("ExoFOP SG1 priority 2", t.notes)
-        self.assertIn("V 10.9 (est. from TESS mag)", t.notes)
+        self.assertIn("V 10.9 (est. from TESS mag, Sun-like star)", t.notes)
         self.assertNotIn("TOI-9999.01", self.precise_calls, "ExoFOP's ephemeris is kept")
         self.assertAlmostEqual(t.planet["depth"], 0.013613)
 

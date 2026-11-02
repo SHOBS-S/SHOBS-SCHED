@@ -1271,7 +1271,7 @@ def priority_note(p: dict) -> str:
     obs); ExoFOP SG1 priority 2" and, for a V estimated from another band, "; V 11.4 (est. from TESS mag)"."""
     out = f"; {p['priority_text']}" if p.get("priority_text") else ""
     if p.get("vmag_est") and p.get("vmag") is not None:
-        out += f"; V {p['vmag']:.1f} (est. from {p['vmag_est']})"
+        out += f"; V {p['vmag']:.1f} (est. from {p['vmag_est']}" + (", Sun-like star" if p['vmag_est'] == "TESS mag" else "") + ")"
     return out
 
 
@@ -1306,6 +1306,7 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     dark_v = float(o.get("dark_sky_v", sky.DARK_SKY_V))
     fwhm = float(o.get("fwhm_arcsec", 3.0))
     excl = {_key_name(n) for n in (exclude_names or ())}
+    excl_p = {prio_key(n) for n in (exclude_names or ())}      # "WASP-12b" listed also hides ExoClock's "WASP12b"
 
     wins = []                                   # (date, dark0, dark1, base0, base1)
     base_level = max(float(site.sun_alt), sky.NAUTICAL)
@@ -1327,6 +1328,7 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     first: dict[str, tuple] = {}
     cands = [p for p in catalog if p.get("vmag") is not None and vmin <= p["vmag"] <= vmax
              and (p.get("depth") or 0) >= min_depth and p.get("t14") and _key_name(p.get("name")) not in excl
+             and prio_key(p.get("name")) not in excl_p
              and sky.culmination_alt(p["dec"], site.lat) >= floor]
 
     def score_planet(p, best):
@@ -1452,7 +1454,8 @@ EXOFOP_REF = "ExoFOP-TESS TOI table"
 EXOCLOCK_REF = "ExoClock"
 TESS_TO_V = 0.5                       # V ≈ TESS mag + 0.5 for a Sun-like star (T sits near Cousins I; V − I ≈ 0.7)
 MATCH_ARCSEC = 20.0                   # the same planet under two names: this close on the sky …
-MATCH_PERIOD_FRAC = 0.002             # … with periods this alike
+MATCH_PERIOD_FRAC = 0.01              # … with periods this alike (1 %: the live TOI table has no planet names, and
+                                      # TOI-1338.01 / -2180.01 / -2525.01 differ from the Archive by 0.2–0.3 %; Fable 1.3.0)
 _LOGIN_WORDS = ("log in", "login", "sign in", "signin", "password", "subscribe", "register")
 
 
@@ -1513,7 +1516,9 @@ def _priority_text_fetch(who: str, url: str) -> str:
     if head.startswith("<"):
         if any(w in head for w in _LOGIN_WORDS):
             raise _PrioritySoft(f"{who}'s list now needs a login (a login page came back)", login=True)
-        raise _PrioritySoft(f"{who} sent a web page instead of its list (a login or outage page)", login=True)
+        # a plain web page with no login words is a format change, not an outage: John's rule (1 Nov) says it must
+        # surface, never be hidden (Fable 1.3.0 review)
+        raise PriorityFormatError(f"{who} sent a web page instead of its list")
     return text
 
 

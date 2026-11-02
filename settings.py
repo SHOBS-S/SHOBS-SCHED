@@ -201,6 +201,8 @@ def load_settings() -> dict:
         if not raw.get("list_caps_25"):      # written before round 4: migrate once (the default says done)
             out["options"].pop("list_caps_25", None)
             migrate_list_caps(out)
+        if raw and "moon_sep_mode" not in raw:   # a settings file from before 1.3.0: say once that the site-wide
+            out["moon_default_new"] = True       # Moon distance is new (Fable 1.3.0 review; not saved, see App)
     return out
 
 

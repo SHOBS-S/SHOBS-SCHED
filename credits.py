@@ -7,7 +7,7 @@ LICENSE_LINE = ("SHOBS-SCHED is free software under the GNU General Public Licen
                 "with NO WARRANTY. See the LICENSE file.")
 # The status-bar line (as SHOBS-P's): copyright, what it is built on, its data, and where the full list is.
 STATUS_LINE = ("© Shiloh Hill Observatory    Data: NASA Exoplanet Archive, AAVSO VSX, CDS (VizieR, SIMBAD), "
-               "Open-Meteo    Night plot after TAPIR    Full list: Credits and sources")
+               "Open-Meteo, ExoClock, ExoFOP    Night plot after TAPIR    Full list: Credits and sources")
 
 # SCHED's Zenodo concept DOI (all versions; resolves to the newest) and an ASCL ID once it has one; the Credits
 # page shows "How to cite" only when one is set.

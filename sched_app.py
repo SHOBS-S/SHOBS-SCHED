@@ -764,6 +764,11 @@ class App(tk.Tk):
         if self.site_name_note:          # said once at start too
             self.set_status(f"⚠ Site name cleared: it was SHOBS-P's telescope name (“{self.site_name_note}”); type "
                             "your observatory's name on the Setup page.")
+        if self.moon_default_new:        # first start after 1.3.0 on an older settings file: say it once, then save
+            self.set_status("New in 1.3.0: a site-wide Moon distance (by Moon phase) now applies to every target "
+                            "without its own “Moon at least”. Setup → Mount and limits; Off works as before.")
+            self.moon_default_new = False
+            settings.save_settings(self.settings)
         if not testing:                  # kept transits still on the composite ephemeris: upgrade them (background)
             self.after(800, lambda: self.pages[1].refine_ephemerides(quiet=True))
 
@@ -814,6 +819,7 @@ class App(tk.Tk):
         self.shobs_p = settings.read_shobs_p()
         s, taken = settings.merge_shobs_p(s)
         self.site_name_note = str(s.pop("site_name_cleared", "") or "")    # said once on Setup, never saved
+        self.moon_default_new = bool(s.pop("moon_default_new", False))     # 1.3.0 upgrade note, said once
         self.settings = s
         self.p_taken = list(taken)
         self.p_values = self._shobs_p_values()
