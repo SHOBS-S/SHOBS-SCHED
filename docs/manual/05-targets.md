@@ -78,8 +78,12 @@ come last. A row stays in its place when you tick or untick it.
 
 **Source** says where the target came from: **✔ NEA** or **✔ NEA (most precise)** (the NASA Exoplanet Archive; the
 second when a more precise published ephemeris than the Archive's default was chosen), **✔ VSX** or **✔ VizieR VSX**
-(AAVSO VSX, directly or through VizieR's copy), **✔ SIMBAD**, or **typed**. A suggestion shows *suggested · NEA* or
-*suggested · VizieR VSX* until you tick it or press **Keep**; then it shows **✔ NEA** or **✔ VizieR VSX**. A transit whose predicted mid-time is uncertain by more than 10 minutes adds a **⚠ Tc ±**
+(AAVSO VSX, directly or through VizieR's copy), **✔ SIMBAD**, **✔ NASA Exoplanet Archive** (a star whose position
+came from the Archive, see "Add a target by name"), or **typed**. A suggestion shows *suggested · NEA* or
+*suggested · VizieR VSX* until you tick it or press **Keep**; then it shows **✔ NEA** or **✔ VizieR VSX**. A transit
+found with a Priority list (see "Find suggested transits") adds its priority, for example *suggested · NEA · ExoClock
+high, SG1 2*; a TESS candidate that is not yet in the Archive shows *suggested · ExoFOP · SG1 1* (or *· ExoClock* for
+a planet only ExoClock lists). A transit whose predicted mid-time is uncertain by more than 10 minutes adds a **⚠ Tc ±**
 note (see "Ephemeris precision" below).
 
 ### Details of the selected target
@@ -126,7 +130,11 @@ How the name is looked up:
    SHOBS-SCHED asks SIMBAD at the CDS (Strasbourg) first, then its mirror at IDIA (Cape Town) when the CDS does not
    answer. When SIMBAD does not answer at all, or does not know the name, a planet host's position is taken from
    the **NASA Exoplanet Archive** instead. This also works with a planet's name: `V1298 Tau d` gives its star,
-   V1298 Tau.
+   V1298 Tau. A star added this way shows **✔ NASA Exoplanet Archive** as its Source, and the result line says where
+   the position came from with a ⚠, for example *⚠ Added V1298 Tau (NASA Exoplanet Archive). Position from the NASA
+   Exoplanet Archive (SIMBAD did not answer).* When the position is already known and only the star's planets are
+   still to be looked up, the busy bar says *Looking up V1298 Tau's known planets…* instead of *Looking up the star
+   V1298 Tau…*.
 
 Some results need a word from you:
 
@@ -143,7 +151,9 @@ Some results need a word from you:
 - **A name already in the list** gives *⚠ DY Peg is already in the list.*
 - **A name nobody knows.** When SIMBAD answers that it does not know the name (and no other service knows it
   either), the result line says *✖ No planet, variable star or SIMBAD object is called Foo 123. Check the
-  spelling.* SHOBS-SCHED says this only when SIMBAD's reply really says the name is unknown. Any other error from
+  spelling.* When a star's position is looked up and neither SIMBAD nor the Archive knows the name, it says *✖ Could
+  not find Foo 123's position: Neither SIMBAD nor the NASA Exoplanet Archive knows Foo 123. Check the spelling, or
+  type the coordinates by hand.* SHOBS-SCHED says this only when SIMBAD's reply really says the name is unknown. Any other error from
   SIMBAD counts as SIMBAD not answering (next point), so a problem on SIMBAD's side is never reported as a wrong
   name.
 - **A service that does not answer.** If the name was looked up before, the saved copy is used, and the result
@@ -156,7 +166,8 @@ Some results need a word from you:
   not answer (SIMBAD reported a problem on its side; its mirror: no answer within 30 s) and there is no saved copy
   for HD 12345. Try again later.* When the Archive or VSX did not answer but SIMBAD knows the
   star, nothing is added: the line names the service that did not answer and ends with what SIMBAD calls the star
-  (*(SIMBAD knows … as ….)*), since the name may still be a planet or a variable. Try again later.
+  (*(SIMBAD knows … as ….)*, or *(the NASA Exoplanet Archive has … as ….)* when the position came from the
+  Archive), since the name may still be a planet or a variable. Try again later.
 
 > **Tip:** A campaign that orbits a planet host, for example a star you monitor for flares, should have no data while
 > its planets transit, or your light curve will have dips that are not the star's. SHOBS-SCHED offers these
@@ -191,20 +202,25 @@ So when its target is no longer planned, SHOBS-SCHED asks what to do with it. A 
 asks, for example:
 
 *DY Peg has 2 blocks you locked or set by hand on Wed 04 Nov and Thu 05 Nov. A rebuild keeps blocks set by hand even
-when the target is no longer planned. Remove them too? (No keeps them in the schedule, marked ⚠.)*
+when the target is no longer planned. Remove them too? (Cancel keeps them in the schedule, with a note that the
+target is not planned.)*
 
 It asks:
 
 - when you **untick** a target that has such blocks (from tonight on),
 - when you **Remove** such a target (the middle sentence then reads *A rebuild keeps blocks set by hand even when the
   target is gone.*),
-- when you press **Build schedule** on the Schedule page and such blocks belong to targets that are unticked or no longer in
-  the list (*Their targets are not ticked to plan (or no longer in your list).*).
+- when you press **Build schedule** or **Re-review** on the Schedule page and such blocks belong to targets that are
+  unticked or no longer in the list. The middle sentence then says which: *Its target is not ticked to plan.* (*Their
+  targets are …* for several blocks), *Its target is no longer in your list.*, or, for a mix, *Their targets are not
+  ticked to plan, or no longer in your list.*
 
 Press **Remove** to take the blocks out of the schedule; the line says, for example, *✔ DY Peg will not be planned;
 removed 2 blocks set by hand. Build the schedule to apply.* or *✔ Removed DY Peg and 2 blocks set by hand.* Press
 **Cancel** to keep them. Blocks you chose to keep are not asked about again until you restart SHOBS-SCHED. A kept
-block of a removed target carries *⚠ This target is no longer in your list*.
+block carries a note: *⚠ This target is no longer in your list* for a removed target, or *⚠ This target is not ticked
+to plan* for one still in the list but unticked. These notes are for your information only: they do not mark the
+night's tab with ⚠ (chapter 6).
 
 If a build is running when you untick, the question waits until the next **Build schedule**, and the line says so.
 
@@ -238,7 +254,7 @@ period and Tc; if it has transiting planets, the dialog suggests adding the plan
 | **Shortest useful block** | The fewest minutes worth a visit. 45 by default. A visit shorter than this is not planned. |
 | **Goal** | Nights a week (0 to 7) for a campaign; 0 = no goal. |
 | **Own minimum altitude** | This target's own limit, above the site's. Empty = the site's. |
-| **Moon at least** | The closest the Moon may come, in degrees. Empty = no limit. |
+| **Moon at least** | The closest the Moon may come while it is up, in degrees (the hint says *° away (empty = Setup's default)*). Empty = Setup's **Moon distance at least** (chapter 4). A value here wins over that default, even a smaller one. |
 | **Only between** | Clock times on the site's clock, `HH:MM-HH:MM` (e.g. `21:00-02:30`). Empty = any time. |
 
 Why an own exposure matters: the estimate is a cold start, good to within a factor of two or so. Once you know what
@@ -288,19 +304,23 @@ dialog says why, for example *✖ Not saved: The shortest useful block cannot be
 your site.
 
 1. Press **Find suggested transits…** (bottom right).
-2. A window shows **Show at most** (how many transits; 25 by default, remembered) and the **Nights** it will search
-   (the Nights row). Its text names the filter and its values, for example *filtered by Setup's “Suggestions and
-   darks” box (host V 9–13, depth at least 0.5 %, baseline 30 min each side, Moon-brightened sky up to 3 mag)*. To
-   change them, go to that box on the Setup page (chapter 4).
-3. Press **Search**.
+2. A window shows **Show at most** (how many transits; 25 by default, remembered), the **Nights** it will search
+   (the Nights row), and the optional **Priority** rows. Its text names the filter and its values, for example
+   *filtered by Setup's “Suggestions and darks” box (host V 9–13, depth at least 0.5 %, baseline 30 min each side,
+   Moon-brightened sky up to 3 mag) and Setup's Moon distance (by phase, 20–70°)*. With a fixed Moon distance that
+   last part reads *(30°)*, and with none *(off)*. To change these, go to the Setup page (chapter 4).
+3. If you like, choose a **Priority** (see "Priority: ExoClock and ExoFOP" below). Then press **Search**. Your
+   Priority choices are remembered for next time.
 4. The busy bar at the lower left counts through the search in two stages, each with its own count. First it
    looks for the transits of every planet in the Archive's list of transiting planets (refreshed weekly):
    *Finding suggested transits: transits of each planet… 120 of 640*. Then it checks the best of them again with
    each planet's most precise published ephemeris: *Finding suggested transits: the best with their most precise
    ephemeris… 12 of 50*.
-5. The result line says, for example, *✔ 12 suggested transits found, soonest first.*
+5. The result line says, for example, *✔ 12 suggested transits found, soonest first.* When nothing fits, it says
+   *Done: no new full transits fit the next 7 nights with Setup's “Suggestions and darks” filter (planets already
+   listed are not suggested again).*
 
-![The Find suggested transits window: what it searches, the filter values from Setup's "Suggestions and darks" box, Show at most 25, the nights Sat 31 Oct – Fri 06 Nov, and Search and Cancel](img/05-find-transits.png)
+![The Find suggested transits window: what it searches, the filter values from Setup's "Suggestions and darks" box and Setup's Moon distance, Show at most 25, the nights, the optional Priority rows (ExoClock priority ticks, ExoFOP SG1 priority), and Search and Cancel](img/05-find-transits.png)
 
 The suggestions land **unticked** in the Transits box, among your own targets. Tick one to plan it (that keeps it
 too), or press **Keep** to keep it without planning it. Suggestions you neither ticked nor kept are replaced when
@@ -314,7 +334,9 @@ defaults):
    reach into nautical twilight.
 2. **A star you can measure well**: V between 9 and 13.
 3. **A deep enough transit**: at least 0.5 %.
-4. **Not washed out by the Moon**: the Moon brightens the sky by no more than 3 magnitudes over the transit.
+4. **Not washed out by the Moon**: the Moon brightens the sky by no more than 3 magnitudes over the transit, and,
+   while it is up, it never comes closer than Setup's **Moon distance at least** (by the Moon's phase that night;
+   chapter 4).
 5. **Ranked by the signal-to-noise you can expect**: depth × √(minutes in transit) ÷ the noise for that star's
    brightness and the Moon-brightened sky. A planet whose predicted mid-time is uncertain gets a bonus, because new
    timings of it add the most to what is known.
@@ -324,6 +346,52 @@ suggested again.
 
 > **Tip:** If SHOBS-P is installed, its *Tonight's transits* finder's V range, depth and baseline were taken as
 > these starting values, once (chapter 4).
+
+### Priority: ExoClock and ExoFOP
+
+Two public projects keep lists of the planets that most need new transit timings, and **Find suggested
+transits…** can search just the planets on those lists. It's optional: choose nothing, and the search looks at
+every planet, as it always has.
+
+The window's gray line says: *Priority (optional): search only planets that ExoClock or ExoFOP-TESS ask timings for —
+those on either list you choose; the Setup filters above still apply. Choose none to search every planet.*
+
+| Row | Choices | What it means |
+|---|---|---|
+| **ExoClock priority** | Ticks: **Alert**, **High**, **Medium**, **Low** | ExoClock (www.exoclock.space) follows the known planets the Ariel space mission will observe and ranks them by how badly new timings are needed. **Alert** is the most urgent. Tick the levels you want. |
+| **ExoFOP SG1 priority** | **Don't use**, **1 only**, **1–2**, **1–3**, **1–4** (*(1 = highest; TESS planet candidates)*) | ExoFOP-TESS's table of TESS planet candidates (TOIs), with the priority its ground-based photometry group (SG1) gives each for follow-up. **1–2** searches the TOIs of priority 1 or 2. False positives and false alarms are left out. |
+
+How it works:
+
+- **Either list.** Choose both, and a planet on **either** list is searched. Setup's filters (V range, depth,
+  baseline, the Moon) still apply to every one.
+- **Planets not yet in the Archive.** Many TESS candidates are not in the NASA Exoplanet Archive's list yet. These
+  come from ExoFOP's own values (period, epoch, depth and duration), and their V is estimated from the TESS magnitude
+  (V ≈ TESS mag + 0.5, about right for a Sun-like star). Their notes say so, for example *V 11.4 (est. from TESS
+  mag)*. A planet only ExoClock lists comes from ExoClock's values the same way.
+- **The lists are saved.** Each list is downloaded once a week and kept, like the Archive's planet list. The ExoFOP
+  table is big (about 4 MB), so the first search with it takes a little longer.
+- **The results show their priority.** The result line adds what was used, for example *✔ 9 suggested transits
+  found, soonest first. Used priorities from ExoClock Alert/High (52 planets) and ExoFOP SG1 1–2 (310 TOIs), either
+  list: 340 planets searched, 120 of them not in the Archive's list.* Each suggestion's Source shows its priority
+  (*suggested · NEA · ExoClock high*, *suggested · ExoFOP · SG1 1*), and its notes spell it out (*ExoClock: HIGH
+  priority (3 recent obs); ExoFOP SG1 priority 2*).
+
+When a list can't be had:
+
+- **⚠ Its server is down, or the list now needs a login.** The search goes on without that list and says so with a
+  ⚠, for example *⚠ ExoFOP did not answer (no answer within 120 s) — searched without its priorities.* or *⚠
+  ExoClock's list now needs a login (HTTP 403) — searched without its priorities.* When a saved copy exists it is
+  used instead (*…; using the saved copy from 3 days ago*). When none of the lists you chose can be had, every planet
+  is searched, as with no priority.
+- **✖ The list arrived in a form SCHED can't read.** The server answered, but not with the list SHOBS-SCHED expects
+  (the site changed its format, or there is a bug in SHOBS-SCHED). The search stops with a ✖: *✖ No suggestions:
+  …. ExoFOP answered, but its list is not in the form SCHED knows (a format change or a SCHED bug; please report it).
+  Untick its priorities to search without it.* Please do report it (chapter 10). Meanwhile, untick that list's
+  levels (or set ExoFOP to **Don't use**) to search without it.
+
+Why priorities matter: a new timing helps most for a planet whose ephemeris is drifting, or a candidate that still
+needs checking. These lists are where the people who need those timings say so.
 
 ## Find suggested variables
 
@@ -344,7 +412,8 @@ nights.
 3. Press **Search**. The busy bar says *Finding suggested variables (VSX at VizieR; up to a minute or two)…* and counts
    through the candidates.
 4. The result line says, for example, *✔ 14 suggested variables found, soonest first.* The line under the boxes says
-   how many catalog stars matched.
+   how many catalog stars matched. When none fit, it says *Done: no new variables fit these nights, this search and
+   Setup's “Suggestions and darks” Moon limit.*
 
 ![The Find suggested variables window: the first four types ticked, Period empty in days, Brightness 9 to 13, Amplitude at least 0.1, Show at most 25, and the nights Sat 31 Oct – Fri 06 Nov with the Moon limit from Setup's "Suggestions and darks" box](img/05-find-variables.png)
 

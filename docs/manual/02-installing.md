@@ -92,7 +92,7 @@ and the window stays open with `The app did not start. Leave this window open an
 
 ### Linux and the Mac
 
-SHOBS-SCHED 1.2.0 comes with start files for Linux and the Mac. They do the same job as **Create shortcuts.bat** on
+SHOBS-SCHED comes with start files for Linux and the Mac. They do the same job as **Create shortcuts.bat** on
 Windows: find a Python that can run SHOBS-SCHED, give SHOBS-SCHED its own Python environment, install the packages,
 and start the program. They do not make a Desktop icon.
 
@@ -125,13 +125,17 @@ compiled. Trying an older Python.`).
 
 If it ends with `✖ No Python on this computer can run SHOBS-SCHED yet.`, install Python 3.13 from python.org (on a
 Mac, then run its **Install Certificates.command**) and start again. On the Mac, a window that fails stays open with
-`SHOBS-SCHED did not start. Leave this window open and copy the message above.`
+`SHOBS-SCHED did not start. Leave this window open and copy the message above.` and names the two logs to send with a
+report: `The package install log is ~/Library/Application Support/SHOBS-SCHED/pip_log.txt; the program's own log is
+~/.shobs_sched/sched.log.`
 
 The Terminal window stays open while SHOBS-SCHED runs. Leave it open until you have closed SHOBS-SCHED.
 
 **The self-test.** On a Mac, double-click **Run self-test.command**. On Linux, type
 `bash start_linux.sh selftest`. It is the same test as on Windows (above); the log goes to `selftest_log.txt` in the
-SHOBS-SCHED folder and a copy to `SHOBS-SCHED_selftest_log.txt` in your Downloads folder.
+SHOBS-SCHED folder and a copy to `SHOBS-SCHED_selftest_log.txt` in your Downloads folder. On the Mac the window says
+so when it is done. If no Python could be set up, the test never ran and there is no log: the window then says
+`The self-test did not pass or could not run. Leave this window open and copy the message above.`
 
 Times, settings files and exports work the same way as on Windows. Buttons that open a file or folder use the
 system's own opener (`xdg-open` on Linux, `open` on the Mac); **Open in Notepad** opens your default text editor

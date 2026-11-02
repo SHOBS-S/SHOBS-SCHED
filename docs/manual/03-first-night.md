@@ -26,7 +26,8 @@ tagged *from SHOBS-P*; check them and go on.
    responding in proportion to the light. The planner keeps star peaks under it. If you only have the spec sheet's
    value, tick **Linear limit is from the spec sheet** so the plan marks it as an estimate.
 5. In **Mount and limits**, choose **Equatorial (flips)** or **Alt-az**, and check **Minimum altitude** (30° by
-   default) and **Darkness to plan in** (astronomical by default).
+   default), **Darkness to plan in** (astronomical by default) and **Moon distance at least** (**By Moon phase** by
+   default: targets stay 20° from a crescent Moon up to 70° from a full one; chapter 4).
 6. If you keep a library of darks, type its exposures in **Darks you already have**, in the **Suggestions and
    darks** box (for example `60, 120, 180`). The night's **Darks to shoot** then lists only the others. The other
    fields in that box filter **Find suggested transits…** and **Find suggested variables…**; their starting values

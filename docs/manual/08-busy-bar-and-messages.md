@@ -7,10 +7,11 @@ and lists the messages you will meet most often.
 ## The busy bar
 
 Whenever SHOBS-SCHED is working on something that takes more than a moment, a busy bar appears at the **lower left of
-the window**, in the status strip. A small bar moves back and forth, and the words beside it say what the program is
-doing. This is the same in every SHOBS program.
+the window**, in the status strip. A small **green** bar moves back and forth on the navy strip, and the words beside
+it say what the program is doing. This is the same in every SHOBS program: the same green as SHOBS-P's busy bar, so
+it stands out against the dark strip. (Before 1.3.0 SHOBS-SCHED's bar was blue, which was hard to see there.)
 
-![The busy bar at the lower left of the window, in the status strip, with "Finding suggested variables (VSX at VizieR; up to a minute or two)…" beside it](img/08-busy-bar.png)
+![The green busy bar at the lower left of the window, on the navy status strip, with "Finding suggested variables (VSX at VizieR; up to a minute or two)…" beside it](img/08-busy-bar.png)
 
 You see it while SHOBS-SCHED is:
 
@@ -18,8 +19,8 @@ You see it while SHOBS-SCHED is:
 |---|---|
 | Looking a target up (Targets page, **Add**) | *Looking up WASP-12 b…* |
 | Filling in the Targets lists' next events | *Working out each target's next event…* |
-| Looking up a star's planets for a new campaign | *Looking up the star HD 219134…* |
-| Finding suggestions | *Finding suggested transits: transits of each planet… 121 of 640*, then *Finding suggested transits: the best with their most precise ephemeris… 12 of 50*; *Finding suggested variables (VSX at VizieR; up to a minute or two)… 251 of 1200* |
+| Looking up a star's planets for a new campaign | *Looking up the star HD 219134…* (or *Looking up HD 219134's known planets…* when its position is already known) |
+| Finding suggestions | *Finding suggested transits…* (while the planet list and any Priority lists load), *Finding suggested transits: transits of each planet… 121 of 640*, then *Finding suggested transits: the best with their most precise ephemeris… 12 of 50*; *Finding suggested variables (VSX at VizieR; up to a minute or two)… 251 of 1200* |
 | Getting the weather (Build, Re-review) | *Getting the forecast from Open-Meteo…* |
 | Building the schedule | *Building 7 nights…*, *Re-reviewing 7 nights…*, *Working out twilight and Moon times…*, *Rebuilding Mon 02 Nov…* |
 | Checking transit ephemerides (at startup, and when you tick or keep a transit) | *Checking transit ephemerides at the NASA Exoplanet Archive…* |
@@ -36,7 +37,7 @@ Some things to know:
   planet… 291 of 302*), then checks the best of them again with each planet's most precise ephemeris (*Finding
   suggested transits: the best with their most precise ephemeris… 12 of 50*).
 
-![The busy bar with "Finding suggested transits: the best with their most precise ephemeris… 10 of 37": the second pass of the search](img/08-busy-bar-find.png)
+![The green busy bar with "Finding suggested transits: the best with their most precise ephemeris… 10 of 37": the second pass of the search](img/08-busy-bar-find.png)
 
 - **Dialogs have their own busy bar.** The Edit dialog's planet lookup, for example, shows its busy bar at the
   **dialog's** lower left (*Looking up HD 219134's planets at the NASA Exoplanet Archive…*), so the main window stays
@@ -117,7 +118,13 @@ If something unexpected goes wrong inside the window, the status strip says *✖
 | *⚠ … is already in the list.* | You added a target twice. | Nothing to do. |
 | *✖ SIMBAD lists … as a planet, but the NASA Exoplanet Archive has no transit ephemeris under that name. Try its Archive name (for example WASP-12 b), or type the planet's values by hand.* | A planet SIMBAD knows but the Archive does not (under that name). | Try its Archive name, or add the star and type the ephemeris. |
 | *⚠ … Planet list: …* after **Find suggested transits…** | The Archive's planet list could not be refreshed. | The saved list was used; suggestions may miss the newest planets. |
-| *… has … block(s) you locked or set by hand on …. A rebuild keeps blocks set by hand even when the target is no longer planned. Remove it/them too? (No keeps it/them in the schedule, marked ⚠.)* (after **Remove**: *… even when the target is gone.*) | A question, after you untick or **Remove** a target that has blocks you locked or set by hand on tonight or later nights. | **Remove** takes the blocks out; **Cancel** keeps them. |
+| *✔ … suggested transits found, soonest first. Used priorities from ExoClock … (… planets) and ExoFOP SG1 … (… TOIs), either list: … planets searched, … of them not in the Archive's list.* | **Find suggested transits…** with a Priority chosen. | Nothing to do. |
+| *⚠ … ExoFOP did not answer (…) — searched without its priorities.* or *⚠ … ExoClock's list now needs a login (HTTP 403) — searched without its priorities.* | A Priority list's server is down, or the list sits behind a login now. The search ran without it (or with its saved copy: *…; using the saved copy from … ago*). | Fine for now; try again later. |
+| *✖ No suggestions: …. ExoClock answered, but its list is not in the form SCHED knows (a format change or a SCHED bug; please report it). Untick its priorities to search without it.* | A Priority list arrived in a form SHOBS-SCHED can't read. | Please report it (chapter 10); untick that list's priorities (or ExoFOP: **Don't use**) to search meanwhile. |
+| *Done: no new full transits fit … with Setup's “Suggestions and darks” filter (planets already listed are not suggested again).* | No transit passed the filter. | Look at more nights, or widen the filter in Setup (chapter 4). |
+| *⚠ Added … (NASA Exoplanet Archive). Position from the NASA Exoplanet Archive (SIMBAD did not answer).* | A star's position came from the Archive, not SIMBAD. | Nothing to do; the position is good. |
+| *✖ Could not find …'s position: Neither SIMBAD nor the NASA Exoplanet Archive knows …. Check the spelling, or type the coordinates by hand.* | Neither service knows the star. | Check the spelling, or type the RA/Dec in the Edit dialog. |
+| *… has … block(s) you locked or set by hand on …. A rebuild keeps blocks set by hand even when the target is no longer planned. Remove it/them too? (Cancel keeps it/them in the schedule, with a note that the target is not planned.)* (after **Remove**: *… even when the target is gone.*) | A question, after you untick or **Remove** a target that has blocks you locked or set by hand on tonight or later nights. | **Remove** takes the blocks out; **Cancel** keeps them. |
 
 ### Schedule
 
@@ -127,7 +134,10 @@ If something unexpected goes wrong inside the window, the status strip says *✖
 | *⚠ Built …. No forecast (…), so it was built without weather.* | The forecast could not be fetched. | Fine; build again later for the weather. |
 | *⚠ Setup or targets changed since this schedule was built…* | The plan is out of date. | **Build schedule** or **Re-review schedule**. |
 | *⚠ Wait for the build to finish.* | A build is running. | Wait for the busy bar to go. |
-| *… has … block(s) you locked or set by hand on …. Their targets are not ticked to plan (or no longer in your list). Remove it/them too? (No keeps it/them in the schedule, marked ⚠.)* | A question when you press **Build schedule**. Once you keep them, Build does not ask about the same blocks again until you restart SHOBS-SCHED. | **Remove** or **Cancel**. |
+| *… has … block(s) you locked or set by hand on …. Its target is / Their targets are not ticked to plan (or no longer in your list). Remove it/them too? (Cancel keeps it/them in the schedule, with a note that the target is not planned.)* | A question when you press **Build schedule** or **Re-review schedule**. Once you keep them, SHOBS-SCHED does not ask about the same blocks again until you restart it. | **Remove** or **Cancel**. |
+| *⚠ This target is not ticked to plan* / *⚠ This target is no longer in your list* | A note on a block you kept with **Cancel**. Information only: no ⚠ on the night's tab. | Remove the block when you no longer want it. |
+| *…: Moon too close (… at best; default for a gibbous Moon 50°)* (or *Setup's default 30°*, or *your limit 40°*) | In **Didn't fit**: the Moon came too near. The brackets name the limit used: Setup's by-phase or fixed default, or the target's own **Moon at least**. | Plan it another night, or change the limit (Setup, or the target's Edit dialog). |
+| *Flips at the start (not run wholly before its meridian) so another target fits tonight* | A note: this block gave up its no-flip spot so another target fits. | Nothing to do. |
 | *✖ … happens at a time set by the sky (a transit or a timed event); it cannot move to another night.* | **Move to night…** on a fixed-time block. | Plan it on its own night instead. |
 | *✖ … overlaps … Unlock, remove or move that block first, or pick other times.* | **Edit times…** clashes with a block that stays put. | Choose other times, or free the other block. |
 | *✖ … is outside the night (sunset … to sunrise …).* | **Edit times…** outside the night. | Choose times between sunset and sunrise. |
