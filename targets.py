@@ -1256,6 +1256,15 @@ def refine_transit_target(t: Target, when_jd: float | None = None) -> bool:
     return changed
 
 
+def priority_note(p: dict) -> str:
+    """The notes' tail for a planet picked by priority (apply_priorities): "; ExoClock: HIGH priority (3 recent
+    obs); ExoFOP SG1 priority 2" and, for a V estimated from another band, "; V 11.4 (est. from TESS mag)"."""
+    out = f"; {p['priority_text']}" if p.get("priority_text") else ""
+    if p.get("vmag_est") and p.get("vmag") is not None:
+        out += f"; V {p['vmag']:.1f} (est. from {p['vmag_est']})"
+    return out
+
+
 def suggest_transits(site, optics, options, nights: list, exclude_names=frozenset(), catalog: list | None = None,
                      progress=None, refine: bool = False) -> list[Target]:
     """Other good transits in the given nights, in John's order (thresholds from options):
@@ -1379,7 +1388,8 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
             tell(j + 1, len(short), "the best with their most precise ephemeris")
             p = entry[1]
             first.pop(_key_name(p["name"]), None)
-            pl = precise_planet(p["name"], mid)
+            # a planet from ExoFOP's / ExoClock's own values is not in the Archive's list: keep their ephemeris
+            pl = precise_planet(p["name"], mid) if (p.get("source") or "NEA") == "NEA" else None
             if pl:
                 p = dict(p, period=pl["period"], period_err=pl.get("period_err"), t0=pl["t0"],
                          t0_err=pl.get("t0_err"), reference=pl.get("reference") or "")
@@ -1391,18 +1401,356 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
                 f"{sky.hhmm(ev['t4'], site.tz)}, {sky.local_label(site.tz, ev['t1'])}")
         if sig is not None and sig > warn:
             note += f"; ⚠ Tc uncertain ±{sig:.0f} min"
+        src = p.get("source") or "NEA"
+        note += priority_note(p)
         pl = Planet(name=p["name"], period=p["period"], period_err=p.get("period_err"), t0=p["t0"],
                     t0_err=p.get("t0_err"), t14=p["t14"], depth=p["depth"],
-                    reference=p.get("reference") or COMPOSITE_REF, source="NEA")
+                    reference=p.get("reference") or COMPOSITE_REF, source=src)
         t = Target(name=p["name"], kind="transit", mode="T", ra=p["ra"], dec=p["dec"], vmag=p["vmag"],
-                   enabled=False, suggested=True, source="NEA", planet=pl.__dict__.copy(), notes=note,
+                   enabled=False, suggested=True, source=src, planet=pl.__dict__.copy(), notes=note,
                    added=today_iso(site))
         f1, f4 = first.get(_key_name(p["name"]), (ev["t1"], ev["t4"]))
         t.suggest_info = {"night": d.isoformat(), "t1": ev["t1"], "tc": ev["tc"], "t4": ev["t4"], "score": score,
                           "snr": snr, "moon_penalty": pen, "tc_sigma_min": sig, "when": f1,
                           "text": f"{_fmt_day(f1, site)} {sky.hhmm(f1, site.tz)}–{sky.hhmm(f4, site.tz)} (full)"}
+        if p.get("priority_short"):
+            t.suggest_info["priority"] = p["priority_short"]
         out.append(t)
     return out
+
+
+# ---- ExoClock and ExoFOP priorities (Find suggested transits, optional; 1.3.0 item 9) -----------------------------
+#
+# Two public lists say which planets most need new timings:
+#   ExoClock  https://www.exoclock.space/database/planets_json  JSON {name: {...}} of ~780 planets ("WASP-12b",
+#             "TOI-150.01", "55Cnce"), each with "priority" alert | high | medium | low and its own ephemeris
+#             (ephem_mid_time BJD_TDB, ephem_period days), sexagesimal ra_j2000 / dec_j2000.
+#   ExoFOP    the TESS TOI table (CSV, ~8000 rows, ~4 MB). Its SG1 columns are the seeing-limited photometry
+#             priorities (1 = highest … 5). SG1A is only ever 4 or 5 in the table, while SG1B spans 1–5 and is the
+#             one that ranks targets for SG1 follow-up, so SCHED's "ExoFOP SG1 priority" is SG1B.
+# Both are downloaded weekly into the lookup cache (keys exoclock:priorities:planets and exofop:toi:table; data =
+# {"rows": [parsed dicts]}). John's rule: a list fails softly ONLY when its server does not answer or the list sits
+# behind a login (a web page, HTTP 401/402/403) — the search then runs without it and says so. A 200 reply that does
+# not parse is a bug or a format change: PriorityFormatError, never hidden. A failed refresh uses the saved copy.
+
+EXOCLOCK_URL = "https://www.exoclock.space/database/planets_json"
+EXOFOP_TOI_URL = "https://exofop.ipac.caltech.edu/tess/download_toi.php?sort=toi&output=csv"
+PRIORITY_MAX_AGE_DAYS = 7.0
+PRIORITY_TIMEOUT_S = 120.0            # the TOI table is ~4 MB and ExoFOP is not quick
+EXOCLOCK_LEVELS = ("alert", "high", "medium", "low")
+EXOFOP_REF = "ExoFOP-TESS TOI table"
+EXOCLOCK_REF = "ExoClock"
+TESS_TO_V = 0.5                       # V ≈ TESS mag + 0.5 for a Sun-like star (T sits near Cousins I; V − I ≈ 0.7)
+MATCH_ARCSEC = 20.0                   # the same planet under two names: this close on the sky …
+MATCH_PERIOD_FRAC = 0.002             # … with periods this alike
+_LOGIN_WORDS = ("log in", "login", "sign in", "signin", "password", "subscribe", "register")
+
+
+class PriorityFormatError(Exception):
+    """A priority list answered (HTTP 200) but not in the form SCHED knows: a bug or a format change. Not soft."""
+
+
+class _PrioritySoft(Exception):
+    """A priority list cannot be had now (server down, or behind a login): the search goes on without it."""
+
+    def __init__(self, reason: str, login: bool = False):
+        self.reason, self.login = reason, login
+        super().__init__(reason)
+
+
+def prio_key(name) -> str:
+    """Name key shared by ExoClock, ExoFOP and the Archive: lower case, letters and digits only
+    ("WASP-12b", "WASP12b" and "WASP-12 b" → "wasp12b"; "TOI-150.01" → "toi15001")."""
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower())
+
+
+def parse_angle(value, hours: bool = False) -> float | None:
+    """RA / Dec in degrees from decimal degrees (number or text) or sexagesimal text ("08:52:35.81" in hours for
+    RA, "+28:19:50.96" or "-00 30 00" in degrees for Dec); None when empty or not an angle."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return _f(value)
+    s = str(value).strip()
+    if not s:
+        return None
+    parts = re.split(r"[:\s]+", s)
+    if len(parts) == 1:
+        return _f(s)
+    try:
+        nums = [abs(float(x)) for x in parts[:3]]
+    except ValueError:
+        return None
+    nums += [0.0] * (3 - len(nums))
+    v = (nums[0] + nums[1] / 60.0 + nums[2] / 3600.0) * (15.0 if hours else 1.0)
+    return -v if s.startswith("-") else v
+
+
+def _err(*vals) -> float | None:
+    xs = [abs(x) for x in (_f(v) for v in vals) if x is not None]
+    return max(xs) if xs else None
+
+
+def _priority_text_fetch(who: str, url: str) -> str:
+    """GET a priority list → text. Soft failures (no answer, behind a login) raise _PrioritySoft."""
+    try:
+        text = _get_text(url, timeout=PRIORITY_TIMEOUT_S)
+    except FetchError as exc:
+        if exc.status in (401, 402, 403):
+            raise _PrioritySoft(f"{who}'s list now needs a login (HTTP {exc.status})", login=True) from None
+        raise _PrioritySoft(f"{who} did not answer ({exc.reason})") from None
+    head = text.lstrip()[:3000].lower()
+    if head.startswith("<"):
+        if any(w in head for w in _LOGIN_WORDS):
+            raise _PrioritySoft(f"{who}'s list now needs a login (a login page came back)", login=True)
+        raise _PrioritySoft(f"{who} sent a web page instead of its list (a login or outage page)", login=True)
+    return text
+
+
+def parse_exoclock_json(text: str) -> list[dict]:
+    """ExoClock's planets_json → rows {name, key, priority, ra, dec, vmag, vmag_est, depth, t14, period,
+    period_err, t0, t0_err, recent}. PriorityFormatError when it is not that list."""
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise PriorityFormatError(f"ExoClock's planet list is not valid JSON ({exc})") from None
+    if isinstance(data, dict):
+        pairs = list(data.items())
+    elif isinstance(data, list):
+        pairs = [(None, v) for v in data]
+    else:
+        pairs = []
+    if not pairs or not all(isinstance(v, dict) for _k, v in pairs):
+        raise PriorityFormatError("ExoClock's planet list is not a list of planets")
+    out = []
+    for k, v in pairs:
+        name = str(v.get("name") or k or "").strip()
+        if not name:
+            continue
+        pri = str(v.get("priority") or "").strip().lower()
+        vmag, est = _f(v.get("v_mag")), ""
+        if vmag is None and _f(v.get("gaia_g_mag")) is not None:
+            vmag, est = _f(v.get("gaia_g_mag")), "Gaia G"
+        mmag = _f(v.get("depth_r_mmag"))
+        out.append({"name": name, "key": prio_key(name), "priority": pri if pri in EXOCLOCK_LEVELS else "",
+                    "ra": parse_angle(v.get("ra_j2000"), hours=True), "dec": parse_angle(v.get("dec_j2000")),
+                    "vmag": vmag, "vmag_est": est,
+                    "depth": (1.0 - 10 ** (-0.4 * mmag / 1000.0)) if mmag else None,
+                    "t14": (_f(v.get("duration_hours")) or 0) / 24.0 or None,
+                    "period": _f(v.get("ephem_period")) or _f(v.get("period_days")),
+                    "period_err": _err(v.get("ephem_period_e1"), v.get("ephem_period_e2")) or _f(v.get("period_unc")),
+                    "t0": _f(v.get("ephem_mid_time")) or _f(v.get("t0_bjd_tdb")),
+                    "t0_err": _err(v.get("ephem_mid_time_e1"), v.get("ephem_mid_time_e2")) or _f(v.get("t0_unc")),
+                    "recent": _f(v.get("total_observations_recent"))})
+    if not any(r["priority"] for r in out):
+        raise PriorityFormatError("ExoClock's planet list has no planets with a priority (alert/high/medium/low)")
+    return out
+
+
+EXOFOP_NEEDED = ("TOI", "SG1B", "TFOPWG Disposition", "RA", "Dec", "Period (days)", "Epoch (BJD)")
+
+
+def parse_exofop_csv(text: str) -> list[dict]:
+    """ExoFOP's TOI table (CSV) → rows {toi, name, key, planet, planet_key, sg1, disp, ra, dec, tmag, vmag,
+    vmag_est, depth, t14, period, period_err, t0, t0_err}; false positives / false alarms (FP, FA) are left out.
+    PriorityFormatError when the header is not the TOI table's."""
+    reader = csv.DictReader(io.StringIO(text.lstrip("﻿")))
+    fields = [str(f or "").strip() for f in (reader.fieldnames or [])]
+    missing = [c for c in EXOFOP_NEEDED if c not in fields]
+    if missing:
+        raise PriorityFormatError(f"ExoFOP's TOI table lacks the column(s) {', '.join(missing)}")
+    out = []
+    for raw in reader:
+        row = {str(k or "").strip(): (v.strip() if isinstance(v, str) else "") for k, v in raw.items()}
+        toi = row.get("TOI") or ""
+        if not toi:
+            continue
+        disp = (row.get("TFOPWG Disposition") or row.get("TESS Disposition") or "").upper()
+        if disp in ("FP", "FA"):
+            continue
+        sg1, tmag, ppm = _f(row.get("SG1B")), _f(row.get("TESS Mag")), _f(row.get("Depth (ppm)"))
+        name, pname = f"TOI-{toi}", row.get("Planet Name") or ""
+        out.append({"toi": toi, "name": name, "key": prio_key(name), "planet": pname, "planet_key": prio_key(pname),
+                    "sg1": int(sg1) if sg1 is not None else None, "disp": disp,
+                    "ra": parse_angle(row.get("RA"), hours=True), "dec": parse_angle(row.get("Dec")),
+                    "tmag": tmag, "vmag": (tmag + TESS_TO_V) if tmag is not None else None,
+                    "vmag_est": "TESS mag" if tmag is not None else "",
+                    "depth": ppm / 1e6 if ppm else None,
+                    "t14": (_f(row.get("Duration (hours)")) or 0) / 24.0 or None,
+                    "period": _f(row.get("Period (days)")), "period_err": _f(row.get("Period (days) err")),
+                    "t0": _f(row.get("Epoch (BJD)")), "t0_err": _f(row.get("Epoch (BJD) err"))})
+    if not out:
+        raise PriorityFormatError("ExoFOP's TOI table has no rows")
+    return out
+
+
+def _load_priority_list(who: str, key: str, url: str, parse, refresh: bool) -> tuple[list | None, str, bool]:
+    """(rows or None, note, warn). A fresh saved copy is used as is; else the list is fetched and saved. A soft
+    failure uses the saved copy (warn; the note says its age) or gives None (warn: "searched without its
+    priorities"). PriorityFormatError (a 200 reply that does not parse) goes up."""
+    data, age = cache_read(who, key)
+    if data is not None and age is not None and age < PRIORITY_MAX_AGE_DAYS and not refresh:
+        return list(data.get("rows") or []), ("downloaded today" if age < 1
+                                              else f"saved copy from {_age_words(age)}"), False
+    try:
+        rows = parse(_priority_text_fetch(who, url))
+    except PriorityFormatError as exc:                   # answered, but not as SCHED knows it: say so plainly
+        settings.log(f"priorities: {who}'s list did not parse: {exc}")
+        raise PriorityFormatError(f"{exc}. {who} answered, but its list is not in the form SCHED knows (a "
+                                  "format change or a SCHED bug; please report it). Untick its priorities to "
+                                  "search without it.") from None
+    except _PrioritySoft as exc:
+        settings.log(f"priorities: {exc.reason}")
+        if data is not None:
+            return list(data.get("rows") or []), (f"{exc.reason}; using the saved copy from "
+                                                  f"{_age_words(age or 0.0)}"), True
+        return None, f"{exc.reason} — searched without its priorities", True
+    cache_write(who, key, url, {"rows": rows})
+    return rows, "downloaded today", False
+
+
+def load_exoclock_priorities(refresh: bool = False) -> tuple[list | None, str, bool]:
+    """ExoClock's planets and priorities (parse_exoclock_json rows), cached weekly → (rows | None, note, warn)."""
+    return _load_priority_list("ExoClock", "exoclock:priorities:planets", EXOCLOCK_URL, parse_exoclock_json, refresh)
+
+
+def load_exofop_priorities(refresh: bool = False) -> tuple[list | None, str, bool]:
+    """ExoFOP-TESS's TOIs and SG1 priorities (parse_exofop_csv rows), cached weekly → (rows | None, note, warn)."""
+    return _load_priority_list("ExoFOP", "exofop:toi:table", EXOFOP_TOI_URL, parse_exofop_csv, refresh)
+
+
+def priority_choice(options) -> tuple[list[str], int | None]:
+    """(ExoClock levels ticked, ExoFOP SG1 threshold or None) from the options; ([], None) = no priorities."""
+    o = options or {}
+    lv = o.get("suggest_exoclock_levels")
+    lv = {str(v).lower() for v in lv} if isinstance(lv, (list, tuple)) else set()
+    m = _f(o.get("suggest_exofop_max"))
+    return [x for x in EXOCLOCK_LEVELS if x in lv], (int(m) if m is not None and 1 <= m <= 5 else None)
+
+
+def _same_planet(a: dict, b: dict) -> bool:
+    """Two entries for one planet: within MATCH_ARCSEC with periods within MATCH_PERIOD_FRAC."""
+    if None in (a.get("ra"), a.get("dec"), b.get("ra"), b.get("dec")) or not a.get("period") or not b.get("period"):
+        return False
+    dra = (a["ra"] - b["ra"] + 180.0) % 360.0 - 180.0
+    sep = math.hypot(dra * math.cos(math.radians(a["dec"])), a["dec"] - b["dec"]) * 3600
+    return sep <= MATCH_ARCSEC and abs(a["period"] - b["period"]) <= MATCH_PERIOD_FRAC * b["period"]
+
+
+def _priority_row(e: dict, source: str) -> dict | None:
+    """A priority-list planet the Archive's list lacks → a catalog row from the list's own values."""
+    if not (e.get("period") and e.get("t0") and e.get("t14") and e.get("ra") is not None and e.get("dec") is not None):
+        return None
+    return {"name": e["name"], "host": "", "period": e["period"], "period_err": e.get("period_err"), "t0": e["t0"],
+            "t0_err": e.get("t0_err"), "t14": e["t14"], "depth": e.get("depth"), "ra": e["ra"], "dec": e["dec"],
+            "vmag": e.get("vmag"), "vmag_est": e.get("vmag_est") or "", "source": source,
+            "reference": EXOFOP_REF if source == "ExoFOP" else EXOCLOCK_REF}
+
+
+def apply_priorities(catalog: list, options, refresh: bool = False) -> tuple[list, str, list[str]]:
+    """Find suggested transits with priorities → (the planets to search, a summary, ⚠ notes). With no priority
+    chosen the catalog comes back unchanged ("", []). Otherwise only planets on EITHER list (an ExoClock level
+    ticked, or ExoFOP SG1 at or under the threshold) are searched: Archive planets matched by name (prio_key) or,
+    failing that, by position and period; planets the Archive lacks become rows from the list's own values (a planet
+    on both lists once, with ExoFOP's values). Each row gets "priority_text" (its notes) and "priority_short" (the
+    Targets list). A list that cannot be had (soft) gives a ⚠ note; when no chosen list can be had, the whole catalog
+    is searched (as without priorities). PriorityFormatError goes up."""
+    levels, fmax = priority_choice(options)
+    if not levels and fmax is None:
+        return catalog, "", []
+    warns, used, picked = [], [], []          # picked: (entry, "ExoClock" | "ExoFOP")
+    if levels:
+        rows, note, warn = load_exoclock_priorities(refresh)
+        if warn:
+            warns.append(note)
+        if rows is not None:
+            sel = [r for r in rows if r.get("priority") in levels]
+            used.append(f"ExoClock {'/'.join(x.capitalize() for x in levels)} ({len(sel)} planets"
+                        + (f"; {note}" if note.startswith("saved copy") else "") + ")")
+            picked += [(r, "ExoClock") for r in sel]
+    if fmax is not None:
+        rows, note, warn = load_exofop_priorities(refresh)
+        if warn:
+            warns.append(note)
+        if rows is not None:
+            sel = [r for r in rows if r.get("sg1") is not None and r["sg1"] <= fmax]
+            used.append(f"ExoFOP SG1 {'1 only' if fmax == 1 else f'1–{fmax}'} ({len(sel)} TOIs"
+                        + (f"; {note}" if note.startswith("saved copy") else "") + ")")
+            picked += [(r, "ExoFOP") for r in sel]
+    if not used:
+        return catalog, "", warns
+
+    by_key = {prio_key(p.get("name")): i for i, p in enumerate(catalog)}
+    decs = np.array([p["dec"] if p.get("dec") is not None else np.nan for p in catalog], dtype=float)
+    tags: dict[int, dict] = {}               # catalog index → {"ExoClock": entry, "ExoFOP": entry}
+    extras: list[dict] = []                  # planets the Archive's list lacks: {"tags", "entry", "source"}
+
+    def find(e):
+        for k in (e.get("planet_key"), e.get("key")):
+            if k and k in by_key:
+                return by_key[k]
+        if e.get("dec") is None or not len(decs):
+            return None
+        with np.errstate(invalid="ignore"):
+            near = np.nonzero(np.abs(decs - e["dec"]) * 3600 <= MATCH_ARCSEC)[0]
+        return next((int(i) for i in near if _same_planet(e, catalog[int(i)])), None)
+    extra_key: dict[str, dict] = {}
+    extra_band: dict[int, list] = {}         # by Dec in arcminutes, for the position match
+
+    def find_extra(e):
+        if e["key"] in extra_key:
+            return extra_key[e["key"]]
+        if e.get("dec") is None:
+            return None
+        b = int(math.floor(e["dec"] * 60))
+        return next((x for k in (b - 1, b, b + 1) for x in extra_band.get(k, ()) if _same_planet(e, x["entry"])),
+                    None)
+    for e, src in picked:
+        i = find(e)
+        if i is not None:
+            tags.setdefault(i, {})[src] = e
+            continue
+        x = find_extra(e)
+        if x is None:
+            x = {"tags": {src: e}, "entry": e, "source": src}
+            extras.append(x)
+            extra_key[e["key"]] = x
+            if e.get("dec") is not None:
+                extra_band.setdefault(int(math.floor(e["dec"] * 60)), []).append(x)
+        else:
+            x["tags"][src] = e
+            if src == "ExoFOP":
+                x["entry"], x["source"] = e, src
+
+    def texts(tg):
+        long, short = [], []
+        c = tg.get("ExoClock")
+        if c:
+            n = f" ({int(c['recent'])} recent obs)" if c.get("recent") is not None else ""
+            long.append(f"ExoClock: {c['priority'].upper()} priority{n}")
+            short.append(f"ExoClock {c['priority']}")
+        f = tg.get("ExoFOP")
+        if f:
+            long.append(f"ExoFOP SG1 priority {f['sg1']}")
+            short.append(f"SG1 {f['sg1']}")
+        return "; ".join(long), ", ".join(short)
+
+    out = []
+    for i, tg in tags.items():
+        lt, st = texts(tg)
+        out.append(dict(catalog[i], priority_text=lt, priority_short=st))
+    n_new = 0
+    for x in extras:
+        row = _priority_row(x["entry"], x["source"])
+        if row is None:
+            continue
+        lt, st = texts(x["tags"])
+        row.update(priority_text=lt, priority_short=st)
+        out.append(row)
+        n_new += 1
+    summary = (f"priorities from {' and '.join(used)}, either list: {len(out)} planets searched"
+               + (f", {n_new} of them not in the Archive's list" if n_new else ""))
+    return out, summary, warns
 
 
 # ---- suggested variables (VSX via VizieR B/vsx) --------------------------------------------------------------------

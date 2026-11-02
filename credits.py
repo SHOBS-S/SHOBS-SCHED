@@ -47,6 +47,16 @@ CREDITS = [
          "CDS or its mirror at IDIA, Cape Town.",
          "\"This research has made use of the SIMBAD database, CDS, Strasbourg Astronomical Observatory, France.\" "
          "Wenger, M. et al. 2000, A&AS 143, 9.", "https://simbad.cds.unistra.fr"),
+        ("ExoClock", "The optional ExoClock priorities (Alert, High, Medium, Low) in Find suggested transits, and "
+         "the ephemeris of an ExoClock planet the NASA Exoplanet Archive does not list.",
+         "Kokori, A. et al. 2021, Experimental Astronomy 53, 547 (ExoClock I); Kokori, A. et al. 2022, ApJS 258, 40 "
+         "(ExoClock II); Kokori, A. et al. 2023, ApJS 265, 4 (ExoClock III).", "https://www.exoclock.space"),
+        ("ExoFOP-TESS", "The optional ExoFOP SG1 priorities in Find suggested transits (the TOI table), and the "
+         "ephemeris, depth and duration of TESS planet candidates (TOIs) not yet in the NASA Exoplanet Archive.",
+         "\"This research has made use of the Exoplanet Follow-up Observation Program (ExoFOP; DOI: "
+         "10.26134/ExoFOP5) website, which is operated by the California Institute of Technology, under contract "
+         "with the National Aeronautics and Space Administration under the Exoplanet Exploration Program.\"",
+         "https://exofop.ipac.caltech.edu/tess"),
         ("Open-Meteo", "Hourly cloud cover, temperature, dew point and wind for each planned night (the weather "
          "strip and the dew onset).",
          "Weather data by Open-Meteo.com, licensed under CC BY 4.0. Zippenfenig, P. 2023, Open-Meteo.com Weather "

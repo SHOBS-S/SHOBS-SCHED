@@ -78,6 +78,8 @@ DEFAULT_OPTIONS = {
     "suggest_baseline_min": 30.0,
     "suggest_max": 25,                 # Find suggested transits: how many (the Find pop-up sets it; John 24 Oct)
     "suggest_moon_penalty_max": 3.0,   # magnitudes of Moon-brightened sky allowed
+    "suggest_exoclock_levels": [],     # Find suggested transits: ExoClock priorities to search ([] = not used; 1.3.0)
+    "suggest_exofop_max": None,        # … and the ExoFOP SG1 priority threshold 1–4 (None = not used)
     "darks_on_hand": [],               # exposures (s) the dark library already covers (Setup; fix list 2)
     "tc_sigma_warn_min": 10.0,         # ⚠ when a transit's predicted Tc uncertainty is over this
     # the site-wide default Moon distance (John 26 Oct; Setup's "Mount and limits" box): "phase" = by the Moon's
