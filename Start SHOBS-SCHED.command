@@ -7,6 +7,8 @@ code=$?
 if [ $code -ne 0 ]; then
     echo
     echo "SHOBS-SCHED did not start. Leave this window open and copy the message above."
+    echo "The package install log is ~/Library/Application Support/SHOBS-SCHED/pip_log.txt; the program's own log"
+    echo "is ~/.shobs_sched/sched.log."
     read -r -p "Press Return to close."
 fi
 exit $code

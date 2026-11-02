@@ -9,8 +9,9 @@ LICENSE_LINE = ("SHOBS-SCHED is free software under the GNU General Public Licen
 STATUS_LINE = ("© Shiloh Hill Observatory    Data: NASA Exoplanet Archive, AAVSO VSX, CDS (VizieR, SIMBAD), "
                "Open-Meteo    Night plot after TAPIR    Full list: Credits and sources")
 
-# A DOI (Zenodo) or ASCL ID once SCHED has one; the Credits page shows "How to cite" only when one is set.
-CITATION_DOI = ""
+# SCHED's Zenodo concept DOI (all versions; resolves to the newest) and an ASCL ID once it has one; the Credits
+# page shows "How to cite" only when one is set.
+CITATION_DOI = "10.5281/zenodo.23674791"
 ASCL_ID = ""
 
 
@@ -18,7 +19,7 @@ def citation_text(version: str) -> str:
     """How to cite SHOBS-SCHED, or "" while it has no DOI / ASCL entry."""
     if not (CITATION_DOI or ASCL_ID):
         return ""
-    where = ", ".join(x for x in (f"doi:{CITATION_DOI}" if CITATION_DOI else "",
+    where = ", ".join(x for x in (f"Zenodo, doi:{CITATION_DOI}" if CITATION_DOI else "",
                                   f"ascl:{ASCL_ID}" if ASCL_ID else "") if x)
     return (f"Armbrust, J. W., and Shiloh Hill Observatory, SHOBS-SCHED: Shiloh Hill Observatory Photometry Scheduler, "
             f"version {version}, {where}")

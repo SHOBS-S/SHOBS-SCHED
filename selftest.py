@@ -80,7 +80,13 @@ def s1_environment():
         from matplotlib.backends import backend_tkagg  # noqa: F401  (the Schedule tab's plot)
         ok, ver = True, matplotlib.__version__
     except Exception as exc:
-        ok, ver = False, f"does not load ({exc}); run Create shortcuts.bat again"
+        if sys.platform.startswith("win"):
+            fix = "run Create shortcuts.bat again"
+        elif sys.platform == "darwin":
+            fix = "start SHOBS-SCHED again with Start SHOBS-SCHED.command"
+        else:
+            fix = "start SHOBS-SCHED again with bash start_linux.sh"
+        ok, ver = False, f"does not load ({exc}); {fix}"
     check(f"matplotlib {ver} (the night plot)", ok)
     import tkinter
     say(f"  Tk {tkinter.TkVersion}")
@@ -196,6 +202,8 @@ def s5_window():
 
 def s6_live():
     import urllib.request
+
+    import settings
     tests = [
         ("NASA Exoplanet Archive", "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
          "select+pl_name+from+pscomppars+where+pl_name+%3D+%27HAT-P-23+b%27&format=csv"),
@@ -211,7 +219,7 @@ def s6_live():
     ]
     for name, url in tests:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "SHOBS-SCHED/1.0 selftest"})
+            req = urllib.request.Request(url, headers={"User-Agent": f"SHOBS-SCHED/{settings.APP_VERSION} selftest"})
             with urllib.request.urlopen(req, timeout=20) as r:
                 say(f"  OK    {name} answered (HTTP {r.status})")
         except Exception as exc:

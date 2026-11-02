@@ -1,7 +1,9 @@
 # SHOBS-SCHED — Shiloh Hill Observatory Photometry Scheduler
 
-SHOBS-SCHED plans each night's **photometry** — **transits**, **variable stars** and **campaigns** (stars or fields you
-visit on many nights) — for tonight (the default) or up to seven nights ahead (the Nights setting, shared by the
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23674791.svg)](https://doi.org/10.5281/zenodo.23674791)
+
+SHOBS-SCHED plans each night's **photometry** — **transits**, **variable stars** and **campaigns** (stars or fields
+you visit on many nights) — for tonight (the default) or up to seven nights ahead (the Nights setting, shared by the
 Targets and Schedule pages), and exports each night for ASIAIR or NINA (a target file to import) plus a printable
 plan card.
 
@@ -39,7 +41,8 @@ SHOBS-SCHED reads its site and equipment settings so you type them once (it neve
    Each night shows a night plot (every block's airmass through the night over the twilight shading, with the
    Moon, transits and meridian flips, and the hourly weather above it; click a block or a table row to pick it
    out), the nightly table, flats and darks to shoot, what didn't fit and why (with *Plan this instead*), and free
-   time. Mark each block Done, Partial or Clouded out (the blank entry clears a mark); **Re-review** rolls the week forward and puts missed targets back in the pool.
+   time. Mark each block Done, Partial or Clouded out (the blank entry clears a mark); **Re-review** rolls the week
+   forward and puts missed targets back in the pool.
 4. **OBSPlan** — the plan card itself, on screen: print it (with or without the night plots), or send one night at a
    time to **ASIAIR** (a CSV for its Plan import, saved to Downloads or a folder that syncs to your tablet/phone) or
    to **NINA** (a target list for the Sequencer's *Import targets*).
@@ -78,8 +81,8 @@ Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_t
 
 ## Documentation
 
-**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (written for version 1.2.0) walks you through the program step by
-step: installing, your first night, the Setup, Targets, Schedule and OBSPlan pages, the busy bar and messages,
+**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (written for version 1.2.0) walks you through the program
+step by step: installing, your first night, the Setup, Targets, Schedule and OBSPlan pages, the busy bar and messages,
 troubleshooting and a glossary. A PDF of the whole manual can be built with `python tools/build_manual_pdf.py`.
 
 ## Data sources
@@ -92,6 +95,9 @@ positions from the Astronomical Almanac's low-precision formulas.
 
 **Credits and sources** (the sidebar button) lists every catalog, service, design and library with the
 acknowledgement each asks for, and can save the list as text.
+
+To cite SHOBS-SCHED, use its Zenodo DOI, [10.5281/zenodo.23674791](https://doi.org/10.5281/zenodo.23674791) (all
+versions; see [CITATION.cff](CITATION.cff)), or copy the line under **How to cite** on the Credits page.
 
 The Schedule tab's night plot follows the design of the airmass plot in **TAPIR**
 (`plot_airmass.cgi`) by Eric Jensen, Swarthmore College — GPL-3; Jensen, E. 2013, Astrophysics Source Code

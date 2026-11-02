@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use SHOBS-SCHED in your work, please cite it as below."
+title: "SHOBS-SCHED: Shiloh Hill Observatory Photometry Scheduler"
+type: software
+version: 1.3.0
+doi: 10.5281/zenodo.23674791
+authors:
+  - family-names: Armbrust
+    given-names: John William
+  - name: Shiloh Hill Observatory
+license: GPL-3.0-or-later
+repository-code: "https://github.com/SHOBS-S/shobs-sched"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23674791
+    description: "Concept DOI: all versions of SHOBS-SCHED (resolves to the newest)"

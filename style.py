@@ -48,6 +48,7 @@ BAD = "#b00020"           # ✖
 WARN_FG = "#8a5a00"       # ⚠ (dark amber text on pale yellow: yellow text on white is unreadable)
 WARN_BG = "#fff3c4"
 OK = "#1f5f99"            # ✔ normal: blue text on white
+BUSY_GREEN = "#4caf50"    # house rule 1 Nov 2026: same green as SHOBS-P's busy bar on the navy status strip
 ICON = {"bad": "✖", "warn": "⚠", "ok": "✔"}
 
 # ---- drawing (block bar, weather strip) ------------------------------------------------------------------------------
@@ -191,8 +192,9 @@ def setup(root) -> ttk.Style:
     st.map("TNotebook.Tab", background=[("selected", CARD)], foreground=[("selected", SIDE)])
     st.configure("Card.Horizontal.TProgressbar", background=OK, troughcolor="#e6edf2", bordercolor=LINE)
     # the busy bar on the dark status strip
-    st.configure("Status.Horizontal.TProgressbar", background=OK, troughcolor=mix(STATUS_BG, "#ffffff", 0.18),
-                 bordercolor=STATUS_BG, lightcolor=OK, darkcolor=OK)
+    st.configure("Status.Horizontal.TProgressbar", background=BUSY_GREEN,
+                 troughcolor=mix(STATUS_BG, "#ffffff", 0.18), bordercolor=STATUS_BG, lightcolor=BUSY_GREEN,
+                 darkcolor=BUSY_GREEN)
     # tables: rows tall enough for the font at any scaling (never clipped on high-DPI Windows)
     body = tkfont.Font(root, font=font(10))
     st.configure("Treeview", rowheight=int(body.metrics("linespace") * 1.55) + 2, font=font(10),

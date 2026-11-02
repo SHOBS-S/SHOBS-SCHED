@@ -7,8 +7,8 @@ Where things come from
   Variables  AAVSO VSX API (JSON) first; when it does not answer, VizieR's copy of VSX (B/vsx/vsx) by name, then by
              a 1' cone around the SIMBAD position.
   Anything   SIMBAD (sim-script) for a name that is neither: the UI then asks which mode (NeedsMode).
-Network      urllib only, User-Agent "SHOBS-SCHED/1.0", timeouts; every call goes through `http_get` (tests replace
-             it). Failures become FetchError with a plain reason ("HTTP 503", "no network connection", "the
+Network      urllib only, User-Agent "SHOBS-SCHED/<version>", timeouts; every call goes through `http_get` (tests
+             replace it). Failures become FetchError with a plain reason ("HTTP 503", "no network connection", "the
              Archive's firewall (Cloudflare) blocked the query"), and then either the cached answer (with a note of
              its age) or LookupError_ with that reason. Call these from a worker thread, never the UI thread.
 
@@ -58,7 +58,7 @@ import settings
 import sky
 from models import Planet, Schedule, Target, VarElements
 
-USER_AGENT = "SHOBS-SCHED/1.0"
+USER_AGENT = f"SHOBS-SCHED/{settings.APP_VERSION}"
 TIMEOUT_S = 30.0
 CACHE_FORMAT = "shobs-lookup-cache/1"
 PLANET_MAX_AGE_DAYS = 7.0
@@ -104,10 +104,13 @@ class NeedsMode(Exception):
     """The name resolved (SIMBAD) but is not a known planet or VSX variable: the UI asks which mode."""
 
     def __init__(self, name: str, ra: float, dec: float, vmag: float | None, main_id: str, otype: str = "",
-                 source: str = "SIMBAD"):
+                 source: str = "SIMBAD", via: str = "", note: str = ""):
         self.name, self.ra, self.dec, self.vmag, self.main_id, self.otype = name, ra, dec, vmag, main_id, otype
-        self.source = source
-        self.message = (f"{name} was found in {source} ({main_id}{', ' + otype if otype else ''}) but is not a "
+        # via = "NEA" when a star's position came from the Archive (resolve_star's fallback); note = what to tell
+        # the user about where the position came from (resolve_star's note), or ""
+        self.source, self.via, self.note = source, via, note
+        where = "the NASA Exoplanet Archive" if via == "NEA" else source
+        self.message = (f"{name} was found in {where} ({main_id}{', ' + otype if otype else ''}) but is not a "
                         "known transiting planet or VSX variable. Choose the mode to observe it in.")
         super().__init__(self.message)
 
@@ -1066,6 +1069,9 @@ def resolve_star(name: str) -> dict:
         why = "SIMBAD did not answer" if not isinstance(first, NotFound) else "SIMBAD does not know the name"
         s["note"] = f"position from the NASA Exoplanet Archive ({why})"
         return s
+    if isinstance(first, NotFound):
+        raise NotFound(f"Neither SIMBAD nor the NASA Exoplanet Archive knows {_clean(name)}. Check the spelling, "
+                       "or type the coordinates by hand.")
     raise first
 
 
@@ -1124,12 +1130,16 @@ def add_target(name: str, when_jd: float | None = None) -> Target:
         raise LookupError_(" ".join(problems)) from None
     if problems:
         # a service that should have known the name did not answer: say so rather than ask for a mode
-        raise LookupError_(" ".join(problems) + f" (SIMBAD knows {clean} as {s['main_id']}.)")
+        known = "the NASA Exoplanet Archive has" if s.get("via") == "NEA" else "SIMBAD knows"
+        raise LookupError_(" ".join(problems) + f" ({known} {clean} as {s['main_id']}.)")
     if str(s.get("otype_short") or "").startswith("Pl") or "planet" in str(s.get("otype") or "").lower():
         raise NotFound(f"SIMBAD lists {clean} ({s['main_id']}) as a planet, but the NASA Exoplanet Archive has no "
                        "transit ephemeris under that name. Try its Archive name (for example WASP-12 b), or type "
                        "the planet's values by hand.")
-    raise NeedsMode(clean, s["ra"], s["dec"], s.get("vmag"), s["main_id"], s.get("otype", ""))
+    # the position may be the Archive's (resolve_star's fallback): via and note say so (source stays "SIMBAD": a
+    # source naming the Archive means "a planet without a transit ephemeris" to the UI)
+    raise NeedsMode(clean, s["ra"], s["dec"], s.get("vmag"), s["main_id"], s.get("otype", ""),
+                    via=s.get("via") or "", note=s.get("note") or "")
 
 
 # ---- the transit catalog --------------------------------------------------------------------------------------------
