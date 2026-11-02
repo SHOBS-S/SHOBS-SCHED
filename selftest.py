@@ -9,7 +9,7 @@ Sections:
   4 weather and export (recorded forecast; CSV; plan card)
   5 the window (all four pages, a build, the CSV) — needs a display
   6 live services (NASA Exoplanet Archive, SIMBAD and its IDIA mirror, VizieR and its IDIA mirror, AAVSO VSX,
-    Open-Meteo): reported, never a failure
+    Open-Meteo, and the ExoClock and ExoFOP priority lists): reported, never a failure
 """
 from __future__ import annotations
 
@@ -234,7 +234,7 @@ def s6_live():
         lists = ()
     for name, url, parse, what in lists:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "SHOBS-SCHED/1.0 selftest"})
+            req = urllib.request.Request(url, headers={"User-Agent": f"SHOBS-SCHED/{settings.APP_VERSION} selftest"})
             with urllib.request.urlopen(req, timeout=120) as r:
                 text = r.read().decode("utf-8", "replace")
             say(f"  OK    {name} answered: {len(parse(text))} {what}")
