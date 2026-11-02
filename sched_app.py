@@ -2248,6 +2248,9 @@ class TargetsPage:
         src = f"✔ {t.source}" if t.source else "typed"
         if t.suggested:
             src = f"suggested · {t.source or 'SCHED'}"
+            prio = t.suggest_info.get("priority") if isinstance(t.suggest_info, dict) else None
+            if prio:
+                src += f" · {prio}"
         pl = t.planet_obj()
         if pl and t.kind == "transit":
             tc = self.tc_text(t, pl, when)
@@ -2919,25 +2922,28 @@ class TargetsPage:
         exclude = {t.name for t in app.targets if not t.suggested or t.enabled}
 
         def work(progress):
-            note, kw = "", {}
+            note, kw, prio = "", {}, ("", [])
             if hasattr(tg, "load_transit_catalog"):      # load it here to hear its note (saved copy, age ...)
                 catalog, note = tg.load_transit_catalog()
+                if hasattr(tg, "apply_priorities"):      # ExoClock / ExoFOP priorities, when chosen (1.3.0)
+                    catalog, summary, warns = tg.apply_priorities(catalog, opts)
+                    prio = (summary, list(warns))
                 kw["catalog"] = catalog
             try:
                 found = tg.suggest_transits(site, optics, opts, nights, exclude_names=exclude, progress=progress,
                                             refine=True, **kw)
             except TypeError:
                 found = tg.suggest_transits(site, optics, opts, nights, exclude_names=exclude)
-            return found, str(note or "")
+            return (found, str(note or ""), prio) if (prio[0] or prio[1]) else (found, str(note or ""))
         app.jobs.run(work, self._found, self.find_ind, "Finding suggested transits", counted=True)
 
     def _found(self, res, exc):
         if exc is not None:
             self.find_ind.finish(f"✖ No suggestions: {exc}")
             return
-        note = ""
+        note, prio = "", ("", [])
         if isinstance(res, tuple):
-            res, note = res
+            res, note, prio = (list(res) + [("", [])])[:3]
         new = [t for t in (res or []) if isinstance(t, Target)]
         # unticked Suggested Transits are replaced; the user's own targets, ticked suggestions and the Suggested
         # Variables stay
@@ -2965,8 +2971,18 @@ class TargetsPage:
         note = str(note or "").strip().rstrip(".")
         # the planet list is refreshed weekly (the timings are not: each suggestion gets the most precise published
         # ephemeris, fetched now); only an Archive that did not answer is a caution (John 24 Oct: "stale?")
+        summary, warns = prio
+        if summary:
+            text += f" Used {summary}."
+        if warns:
+            text += "".join(f" ⚠ {w[:1].upper() + w[1:]}." for w in warns)
         if "did not answer" in note:
             self.find_ind.finish(f"⚠ {text} Planet list: {note[:1].upper() + note[1:]}.", linger_ms=0)
+        elif warns:
+            self.find_ind.finish(f"⚠ {text}", linger_ms=0)
+        elif summary:
+            extra = (f" (planet list: {note}; refreshed weekly)" if note.startswith("saved copy") else "")
+            self.find_ind.finish("✔ " + text + extra, linger_ms=0)
         else:
             extra = (f" (planet list: {note}; refreshed weekly)" if note.startswith("saved copy") else "")
             self.find_ind.finish("✔ " + text + extra, linger_ms=0 if extra else 6000)
@@ -3067,12 +3083,13 @@ class TransitSearchDialog:
         ttk.Label(body, text=f"{span} ({len(nights)} night{'s' if len(nights) != 1 else ''}: the Targets page's "
                              "Nights row)", style="Card.TLabel", wraplength=px(app, 380),
                   justify=tk.LEFT).grid(row=2, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
+        self._priority_rows(body, 3)
         self.msg_var = tk.StringVar()
         self.msg = ttk.Label(body, textvariable=self.msg_var, style="Card.TLabel", wraplength=px(app, 460),
                              justify=tk.LEFT)
-        self.msg.grid(row=3, column=0, columnspan=2, sticky="w", pady=(px(app, 6), 0))
+        self.msg.grid(row=6, column=0, columnspan=2, sticky="w", pady=(px(app, 6), 0))
         btns = ttk.Frame(body, style="Card.TFrame")
-        btns.grid(row=4, column=0, columnspan=2, sticky="e", pady=(px(app, 10), 0))
+        btns.grid(row=7, column=0, columnspan=2, sticky="e", pady=(px(app, 10), 0))
         ttk.Button(btns, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
         style.green_button(btns, "Search", self.search).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
         _keys(self.win, self.search)
@@ -3089,11 +3106,56 @@ class TransitSearchDialog:
             set_msg(self.msg_var, self.msg, "✖ Show at most must be a number from 1 to 100.")
             return False
         self.app.options["suggest_max"] = int(round(n))      # remembered for next time
+        levels, fmax = self.priority_values()
+        self.app.options["suggest_exoclock_levels"] = levels
+        self.app.options["suggest_exofop_max"] = fmax
         if not settings.save_settings(self.app.settings):
             self.app.set_status("⚠ The search settings could not be saved (the settings file is not writable).")
         self.win.destroy()
         self.page.find_suggested()
         return True
+
+
+    EXOFOP_CHOICES = (("Don't use", None), ("1 only", 1), ("1–2", 2), ("1–3", 3), ("1–4", 4))
+
+    def _priority_rows(self, body, row: int):
+        """The optional Priority rows (1.3.0): ExoClock levels and the ExoFOP SG1 threshold, remembered as
+        options["suggest_exoclock_levels"] / ["suggest_exofop_max"]. None chosen = the search as in 1.2.0."""
+        app, o = self.app, self.app.options
+        ttk.Label(body, text="Priority (optional): search only planets that ExoClock or ExoFOP-TESS ask timings "
+                             "for — those on either list you choose; the Setup filters above still apply. Choose "
+                             "none to search every planet.", style="Hint.TLabel", wraplength=px(app, 460),
+                  justify=tk.LEFT).grid(row=row, column=0, columnspan=2, sticky="w", pady=(px(app, 8), px(app, 2)))
+        have = o.get("suggest_exoclock_levels")
+        have = {str(x).lower() for x in have} if isinstance(have, (list, tuple)) else set()
+        ttk.Label(body, text="ExoClock priority", style="Card.TLabel").grid(row=row + 1, column=0, sticky="w",
+                                                                            pady=px(app, 3))
+        f = ttk.Frame(body, style="Card.TFrame")
+        f.grid(row=row + 1, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
+        self.exoclock_vars = {}
+        for key in ("alert", "high", "medium", "low"):
+            var = tk.BooleanVar(value=key in have)
+            ttk.Checkbutton(f, text=key.capitalize(), variable=var, style="Card.TCheckbutton").pack(
+                side=tk.LEFT, padx=(0, px(app, 8)))
+            self.exoclock_vars[key] = var
+        ttk.Label(body, text="ExoFOP SG1 priority", style="Card.TLabel").grid(row=row + 2, column=0, sticky="w",
+                                                                              pady=px(app, 3))
+        f = ttk.Frame(body, style="Card.TFrame")
+        f.grid(row=row + 2, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
+        cur = settings._num(o.get("suggest_exofop_max"))
+        labels = [t for t, _v in self.EXOFOP_CHOICES]
+        text = next((t for t, v in self.EXOFOP_CHOICES if v is not None and cur is not None and v == int(cur)),
+                    labels[0])
+        self.exofop_var = tk.StringVar(value=text)
+        ttk.Combobox(f, textvariable=self.exofop_var, values=labels, state="readonly", width=10).pack(side=tk.LEFT)
+        ttk.Label(f, text="(1 = highest; TESS planet candidates)", style="Hint.TLabel").pack(
+            side=tk.LEFT, padx=(px(app, 6), 0))
+
+    def priority_values(self) -> tuple[list, int | None]:
+        """(ExoClock levels ticked, ExoFOP SG1 threshold or None) as the form stands."""
+        levels = [k for k, var in self.exoclock_vars.items() if var.get()]
+        fmax = dict(self.EXOFOP_CHOICES).get(self.exofop_var.get())
+        return levels, fmax
 
 
 class VarSearchDialog:

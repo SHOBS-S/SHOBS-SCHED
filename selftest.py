@@ -216,6 +216,22 @@ def s6_live():
                 say(f"  OK    {name} answered (HTTP {r.status})")
         except Exception as exc:
             say(f"  NOTE  {name} did not answer ({exc}); SCHED falls back to its saved copies")
+    # the optional priority lists of Find suggested transits (1.3.0): information only, never a failure
+    try:
+        import targets
+        lists = (("ExoClock planet list", targets.EXOCLOCK_URL, targets.parse_exoclock_json, "planets"),
+                 ("ExoFOP TOI table", targets.EXOFOP_TOI_URL, targets.parse_exofop_csv, "TOIs (not FP/FA)"))
+    except Exception as exc:
+        say(f"  NOTE  priority lists not checked ({exc})")
+        lists = ()
+    for name, url, parse, what in lists:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "SHOBS-SCHED/1.0 selftest"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                text = r.read().decode("utf-8", "replace")
+            say(f"  OK    {name} answered: {len(parse(text))} {what}")
+        except Exception as exc:
+            say(f"  NOTE  {name}: {exc}; Find suggested transits searches without it")
 
 
 def _downloads() -> str:
