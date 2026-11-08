@@ -19,8 +19,13 @@ and the program is built around it:
 - **Some events happen at a set time.** An eclipsing binary's minimum or an RR Lyrae star's maximum happens when it
   happens. SHOBS-SCHED places these *fixed-time* targets first and fits everything else around them.
 - **Exposures must stay linear.** A star whose brightest pixel goes past the camera's linear limit gives bad
-  photometry. SHOBS-SCHED estimates an exposure for each target that keeps the peak under your linear limit, and
-  warns you when one of your own exposures may saturate.
+  photometry. SHOBS-SCHED chooses an exposure for each target that keeps the peak under your linear limit (the
+  longest safe one, or the one that gives the best precision), and says **Saturates** when one of your own exposures
+  would go over.
+- **A signal must beat the noise.** For every target SHOBS-SCHED works out the precision you can expect with your
+  telescope, camera and sky, and the signal-to-noise of what you want to measure (a transit's dip, a variable's
+  range). One word sums it up: **Detectable**, **Marginal** or **Out of reach**, with a **?** while the numbers are
+  rough estimates.
 - **Meridian flips matter.** A flip in the middle of a transit costs frames and changes the star's place on the
   sensor. On a German equatorial mount the planner times flips so that, where it can, the flip happens before the
   run starts. A flexible block (a campaign or an any-time variable) that fits wholly before its meridian runs
@@ -44,7 +49,7 @@ What it does **not** do:
 SHOBS-SCHED has one main window. The blue sidebar on the left reads **Shiloh Hill / Observatory / Photometry /
 Scheduler**, with **(SHOBS-SCHED)** under it and the line *Plans each night's photometry: transits, variable stars
 and campaigns*. Below that are the four steps, and at the bottom **Credits and sources** and the version number
-(**Version 1.3.0**).
+(**Version 1.4.0**).
 
 ![The SHOBS-SCHED window: sidebar with the four steps, the white page area with its title, and the status strip along the bottom](img/01-window-parts.png)
 
@@ -114,6 +119,11 @@ night of FITS frames into a light curve or a transit fit. SHOBS-SCHED plans the 
 - **Every Setup value shows where it came from**, with a small gray tag beside the field: *from SHOBS-P*, *from
   FITS* or *set here*. A value you type in SHOBS-SCHED wins over SHOBS-P's from then on. Chapter 4 explains the
   tags.
+
+**SHOBS-FLUX**, another SHOBS program, measures your telescope and camera (zero point, sky, seeing, read noise,
+scintillation) on the bench and on the sky, and keeps the results in a profile. When there is one for your telescope
+and camera, SHOBS-SCHED reads it for its S/N numbers (tagged *from FLUX*). It never changes it, and works fully
+without it: the numbers are then rough estimates (chapter 4, "Photometry noise").
 
 ## How to use this manual
 

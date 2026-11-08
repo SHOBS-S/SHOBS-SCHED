@@ -64,10 +64,12 @@ If you ever move the SHOBS-SCHED folder, run **Create shortcuts.bat** again so t
 3. The last result line should read `ALL PASSED`.
 
 The test changes none of your settings, targets or schedule: it works in a temporary folder that it deletes at the
-end. It checks, in six sections: your Python and its packages (Matplotlib and time zones included); the sky
+end. It checks, in seven sections: your Python and its packages (Matplotlib and time zones included); the sky
 arithmetic (dark times, meridian times, transit times) against a known week of plans; the planner; the weather
-reader and the exports; the window itself (every page, a build and the ASIAIR list, with the network switched off);
-and, for information only, whether the online services and the SIMBAD and VizieR mirrors answer.
+reader and the exports; the exposure by S/N (section 4b: the noise model, with and without an example SHOBS-FLUX
+profile, the verdict, and the new flip notes); the window itself (every page, a build and the ASIAIR list, with the
+network switched off); and, for information only, whether the online services and the SIMBAD and VizieR mirrors
+answer. It never reads your own SHOBS-FLUX profiles.
 
 Each check is marked `PASS` or `FAIL`. In the last section a service that does not answer is marked `NOTE`, not a
 failure: SHOBS-SCHED falls back on its saved copies. The window section says `SKIP` when there is no screen.
@@ -153,6 +155,7 @@ in the program folder, so an update never loses it:
 | `.shobs_sched\schedule.json` | The saved schedule: every night, its blocks and your Done / Partial / Clouded out marks, plus the history of past nights. |
 | `.shobs_sched\cache\` | Saved answers from the online services (lookups, the transit catalog, the forecast) and the latest plan card (`plan_card.html`). |
 | `.shobs_sched\sched.log` | The program's log (chapter 10). |
+| `.shobs\` | SHOBS-FLUX's profiles of your telescope and camera, if you use SHOBS-FLUX. SHOBS-SCHED only reads them (chapter 4). |
 
 The names start with a dot, so Windows Explorer may hide them. Type `%USERPROFILE%` into the Explorer address bar
 and turn on **Hidden items** under **View** to see them.
