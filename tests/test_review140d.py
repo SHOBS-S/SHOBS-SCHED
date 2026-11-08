@@ -41,6 +41,12 @@ class ExposureAtPeak(unittest.TestCase):
         self.assertIsNone(snr.exposure_at_peak([], 32000))
         self.assertIsNone(snr.exposure_at_peak(pts(1.0, 0.0), 0))
 
+    def test_zero_peak_is_kept(self):
+        # a 0.0 peak is a real point (no bias, no light), not a missing one; None/NaN/inf are dropped
+        self.assertAlmostEqual(snr.exposure_at_peak([{"t": 1, "peak": 0.0}, {"t": 2, "peak": 100.0}], 50), 1.5)
+        self.assertAlmostEqual(snr.exposure_at_peak([{"t": 1, "peak": None}, {"t": 2, "peak": float("nan")},
+                                                     {"t": 3, "peak": 0.0}, {"t": 4, "peak": 100.0}], 50), 3.5)
+
     def test_real_curve_with_bias(self):
         inp = snr.Inputs(zp=20.594, gain=0.256, bias_adu=502.0)
         c = snr.curve(inp, 11.21, [0.75, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1200])
@@ -56,6 +62,7 @@ if __name__ == "__main__":
 
 # ---- the window: Save refreshes the Photometry noise box's estimate tags --------------------------------------------
 
+import shutil  # noqa: E402
 import tempfile  # noqa: E402
 
 import instrument  # noqa: E402
@@ -71,6 +78,7 @@ class SaveRefreshesEstimates(Base):
 
     def test_tags_show_values_after_save(self):
         d = tempfile.mkdtemp(prefix="sched_r140d_shobs_")     # an empty SHOBS data folder: no FLUX profile
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         old = os.environ.get("SHOBS_DATA_HOME")
         os.environ["SHOBS_DATA_HOME"] = d
         self.addCleanup(lambda: os.environ.__setitem__("SHOBS_DATA_HOME", old) if old is not None
