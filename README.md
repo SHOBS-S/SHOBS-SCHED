@@ -57,20 +57,24 @@ camera angle), and every Setup value is tagged with where it came from: *from SH
 ## New in 1.4.0
 
 * **Exposure by S/N, with a verdict** (GitHub issue #4). A target's **Edit…** window has an **Exposure** section:
-  *Best precision* (the default for transits: the shortest standard exposure within 2 % of the best 10-minute
-  precision whose peak stays under your linear-limit aim), *Longest safe* (1.3.0's rule, unchanged) or *My
-  exposure*. It shows the band, which magnitude was used and how, where the numbers came from (*from FLUX*, *set
-  here* or *estimate*), the predicted peak, the precision per 10-minute bin, the noise budget (photon, sky,
-  scintillation, read) as a small bar, the transit's bins and the S/N with a verdict word: **Detectable** (S/N 10 or
-  more, green), **Marginal** (5–10, yellow) or **Out of reach** (plain, with the reason). A small plot of precision
-  against exposure (the over-linear and saturated ranges shaded) picks another exposure with a click, and **Check
-  comps** asks APASS for comparison stars near the target's V and colour.
+  *Best precision* (the shortest standard exposure within 2 % of the best 10-minute precision whose peak stays under
+  your linear-limit aim), *Longest safe* (1.3.0's rule, unchanged) or *My exposure*. A transit's default is Best
+  precision once a SHOBS-FLUX profile has measured your system, and *Longest safe until SHOBS-FLUX measures this
+  system*; variables and campaigns default to Longest safe. Your own choice always wins. It shows the band, which
+  magnitude was used and how, where the numbers came from (*from FLUX*, *set here* or *estimate*), the predicted peak,
+  the precision per 10-minute bin, the noise budget (photon, sky, scintillation, read) as a small bar, the transit's
+  bins and the S/N with a verdict word: **Detectable** (S/N 10 or more, green), **Marginal** (5–10, yellow), **Out of
+  reach** (plain, with the reason) or **Saturates** (the predicted peak is over your linear limit, whatever the S/N).
+  A small plot of precision against exposure (the over-linear and saturated ranges shaded) picks another exposure with
+  a click, and **Check comps** asks APASS for comparison stars near the target's V and colour.
 * The verdict shows on the **Targets** lists (a Verdict column), in **Find suggested transits** (with **Hide out of
   reach**), on the **Schedule** (Exposure "120 s (S/N)", Notes lead with the verdict) and on the **OBSPlan** card.
 * **Works without SHOBS-FLUX.** With a SHOBS-FLUX instrument profile for your telescope and camera (found by name,
   camera and focal length within 3 %, or chosen in Setup), its measured zero point, extinction, sky, seeing,
   scintillation, read noise, gain, linear limit and overhead are used; otherwise the values you type in Setup's
-  new **Photometry noise** box; otherwise rough estimates, and then the verdict says at most "Marginal?".
+  new **Photometry noise** box; otherwise rough estimates, and then the verdict word carries a "?"
+  (*Detectable?*, *Marginal?*, *Out of reach?*, *Saturates?*): same thresholds, but a guess, not a measurement.
+  **Hide out of reach** never hides a guess.
   SCHED reads the profiles through `shobs_profile.py`, the file the SHOBS apps share, and never writes them.
 * Flip notes by type: a variable's or campaign's says *Pre-flip frames carry no weight in the night mean*, a
   transit's *Pre-flip frames are kept; SHOBS-P fits the flip step*.

@@ -152,7 +152,7 @@ def _depth_of(t: Target) -> float:
         return float(pl.depth or 0.005) if pl else 0.005
     el = t.elements_obj()
     if el and el.mag_max is not None and el.mag_min is not None:
-        return abs(el.mag_min - el.mag_max) * 0.921
+        return 1.0 - 10.0 ** (-0.4 * abs(el.mag_min - el.mag_max))     # the range as a flux fraction
     return 0.05
 
 
@@ -310,9 +310,11 @@ def frame_cycle_s(target: Target, exposure_s, optics=None) -> tuple[float, str]:
 # ---- exposure by S/N (1.4.0, GitHub issue #4) --------------------------------------------------------------------
 #
 # Three ways to choose a target's exposure (the Edit dialog's radio buttons, Target.exposure_mode):
-#   "precision"  Best precision (default for transits): snr.best_exposure over STANDARD_EXPOSURES with the noise
+#   "precision"  Best precision (default for transits once a SHOBS-FLUX profile has a measured zero point; until
+#                then Longest safe — John, 8 Nov 2026): snr.best_exposure over STANDARD_EXPOSURES with the noise
 #                model's own peak (a FLUX profile's zero point, seeing and linear limit when there is one).
-#   "safe"       Longest safe (default for the others): estimate_exposure above, exactly as in 1.3.0.
+#   "safe"       Longest safe (default for the others, and for transits on rough numbers): estimate_exposure above,
+#                exactly as in 1.3.0.
 #   "own"        My exposure: Target.exposure_s (an exposure_s in an older file is this).
 # Whatever chose it, the noise model then gives that exposure's 10-minute precision, the S/N and the verdict
 # (snr.py; the inputs and their sources from instrument.py).
@@ -321,14 +323,32 @@ EXPOSURE_MODES = ("precision", "safe", "own")
 MODE_WORDS = {"precision": "Best precision", "safe": "Longest safe", "own": "My exposure"}
 
 
-def exposure_mode(t: Target) -> str:
-    """The way this target's exposure is chosen (see above)."""
+def measured(optics, options=None) -> bool:
+    """Is there a SHOBS-FLUX profile with a measured zero point for Setup's main band? (Best precision is a
+    transit's default only then; John, 8 Nov 2026.)"""
+    import instrument
+    try:
+        inp = instrument.inputs(optics, _opts(options))
+    except Exception:
+        return False
+    return bool(inp is not None and inp.sources.get("zp") == "from FLUX")
+
+
+def default_mode(t: Target, is_measured: bool) -> str:
+    """The exposure mode a target gets when the user has chosen none: Best precision for a transit once SHOBS-FLUX
+    has measured the system, Longest safe otherwise (rough numbers do not pick exposures)."""
+    return "precision" if (t is not None and t.kind == "transit" and is_measured) else "safe"
+
+
+def exposure_mode(t: Target, is_measured: bool = False) -> str:
+    """The way this target's exposure is chosen (see above): its exposure_s (My exposure), else the user's choice,
+    else default_mode."""
     if t is not None and t.exposure_s:
         return "own"
     m = str(getattr(t, "exposure_mode", "") or "")
     if m in ("precision", "safe"):
         return m
-    return "precision" if (t is not None and t.kind == "transit") else "safe"
+    return default_mode(t, is_measured)
 
 
 def _amplitude(t: Target) -> float | None:
@@ -357,13 +377,17 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     import snr as S
     o = _opts(options)
     t = target
-    mode = mode if mode in EXPOSURE_MODES else exposure_mode(t)
     dfc = _defocused(t)
     band = band or (getattr(t, "snr_band", "") or "") or None
     if band and band not in instrument.bands(optics, o):
         band = None
     band = band or instrument.main_band(optics)
     inp = instrument.inputs(optics, o, elevation_m, band, defocused=dfc, notes=t.notes or "")
+    is_measured = measured(optics, o)
+    chosen = mode in EXPOSURE_MODES
+    mode = mode if chosen else exposure_mode(t, is_measured)
+    by_default = not chosen and not t.exposure_s and str(getattr(t, "exposure_mode", "") or "") not in (
+        "precision", "safe")
     mag, cat_line = instrument.catalog_mag(t.vmag, band)
     out = {"mode": mode, "band": band, "band_words": instrument.band_words(band), "catalog_line": cat_line,
            "tag": (inp.sources.get("all") if inp else "estimate (no FLUX profile)"), "rough": bool(inp is None
@@ -371,16 +395,25 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
            "sigma": None, "parts": {}, "frames_per_bin": None, "peak_frac": None, "curve": [], "depth": None,
            "duration_days": None, "bins": None, "snr": None, "verdict": "", "reason": "",
            "linear_adu": inp.linear_adu if inp else None, "sat_adu": inp.sat_adu if inp else None,
-           "inputs": inp}
+           "inputs": inp, "measured": is_measured,
+           # a transit on Longest safe only because the numbers are rough (the readout says so)
+           "safe_until_measured": bool(by_default and t.kind == "transit" and not is_measured)}
 
     def overhead(e):
+        # the target's own cycle, its own overhead or Setup's per-frame overhead: as the planner's frame counts;
+        # the FLUX profile's only instead of the bare 3 s default
         per, how = frame_cycle_s(t, e, optics)
-        if how in ("cycle", "target"):
+        if how in ("cycle", "target", "setup"):
             return per - e
         return inp.overhead_s if inp else per - e
 
+    # the Moon's light added to the sky the noise model uses (the penalty came against Setup's dark sky; a measured
+    # profile sky is often much brighter: subtracting the same magnitudes would count the Moon several times)
+    pen_snr = (S.rebase_moon_penalty(moon_penalty, float(o.get("dark_sky_v", sky.DARK_SKY_V)), inp.sky_mag)
+               if inp else 0.0)
+    out["moon_penalty_snr"] = pen_snr
     aim = float(o.get("target_peak_frac") or 0.8)
-    pts = S.curve(inp, mag, STANDARD_EXPOSURES, airmass, moon_penalty, overhead) if (inp and mag is not None) else []
+    pts = S.curve(inp, mag, STANDARD_EXPOSURES, airmass, pen_snr, overhead) if (inp and mag is not None) else []
     out["curve"] = pts
     if mode == "own":
         e = float(exposure_s if exposure_s else (t.exposure_s or 60.0))
@@ -389,6 +422,7 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
         out.update(exposure_s=e, peak_adu=ex["peak_adu"], is_estimate=False, note=ex["note"])
     elif mode == "precision" and pts:
         pick, fits = S.best_exposure(pts, aim)
+        out["fits"] = fits
         e = pick["t"]
         lim = inp.linear_adu
         if fits:
@@ -417,8 +451,8 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
         return out
     e = out["exposure_s"]
     use = S.replace(inp, overhead_s=max(0.0, overhead(e)))
-    bp = S.bin_precision(use, mag, e, airmass, moon_penalty)
-    pk = S.peak_adu(use, mag, e, airmass, moon_penalty)
+    bp = S.bin_precision(use, mag, e, airmass, pen_snr)
+    pk = S.peak_adu(use, mag, e, airmass, pen_snr)
     out.update(sigma=bp["sigma"], parts=bp["parts"], frames_per_bin=bp["frames"], peak_frac=pk / inp.linear_adu,
                model_peak_adu=pk)
     rough = inp.rough
@@ -432,23 +466,28 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
         missing_why = "no transit depth or duration to judge" if not (depth and dur) else ""
     else:
         amp = _amplitude(t)
-        out.update(depth=(S.AMPLITUDE_FLUX * amp) if amp else None)
+        out.update(depth=S.flux_fraction(amp) if amp else None, amplitude_mag=amp)
         val = S.amplitude_snr(amp, bp["sigma"]) if amp else None
         what = f"a {amp:.2f} mag range against {S.ppt(bp['sigma'])} per 10-min bin" if amp else ""
         missing_why = "no amplitude to judge (VSX range)" if not amp else ""
     out["snr"] = val
     word = S.verdict(val, rough)
-    saturated = pk > inp.linear_adu and e <= STANDARD_EXPOSURES[0] and mode != "own"
+    saturated = pk > inp.linear_adu                   # in every mode: a saturating exposure is never "Detectable"
+    out["saturated"] = saturated
     if saturated:
-        word = "Out of reach"
-        what = (f"over the linear limit even at {fmt_exposure(e)} ({'defocus more' if dfc else 'defocus'} to bring "
-                "it in)")
+        word = S.saturates(rough)
+        fix = ("shorten it or defocus more" if dfc else "shorten it or defocus") if (
+            mode == "own" or e > STANDARD_EXPOSURES[0]) else ("defocus more" if dfc else "defocus")
+        what = f"peak ~{pk / inp.linear_adu * 100:.0f} % of your linear limit at {fmt_exposure(e)} ({fix})"
     out["verdict"] = word
+    est = " (rough estimate)" if rough else ""
     if not word:
         out["reason"] = missing_why
-    elif word == "Out of reach":
-        out["reason"] = (what if saturated else f"S/N {val:.1f} (needs {S.MARGINAL_SNR:g}): {what}") + (
-            " (rough estimate)" if rough else "")
+    elif saturated:
+        out["reason"] = what + est
+    elif word.startswith("Out of reach"):
+        out["reason"] = (f"S/N ~{val:.1f} (needs {S.MARGINAL_SNR:g}; rough estimate, no measured zero point): {what}"
+                         if rough else f"S/N {val:.1f} (needs {S.MARGINAL_SNR:g}): {what}")
     elif rough:
         out["reason"] = f"S/N ~{val:.0f} (rough estimate, no measured zero point): {what}"
     else:
@@ -459,18 +498,18 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
 
 def verdict_note(plan: dict) -> str:
     """The Notes column's first line for a block: "Detectable (S/N 18): a 0.80 % dip against 1.1 ppt per 10-min
-    bin, 9 bins in transit", "Marginal? (S/N ~62, rough estimate): …", "Out of reach (S/N 3.1, needs 5): …"."""
+    bin, 9 bins in transit", "Detectable? (S/N ~62, rough estimate): …", "Out of reach (S/N 3.1, needs 5): …",
+    "Saturates: peak ~1070 % of your linear limit at 60 s (…)"."""
     word = plan.get("verdict") or ""
     if not word:
         return ""
     v, what = plan.get("snr"), plan.get("what") or ""
-    if word == "Out of reach" and (v is None or "linear limit" in what):
-        return f"{word}: {what}"
-    if v is None:
-        return word
-    if word == "Out of reach":
-        head = f"S/N {v:.1f}, needs 5"
-    elif word.endswith("?"):
+    rough = bool(plan.get("rough"))
+    if word.startswith("Saturates") or v is None:
+        return f"{word}{' (rough estimate)' if rough else ''}: {what}" if what else word
+    if word.startswith("Out of reach"):
+        head = f"S/N {'~' if rough else ''}{v:.1f}, needs 5" + (", rough estimate" if rough else "")
+    elif rough:
         head = f"S/N ~{v:.0f}, rough estimate"
     else:
         head = f"S/N {v:.0f}" if v >= 10 else f"S/N {v:.1f}"
@@ -1501,7 +1540,8 @@ class _Night:
         b.exposure_s = ex["exposure_s"]
         b.exposure_is_estimate = ex["is_estimate"]
         b.peak_adu = ex["peak_adu"]
-        b.exposure_how = ex["mode"]
+        # an S/N exposure that cannot keep under the aim is not shown as "(S/N)" (it is the shortest, flagged)
+        b.exposure_how = ex["mode"] if ex.get("fits", True) else "precision_over"
         b.snr, b.verdict, b.precision_bin = ex["snr"], ex["verdict"], ex["sigma"]
         if ex["note"].startswith(("⚠", "✖")):
             cautions.append(ex["note"])

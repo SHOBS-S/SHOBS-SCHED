@@ -1494,7 +1494,8 @@ class SetupPage:
         self._hint(box, 2 + len(fields), "SHOBS-FLUX measures these from your nights (it never needs SCHED, and SCHED "
                                          "only reads its profiles). Without a profile, type what you know; empty "
                                          "fields use rough estimates, and a verdict from an estimated zero point "
-                                         "says at most “Marginal?”.")
+                                         "gets a “?” (Detectable?, Marginal?, Out of reach?), "
+                                         "and transits stay on Longest safe until a profile measures the system.")
         return box
 
     def _snr_choice(self) -> str:
@@ -2412,6 +2413,7 @@ class TargetsPage:
     def fill(self):
         app = self.app
         self._verdict_sig = self._verdict_signature()
+        self._verdict_sig_text = repr(self._verdict_sig)
         when = sky.now_jd()
         today = app.tonight()
         by_group: dict[str, list[Target]] = {k: [] for k, _n in GROUPS}
@@ -2556,7 +2558,9 @@ class TargetsPage:
         airmass and Moon), else at the target's best airmass under a dark sky. Cached until the target, Setup or the
         SHOBS-FLUX profiles change."""
         info = t.suggest_info if (t.suggested and isinstance(t.suggest_info, dict)) else {}
-        if info.get("verdict") and not t.exposure_s and not t.exposure_mode:
+        # a suggestion's own verdict (its night) only while Setup and the profiles are as they were at the search
+        if (info.get("verdict") and not t.exposure_s and not t.exposure_mode
+                and info.get("verdict_sig") == getattr(self, "_verdict_sig_text", None)):
             return {"verdict": info["verdict"], "reason": info.get("verdict_reason") or "",
                     "exposure_s": info.get("exposure_s"), "mode": "precision", "night": True}
         pl = mod("planner")
@@ -2579,14 +2583,18 @@ class TargetsPage:
         return (self.verdict_plan(t) or {}).get("verdict") or "—"
 
     def _verdict_signature(self):
-        """What a verdict depends on besides the target: Setup's telescope, camera, options, site and the profiles."""
+        """What a verdict depends on besides the target: Setup's telescope and camera, the noise options, the site
+        and the profiles."""
         s = self.app.settings
         ins = mod("instrument")
         try:
             prof = ins._signature() if ins is not None else ()
         except Exception:
             prof = ()
-        return (repr(s.get("optics")), repr(s.get("options")), repr((s.get("site") or {}).get("lat")),
+        o = s.get("options") or {}
+        noise = tuple(sorted((k, repr(v)) for k, v in o.items() if k.startswith("snr_") or k in (
+            "dark_sky_v", "fwhm_arcsec", "defocus_fwhm_factor", "target_peak_frac")))
+        return (repr(s.get("optics")), noise, repr((s.get("site") or {}).get("lat")),
                 repr((s.get("site") or {}).get("elevation_m")), prof)
 
     def detail_text(self, t: Target) -> str:
@@ -2615,7 +2623,8 @@ class TargetsPage:
         if t.goal_per_week:
             bits.append(self.progress_text(t, self.app.tonight()))
         pl_mod = mod("planner")
-        how = pl_mod.exposure_mode(t) if pl_mod is not None and hasattr(pl_mod, "exposure_mode") else ""
+        how = (pl_mod.exposure_mode(t, pl_mod.measured(self.app.optics, self.app.options))
+               if pl_mod is not None and hasattr(pl_mod, "exposure_mode") else "")
         if t.exposure_s:
             bits.append(f"exposure {fmt_num(t.exposure_s)} s (yours)")
         else:
@@ -3208,6 +3217,7 @@ class TargetsPage:
             except TypeError:
                 found = tg.suggest_transits(site, optics, opts, nights, exclude_names=exclude)
             self._hidden_out_of_reach = int(stats.get("hidden_out_of_reach") or 0)
+            self._rough_kept = int(stats.get("rough_kept") or 0)
             return (found, str(note or ""), prio) if (prio[0] or prio[1]) else (found, str(note or ""))
         app.jobs.run(work, self._found, self.find_ind, "Finding suggested transits", counted=True)
 
@@ -3232,6 +3242,10 @@ class TargetsPage:
                 t.kind, t.mode = "transit", "T"
             added.append(t)
             names.add(t.name.strip().lower())
+        sig = repr(self._verdict_signature())             # the verdicts were worked out for Setup as it is now
+        for t in added:
+            if isinstance(t.suggest_info, dict) and t.suggest_info.get("verdict"):
+                t.suggest_info["verdict_sig"] = sig
         self.app.targets = keep + added
         self.app.save_targets()
         self.app.targets_changed(planned=False)          # only unticked suggestions came and went
@@ -3246,9 +3260,13 @@ class TargetsPage:
         # the planet list is refreshed weekly (the timings are not: each suggestion gets the most precise published
         # ephemeris, fetched now); only an Archive that did not answer is a caution (John 24 Oct: "stale?")
         hidden = int(getattr(self, "_hidden_out_of_reach", 0) or 0)
-        self._hidden_out_of_reach = 0
+        rough = int(getattr(self, "_rough_kept", 0) or 0)
+        self._hidden_out_of_reach = self._rough_kept = 0
         if hidden:
             text += f" {hidden} out of reach left out (Hide out of reach)."
+        if rough:
+            text += (f" {rough} rough estimate{'s' if rough != 1 else ''} kept (“Out of reach?”: no measured zero "
+                     "point, so not hidden).")
         summary, warns = prio
         if summary:
             text += f" Used {summary}."
@@ -3770,8 +3788,10 @@ class EditTargetDialog:
         exposure plot (click it to pick an exposure) and the comp check. Returns the next grid row."""
         app, t = self.app, self.t
         pl_mod = mod("planner")
-        how = (pl_mod.exposure_mode(t) if pl_mod is not None and hasattr(pl_mod, "exposure_mode")
-               else ("own" if t.exposure_s else ("precision" if t.kind == "transit" else "safe")))
+        self._measured = bool(pl_mod.measured(app.optics, app.options)) if (
+            pl_mod is not None and hasattr(pl_mod, "measured")) else False
+        how = (pl_mod.exposure_mode(t, self._measured) if pl_mod is not None and hasattr(pl_mod, "exposure_mode")
+               else ("own" if t.exposure_s else "safe"))
         self.how_var = tk.StringVar(value=how)
         f = ttk.Frame(body, style="Card.TFrame")
         f.grid(row=r, column=0, columnspan=3, sticky="w", pady=px(app, 2))
@@ -3812,7 +3832,8 @@ class EditTargetDialog:
         ro = ttk.Frame(body, style="Card.TFrame")
         ro.grid(row=r, column=0, columnspan=3, sticky="w", pady=(px(app, 4), 0))
         self.ro_vars = {k: tk.StringVar() for k in ("exposure", "precision", "budget", "event", "where")}
-        ttk.Label(ro, textvariable=self.ro_vars["exposure"], style="Card.TLabel").pack(anchor="w")
+        self.exp_lbl = ttk.Label(ro, textvariable=self.ro_vars["exposure"], style="Card.TLabel")
+        self.exp_lbl.pack(anchor="w")
         ttk.Label(ro, textvariable=self.ro_vars["precision"], style="Card.TLabel").pack(anchor="w")
         self.bar = tk.Canvas(ro, width=px(app, self.BAR_W), height=px(app, 14), background=style.CARD,
                              highlightthickness=0)
@@ -3890,6 +3911,8 @@ class EditTargetDialog:
     def update_readout(self):
         """Work the exposure plan out again for the form as it stands and show it."""
         self._ro_pending = False
+        if not self._alive():
+            return
         pl_mod = mod("planner")
         if pl_mod is None or not hasattr(pl_mod, "exposure_plan"):
             self.ro_vars["exposure"].set(missing("planner"))
@@ -3906,9 +3929,13 @@ class EditTargetDialog:
         site = app.site
         x = pl_mod.best_airmass(t, site)
         try:
+            # the default way (no choice of the user's: the form saves "") is left to the planner, so the
+            # readout can say "Longest safe until SHOBS-FLUX measures this system"
+            default = (how != "own" and not t.exposure_s and not t.exposure_mode)
             plan = pl_mod.exposure_plan(t, app.optics, app.options, airmass=x, moon_penalty=0.0,
                                         elevation_m=float(site.elevation_m or 0.0), band=self.band_code(),
-                                        mode="own" if (how == "own" and own) else (how if how != "own" else None),
+                                        mode=("own" if (how == "own" and own) else
+                                              (None if (how == "own" or default) else how)),
                                         exposure_s=own)
         except Exception as exc:
             settings.log(f"exposure readout: {exc!r}\n{traceback.format_exc()}")
@@ -3931,6 +3958,8 @@ class EditTargetDialog:
             pk = plan.get("model_peak_adu") or 0
             line += f" · predicted peak ~{plan['peak_frac'] * 100:.0f} % of the linear limit ({pk:,.0f} ADU)"
         self.ro_vars["exposure"].set(line)
+        # over the linear limit: the peak in the warning style (a plain word "Saturates" below; no icon)
+        self.exp_lbl.configure(style="Warn.TLabel" if (plan.get("peak_frac") or 0) > 1.0 else "Card.TLabel")
         if plan.get("sigma") is not None:
             self.ro_vars["precision"].set(f"Precision {ppt(plan['sigma'])} per 10-minute bin "
                                           f"(~{plan.get('frames_per_bin') or 0:.0f} frames a bin; the target star "
@@ -3943,7 +3972,9 @@ class EditTargetDialog:
             self.ro_vars["event"].set(f"Transit {depth * 100:.2f} % deep, {dur * 24:.1f} h long: "
                                       f"{plan.get('bins') or 0:.0f} ten-minute bins in transit")
         elif depth:
-            self.ro_vars["event"].set(f"Range {depth / 0.921:.2f} mag (VSX), against one 10-minute bin")
+            amp = plan.get("amplitude_mag")
+            self.ro_vars["event"].set(f"Range {amp:.2f} mag (VSX; {depth * 100:.0f} % in flux), against one "
+                                      "10-minute bin" if amp else "")
         else:
             self.ro_vars["event"].set("")
         word = str(plan.get("verdict") or "")
@@ -3953,13 +3984,15 @@ class EditTargetDialog:
         self.verdict_lbl.configure(text=(f"{text}  {word}" if text and word else (word or text or "No verdict")),
                                    style=style.verdict_style(word))
         reason = str(plan.get("reason") or "")
-        if word and reason.startswith(("S/N", "over")):
+        if word and reason.startswith("S/N"):
             reason = reason.split(": ", 1)[1] if ": " in reason and reason.startswith("S/N") else reason
         self.reason_var.set(reason)
-        rough = " Rough estimate (no measured zero point): the verdict says at most “Marginal?”." if plan.get(
-            "rough") and word else ""
+        rough = (" Rough estimate (no measured zero point): the verdict word carries a “?”." if plan.get("rough")
+                 and word else "")
+        until = (" Longest safe until SHOBS-FLUX measures this system (then Best precision is the default; your own "
+                 "choice above always wins)." if plan.get("safe_until_measured") else "")
         self.ro_vars["where"].set(f"Worked out at airmass {airmass:.2f} (its highest from your site) under a dark "
-                                  f"sky; the Schedule uses each night's own airmass and Moon.{rough}")
+                                  f"sky; the Schedule uses each night's own airmass and Moon.{rough}{until}")
         self.draw_plot(plan)
 
     def draw_budget(self, parts: dict):
@@ -4473,8 +4506,9 @@ class EditTargetDialog:
             else:
                 t.exposure_s = None
                 pl_mod = mod("planner")
-                by_type = "precision" if new_kind == "transit" else "safe"
-                # the type's own default stays "" (it then follows the type if the target moves group)
+                # the default (Best precision for a transit once SHOBS-FLUX has measured the system, else Longest
+                # safe) stays "": it then follows the type and the profile; any other choice is the user's own
+                by_type = "precision" if (new_kind == "transit" and getattr(self, "_measured", False)) else "safe"
                 t.exposure_mode = "" if (how == by_type and not self.t.exposure_mode) else how
                 if pl_mod is None:
                     t.exposure_mode = how

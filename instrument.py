@@ -48,6 +48,10 @@ CATALOG_WORDS = {"V": "V", "B": "B", "R": "R", "I": "I", "SG": "g′", "SR": "r�
 # only magnitude SCHED knows (V) into another catalog band. A real star's colour differs: the readout says so.
 SUN_COLOUR = {"V": 0.0, "B": 0.63, "R": -0.39, "I": -0.73, "SG": 0.30, "SR": -0.16, "SI": -0.28, "SZ": -0.31,
               "SU": 1.58}
+# a dark sky's colour against V (mag/arcsec² in the band minus V's; Walker 1987 / Leinert et al. 1998, a typical dark
+# site): a band with no measured sky of its own takes the main band's sky plus this, tagged "estimate"
+TYPICAL_SKY_COLOUR = {"V": 0.0, "B": 0.9, "R": -0.9, "I": -1.9, "SU": 0.8, "SG": 0.5, "SR": -0.4, "SI": -1.3,
+                      "SZ": -2.0}
 # typical extinction (mag/airmass) at a low site until one is measured (as SHOBS-FLUX's TYPICAL_K)
 TYPICAL_K = {"B": 0.30, "V": 0.20, "R": 0.13, "I": 0.08, "SU": 0.55, "SG": 0.20, "SR": 0.12, "SI": 0.08, "SZ": 0.06}
 
@@ -105,16 +109,27 @@ def _signature() -> tuple:
 _CACHE: dict = {}
 
 
+def newer_files() -> list[str]:
+    """Profile files a NEWER SHOBS app wrote (this copy cannot read them: update SHOBS-SCHED)."""
+    _load_all()
+    hit = _CACHE.get("all")
+    return list(hit[3]) if hit else []
+
+
 def _load_all() -> tuple[list[dict], dict]:
-    """(system profiles, {camera id: camera profile}) that load; cached until a file changes."""
+    """(system profiles, {camera id: camera profile}) that load; cached until a file changes. Files written by a
+    newer format are listed apart (newer_files)."""
     sig = _signature()
     hit = _CACHE.get("all")
     if hit and hit[0] == sig:
         return hit[1], hit[2]
-    systems, cams = [], {}
+    systems, cams, newer = [], {}, []
     for path in sp.list_profiles("systems"):
         try:
             doc = sp.load(path)
+        except sp.NewerFormatError:
+            newer.append(os.path.basename(path))
+            continue
         except sp.ProfileError:
             continue
         if doc.get("format") == sp.SYSTEM_FORMAT and doc.get("profile_id"):
@@ -122,11 +137,14 @@ def _load_all() -> tuple[list[dict], dict]:
     for path in sp.list_profiles("cameras"):
         try:
             doc = sp.load(path)
+        except sp.NewerFormatError:
+            newer.append(os.path.basename(path))
+            continue
         except sp.ProfileError:
             continue
         if doc.get("format") == sp.CAMERA_FORMAT and doc.get("profile_id"):
             cams[doc["profile_id"]] = doc
-    _CACHE["all"] = (sig, systems, cams)
+    _CACHE["all"] = (sig, systems, cams, newer)
     return systems, cams
 
 
@@ -189,16 +207,48 @@ def resolve(optics, options: dict | None) -> dict | None:
         if doc is None:
             return None
         return {"id": choice, "system": doc, "camera": cams.get(_text(doc.get("camera_profile"))), "how": "chosen"}
-    best = None
-    for d in systems:
-        dist = matches(d, optics, cams)
-        if dist is not None and (best is None or dist < best[0]):
-            best = (dist, d)
-    if best is None:
+    found = [(dist, d) for d in systems for dist in (matches(d, optics, cams),) if dist is not None]
+    found = _one_camera(found, optics, cams)
+    if not found:
         return None
-    doc = best[1]
+    doc = min(found, key=lambda x: x[0])[1]
     return {"id": doc["profile_id"], "system": doc, "camera": cams.get(_text(doc.get("camera_profile"))),
             "how": "matched"}
+
+
+def _gain_of(cams: dict, cid: str):
+    v, _r = sp.camera_value(cams.get(cid), "gain_e_per_adu")
+    return _num(v)
+
+
+def _one_camera(found: list, optics, cams: dict) -> list:
+    """With no gain setting in Setup, the matches may hold several camera profiles (one per gain): keep the one
+    whose e⁻/ADU is nearest Setup's e⁻ per ADU; [] when that cannot decide (Setup then asks for a choice)."""
+    ids = {_text(d.get("camera_profile")) for _dist, d in found}
+    if len(ids) <= 1 or _num(getattr(optics, "gain", None)) is not None:
+        return found
+    want = _num(getattr(optics, "e_per_adu", None))
+    if want is None:
+        return []
+    gaps = {cid: abs(g - want) for cid in ids for g in (_gain_of(cams, cid),) if g is not None}
+    if not gaps:
+        return []
+    low = min(gaps.values())
+    near = [cid for cid, gap in gaps.items() if gap - low <= 1e-6]
+    if len(near) != 1:
+        return []
+    return [(dist, d) for dist, d in found if _text(d.get("camera_profile")) == near[0]]
+
+
+def ambiguous(optics, options: dict | None) -> list[str]:
+    """The camera profiles that fit Setup equally well when Automatic cannot choose among them ([] otherwise)."""
+    if (_text((options or {}).get("snr_profile")) or "auto") != "auto":
+        return []
+    systems, cams = _load_all()
+    found = [(dist, d) for d in systems for dist in (matches(d, optics, cams),) if dist is not None]
+    if not found or _one_camera(found, optics, cams):
+        return []
+    return sorted({_text(d.get("camera_profile")) for _dist, d in found})
 
 
 def resolve_words(optics, options: dict | None) -> str:
@@ -208,6 +258,17 @@ def resolve_words(optics, options: dict | None) -> str:
         return "No SHOBS-FLUX profile (you chose none): the values below, or rough estimates, are used."
     res = resolve(optics, options)
     if res is None:
+        many = ambiguous(optics, options)
+        if many:
+            return (f"⚠ Several SHOBS-FLUX camera profiles fit ({', '.join(many)}) and Setup has no gain setting to "
+                    "tell them apart: choose the profile above (or type the gain setting under Telescope and "
+                    "camera). Until then the values below, or rough estimates, are used.")
+        newer = newer_files()
+        if newer:
+            return (f"⚠ A newer SHOBS-FLUX wrote {len(newer)} profile{'s' if len(newer) != 1 else ''} here "
+                    f"({', '.join(newer[:3])}{'…' if len(newer) > 3 else ''}): update SHOBS-SCHED to read "
+                    f"{'them' if len(newer) != 1 else 'it'}. Until then the values below, or rough estimates, are "
+                    "used.")
         if choice != "auto":
             return (f"⚠ The chosen profile {choice} is not in {data_dir()} any more: choose another, or Automatic. "
                     "Until then the values below, or rough estimates, are used.")
@@ -345,8 +406,15 @@ def inputs(optics, options: dict | None, elevation_m: float = 0.0, band: str | N
     import sky
     k, src["k"] = _pick(bd.get("extinction_k"), o, "snr_k", TYPICAL_K.get(cat, sky.EXTINCTION_K))
     dark_v = _num(o.get("dark_sky_v"))
-    sky_mag, src["sky"] = _pick(bd.get("sky_brightness"), o, "snr_sky", dark_v if dark_v is not None
-                                else sky.DARK_SKY_V)
+    dark_v = dark_v if dark_v is not None else sky.DARK_SKY_V
+    own_v, own_s = _rec(bd.get("sky_brightness"))
+    if main or (own_v is not None and own_s in STRONG):
+        sky_mag, src["sky"] = _pick(bd.get("sky_brightness"), o, "snr_sky", dark_v)
+    else:
+        # another band without a measured sky: the main band's sky (measured, typed or 21.5) plus a dark sky's
+        # typical colour (never the V sky as it is)
+        base, _t = _pick(_band_doc(res, main_band(optics)).get("sky_brightness"), o, "snr_sky", dark_v)
+        sky_mag, src["sky"] = base + TYPICAL_SKY_COLOUR.get(cat, 0.0), "estimate"
     f0 = _num(o.get("fwhm_arcsec"))
     fwhm, src["fwhm"] = _pick(bd.get("fwhm_in_focus"), o, "snr_fwhm", f0 if f0 else 3.0)
     if defocused:
@@ -375,6 +443,8 @@ def inputs(optics, options: dict | None, elevation_m: float = 0.0, band: str | N
         linear, src["linear"] = float(getattr(optics, "linear_limit_adu", None) or 32000.0), "Setup"
     sat, _r = sp.camera_value(cam, "saturation_adu")
     sat = float(sat) if _num(sat) else snr.SATURATION_ADU
+    bias, _r = sp.camera_value(cam, "bias_level_adu", ch)
+    bias = float(bias) if _num(bias) is not None else 0.0
     rn_rec = (cam.get("values") or {}).get("read_noise_e") if cam else None
     chv = ((cam.get("per_channel") or {}).get(ch) or {}).get("read_noise_e") if (cam and ch) else None
     rn, src["read_noise"] = _pick(chv if _rec(chv)[0] is not None else rn_rec, o, "snr_read_noise",
@@ -400,7 +470,7 @@ def inputs(optics, options: dict | None, elevation_m: float = 0.0, band: str | N
                       aperture_m=float(optics.aperture_mm) / 1000.0, gain=gain, linear_adu=linear, sat_adu=sat,
                       read_noise_e=rn, dark_e_s=dk, cy=cy, overhead_s=overhead,
                       elevation_m=float(elevation_m or 0.0), pix_per_cell=BAND_PIXELS.get(band, 4), rough=rough,
-                      sources=src)
+                      bias_adu=bias, sources=src)
 
 
 def setup_value(optics, options: dict | None, key: str) -> tuple[float | None, str]:

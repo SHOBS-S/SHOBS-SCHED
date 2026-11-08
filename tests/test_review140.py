@@ -144,7 +144,8 @@ class TestCompCheck(unittest.TestCase):
 
 class TestSuggestionsVerdict(unittest.TestCase):
     def setUp(self):
-        g = json.load(open(os.path.join(FX, "golden_oct19_24.json"), encoding="utf-8"))
+        with open(os.path.join(FX, "golden_oct19_24.json"), encoding="utf-8") as fh:
+            g = json.load(fh)
         self.site, self.optics = Site.from_dict(g["site"]), Optics.from_dict(g["optics"])
         self.nights = [date(2026, 10, 19) + timedelta(days=i) for i in range(5)]
         with open(os.path.join(FX, "targets_catalog_small.csv"), encoding="utf-8") as fh:
@@ -154,7 +155,8 @@ class TestSuggestionsVerdict(unittest.TestCase):
         res = T.suggest_transits(self.site, self.optics, {}, self.nights, catalog=self.cat)
         self.assertTrue(res)
         for t in res:
-            self.assertIn(t.suggest_info.get("verdict"), ("Marginal?", "Out of reach"), t.name)
+            self.assertIn(t.suggest_info.get("verdict"), ("Detectable?", "Marginal?", "Out of reach?", "Saturates?"),
+                          t.name)
             self.assertTrue(t.suggest_info.get("verdict_reason"))
 
     def test_hide_out_of_reach(self):
@@ -237,15 +239,15 @@ class TestWindow(Base):
         vals = dict(zip([c for c, _h in page.COLS["campaign"]], tbl.tree.item(dy.id, "values")))
         self.assertEqual(vals["vtype"], dy.elements["vtype"])
         self.assertNotEqual(vals["period"], "—")
-        self.assertEqual(vals["verdict"], "Marginal?")
+        self.assertEqual(vals["verdict"], "Detectable?")
         hd = dict(zip([c for c, _h in page.COLS["campaign"]], tbl.tree.item(self.target("HD 219134").id, "values")))
         self.assertEqual((hd["vtype"], hd["period"], hd["verdict"]), ("—", "—", "—"))
         tr = page.tables["transit"]
         k2 = dict(zip([c for c, _h in page.COLS["transit"]], tr.tree.item(self.target("K2-29 b").id, "values")))
-        self.assertEqual(k2["verdict"], "Marginal?")
+        self.assertEqual(k2["verdict"], "Detectable?")
         page.select_target(self.target("K2-29 b").id)
-        self.assertIn("exposure: Best precision (by S/N)", page.detail_var.get())
-        self.assertIn("Marginal? (at its best airmass, dark sky)", page.detail_var.get())
+        self.assertIn("exposure: Longest safe", page.detail_var.get())          # no FLUX profile yet
+        self.assertIn("Detectable? (at its best airmass, dark sky)", page.detail_var.get())
 
     def test_edit_exposure_section(self):
         self.golden_home()
@@ -255,7 +257,11 @@ class TestWindow(Base):
         saved = []
         dlg = self.sa.EditTargetDialog(app, t, on_save=saved.append, modal=False)
         app.update()
-        self.assertEqual(dlg.how_var.get(), "precision")
+        self.assertEqual(dlg.how_var.get(), "safe")            # rough numbers: Longest safe by default
+        self.assertIn("Longest safe until SHOBS-FLUX measures this system", dlg.ro_vars["where"].get())
+        dlg.how_var.set("precision")                           # the user's choice wins
+        dlg.update_readout()
+        self.assertNotIn("until SHOBS-FLUX", dlg.ro_vars["where"].get())
         self.assertEqual(dlg.src_tag.cget("text"), "estimate (no FLUX profile)")
         self.assertEqual(dlg.cat_var.get(), "V 11.55 → your green channel (TG) (taken as V)")
         self.assertIn("(Best precision) · predicted peak ~", dlg.ro_vars["exposure"].get())
@@ -263,8 +269,8 @@ class TestWindow(Base):
         self.assertTrue(dlg.ro_vars["budget"].get().startswith("Noise budget: photon "))
         self.assertIn("scintillation", dlg.ro_vars["budget"].get())
         self.assertIn("bins in transit", dlg.ro_vars["event"].get())
-        self.assertTrue(dlg.verdict_lbl.cget("text").endswith("Marginal?"))
-        self.assertEqual(str(dlg.verdict_lbl.cget("style")), "VerdictMarginal.TLabel")
+        self.assertTrue(dlg.verdict_lbl.cget("text").endswith("Detectable?"))
+        self.assertEqual(str(dlg.verdict_lbl.cget("style")), "VerdictGood.TLabel")
         for text in (dlg.verdict_lbl.cget("text"), dlg.reason_var.get()):
             self.assertNotIn("⚠", text)
             self.assertNotIn("✖", text)
@@ -296,7 +302,12 @@ class TestWindow(Base):
         dlg.how_var.set("precision")
         self.assertTrue(dlg.save())
         self.assertIsNone(out[-1].exposure_s)
-        self.assertEqual(out[-1].exposure_mode, "")            # the type's default stays ""
+        self.assertEqual(out[-1].exposure_mode, "precision")   # chosen while the numbers are rough: kept
+        dlg = self.sa.EditTargetDialog(app, out[-1], on_save=out.append, modal=False)
+        self.assertEqual(dlg.how_var.get(), "precision")
+        dlg.how_var.set("safe")
+        dlg.save()
+        self.assertEqual(out[-1].exposure_mode, "safe")        # an explicit choice is kept
         dlg = self.sa.EditTargetDialog(app, out[-1], on_save=out.append, modal=False)
         dlg.how_var.set("safe")
         dlg.save()
@@ -428,12 +439,11 @@ class TestWindow(Base):
         tab = page.tabs[0]
         rows = {b.name: r for _i, b, r in tab.table_rows(page.night(0))}
         toi = rows["TOI-2046 b"]
-        self.assertTrue(toi["exposure"].endswith(" s (S/N)"), toi)
-        self.assertNotIn("(est.)", toi["exposure"])
-        self.assertTrue(toi["notes"].startswith("Marginal? (S/N ~"), toi["notes"])
+        self.assertTrue(toi["exposure"].endswith(" s (est.)"), toi)          # Longest safe: no FLUX profile
+        self.assertTrue(toi["notes"].startswith("Detectable? (S/N ~"), toi["notes"])
         app.show_page(3)
         app.update()
-        self.assertIn("Marginal?", app.pages[3].card_text())
+        self.assertIn("Detectable?", app.pages[3].card_text())
 
 
 if __name__ == "__main__":

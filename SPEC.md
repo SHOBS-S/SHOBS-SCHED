@@ -147,10 +147,13 @@ API:
   V 11.4, 60 s, 14" f/8, ASI2600MC gain 100 (0.243 e/ADU), good seeing → raw peak 10–17k ADU.
 * 1.4.0 (GitHub issue #4): `exposure_plan(target, optics, options, airmass, moon_penalty, elevation_m, band, mode,
   exposure_s) -> dict` chooses the exposure three ways (Target.exposure_mode: "precision" = Best precision, the
-  default for transits; "safe" = Longest safe, exactly estimate_exposure above; "own" = My exposure, any
-  exposure_s) and gives that exposure's precision per 10-minute bin, noise budget, S/N and verdict (Detectable
-  S/N ≥ 10, Marginal 5–10, Out of reach under 5; capped at "Marginal?" when the zero point is only the cold-start
-  guess). The noise model is snr.py (pure functions, its formulas in the module text); its inputs come from
+  default for transits once a SHOBS-FLUX profile has a measured zero point (planner.measured), else Longest safe;
+  "safe" = Longest safe, exactly estimate_exposure above; "own" = My exposure, any exposure_s; an explicit choice
+  always wins) and gives that exposure's precision per 10-minute bin, noise budget, S/N and verdict (Detectable
+  S/N ≥ 10, Marginal 5–10, Out of reach under 5, Saturates whenever the predicted peak is over the linear limit;
+  each word with "?" when the zero point is only the cold-start guess; John, 8 Nov 2026). The Moon penalty
+  (against Setup's 21.5 dark sky) is turned into the Moon's flux and added to the profile's measured sky
+  (snr.rebase_moon_penalty); Longest safe keeps 1.3.0's penalty. The noise model is snr.py (pure functions, its formulas in the module text); its inputs come from
   instrument.py: a SHOBS-FLUX system profile (read through the shared shobs_profile.py, never written), else
   Setup's "Photometry noise" values (set here), else cold-start constants (estimate). The block carries
   exposure_how, snr, verdict, precision_bin; its Notes lead with the verdict; the table shows "120 s (S/N)".

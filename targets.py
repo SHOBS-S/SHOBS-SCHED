@@ -1294,7 +1294,8 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     ephemeris neither offers a transit that is not there nor hides one that is.
     Each suggestion carries the S/N verdict (planner.exposure_plan, Best precision, at that night's airmass and Moon)
     in suggest_info["verdict"]; with options["suggest_hide_out_of_reach"] those Out of reach are skipped (the next
-    ones fill the list) and stats["hidden_out_of_reach"] counts them (1.4.0)."""
+    ones fill the list) and stats["hidden_out_of_reach"] counts them; a rough estimate's "Out of reach?" is kept and
+    counted in stats["rough_kept"] (1.4.0)."""
     o = dict(settings.DEFAULT_OPTIONS)
     o.update(options or {})
     if catalog is None:
@@ -1410,8 +1411,10 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
                          t0_err=pl.get("t0_err"), reference=pl.get("reference") or "")
             score_planet(p, best)                    # a transit gone with the better ephemeris drops out here
     # the S/N verdict at that night's airmass and Moon (1.4.0, issue #4); "Hide out of reach" skips those
+    # (only a measured "Out of reach" is hidden: a rough estimate's "Out of reach?" is a guess, so it is kept and
+    # counted)
     hide = bool(o.get("suggest_hide_out_of_reach"))
-    ranked, hidden = [], 0
+    ranked, hidden, rough_kept = [], 0, 0
     for entry in sorted(best.values(), key=lambda b: -b[0]):
         if len(ranked) >= int(o["suggest_max"]):
             break
@@ -1419,9 +1422,12 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
         if hide and verdict.get("verdict") == "Out of reach":
             hidden += 1
             continue
+        if hide and verdict.get("verdict") == "Out of reach?":
+            rough_kept += 1
         ranked.append(entry + (verdict,))
     if stats is not None:
         stats["hidden_out_of_reach"] = hidden
+        stats["rough_kept"] = rough_kept
     out = []
     for score, p, ev, d, sig, pen, snr, _x, vd in ranked:
         note = (f"{_night_label(d, site)}: ingress {sky.hhmm(ev['t1'], site.tz)}, egress "

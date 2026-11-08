@@ -130,7 +130,7 @@ def table_rows(night, site: Site, targets_by_id: dict | None = None) -> list[dic
     "~240 (~135 in transit)", notes (notes then cautions, joined with "; "). Extra keys for the app: alt_x
     "62° (X 1.13)" (at best), start/end (JD), mode_code (V/T/D), kind, status, status_label, locked, set_by_user,
     fixed, cautions (list), exposure_is_estimate (never for an exposure by S/N), target_id, verdict ("Detectable",
-    "Marginal", "Out of reach", "Marginal?" or "": the plan card shows it under the exposure)."""
+    "Marginal", "Out of reach", "Saturates", each with "?" from a rough estimate, or "": the plan card shows it under the exposure)."""
     n = _night(night)
     tz = site.tz
     rows = []

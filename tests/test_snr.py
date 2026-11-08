@@ -139,20 +139,25 @@ class NoiseModel(unittest.TestCase):
         # depth / (σ_bin / sqrt(bins)): 1 % deep, 2 h (12 bins), 1 ppt per bin → 10 × sqrt(12)
         self.assertAlmostEqual(snr.transit_snr(0.01, 0.001, 2 / 24.0), 10 * math.sqrt(12))
         self.assertIsNone(snr.transit_snr(None, 0.001, 0.1))
-        self.assertAlmostEqual(snr.amplitude_snr(0.5, 0.01), 0.921 * 0.5 / 0.01)
+        self.assertAlmostEqual(snr.amplitude_snr(0.5, 0.01), (1 - 10 ** (-0.2)) / 0.01)      # exact, not 0.921 Δm
+        self.assertAlmostEqual(snr.flux_fraction(2.5), 0.9)
 
     def test_verdict_words(self):
         self.assertEqual(snr.verdict(12), "Detectable")
         self.assertEqual(snr.verdict(10), "Detectable")
         self.assertEqual(snr.verdict(7), "Marginal")
         self.assertEqual(snr.verdict(4.9), "Out of reach")
-        self.assertEqual(snr.verdict(50, rough=True), "Marginal?")          # a guess never reads as a measurement
-        self.assertEqual(snr.verdict(4, rough=True), "Out of reach")
+        # a guess never reads as a measurement: the same thresholds, the word with "?" (John, 8 Nov)
+        self.assertEqual(snr.verdict(50, rough=True), "Detectable?")
+        self.assertEqual(snr.verdict(7, rough=True), "Marginal?")
+        self.assertEqual(snr.verdict(4, rough=True), "Out of reach?")
+        self.assertEqual((snr.saturates(), snr.saturates(True)), ("Saturates", "Saturates?"))
+        self.assertEqual(snr.verdict_kind("Detectable?"), "good")
         self.assertEqual(snr.verdict(None), "")
         self.assertEqual(snr.verdict_kind("Detectable"), "good")
         self.assertEqual(snr.verdict_kind("Marginal?"), "marginal")
         self.assertEqual(snr.verdict_kind("Out of reach"), "")
-        for w in ("Detectable", "Marginal", "Out of reach", "Marginal?"):
+        for w in ("Detectable", "Marginal", "Out of reach", "Marginal?", "Detectable?", "Out of reach?", "Saturates"):
             self.assertNotIn("⚠", w)
             self.assertNotIn("✖", w)
 
@@ -305,7 +310,11 @@ class ExposurePlan(unittest.TestCase):
         DataHome(self, copy_fixture=False)
 
     def test_modes_by_type(self):
-        self.assertEqual(planner.exposure_mode(transit()), "precision")
+        # a transit's default: Best precision only once SHOBS-FLUX has measured the system (John, 8 Nov)
+        self.assertEqual(planner.exposure_mode(transit()), "safe")
+        self.assertEqual(planner.exposure_mode(transit(), True), "precision")
+        self.assertEqual(planner.exposure_mode(Target(kind="variable"), True), "safe")
+        self.assertEqual(planner.exposure_mode(transit(exposure_mode="precision")), "precision")   # chosen: wins
         self.assertEqual(planner.exposure_mode(Target(kind="variable")), "safe")
         self.assertEqual(planner.exposure_mode(Target(kind="campaign")), "safe")
         self.assertEqual(planner.exposure_mode(transit(exposure_s=30)), "own")       # an older file's exposure
@@ -322,14 +331,17 @@ class ExposurePlan(unittest.TestCase):
                              (old["exposure_s"], old["peak_adu"], old["note"], old["is_estimate"]))
 
     def test_best_precision_transit(self):
-        p = planner.exposure_plan(transit(depth=0.01, t14_h=2.5, v=11.5), optics(), {}, 1.2, 0.0, 280)
-        self.assertEqual(p["mode"], "precision")
+        d = planner.exposure_plan(transit(depth=0.01, t14_h=2.5, v=11.5), optics(), {}, 1.2, 0.0, 280)
+        self.assertEqual((d["mode"], d["safe_until_measured"]), ("safe", True))      # rough numbers: Longest safe
+        p = planner.exposure_plan(transit(depth=0.01, t14_h=2.5, v=11.5, exposure_mode="precision"), optics(), {},
+                                  1.2, 0.0, 280)
+        self.assertEqual((p["mode"], p["safe_until_measured"]), ("precision", False))
         self.assertIn(p["exposure_s"], planner.STANDARD_EXPOSURES)
         self.assertLessEqual(p["peak_frac"], 0.8 + 1e-9)
         self.assertTrue(p["note"].startswith("S/N exposure: peak ~"))
         self.assertAlmostEqual(p["bins"], 15.0)
         self.assertAlmostEqual(p["snr"], 0.01 / (p["sigma"] / math.sqrt(15.0)))
-        self.assertEqual(p["verdict"], "Marginal?")                     # cold start: capped
+        self.assertEqual(p["verdict"], "Detectable?")                   # cold start: the word with "?"
         self.assertTrue(p["rough"])
         self.assertIn("rough estimate", p["reason"])
         self.assertAlmostEqual(sum(p["parts"].values()), 1.0)
@@ -361,10 +373,10 @@ class ExposurePlan(unittest.TestCase):
         q = planner.exposure_plan(transit(), optics(), {}, 1.2, 0.0, 280, mode="own", exposure_s=20)
         self.assertEqual(q["exposure_s"], 20.0)
 
-    def test_too_bright_is_out_of_reach_with_the_reason(self):
-        p = planner.exposure_plan(transit(v=3.0), optics(), {}, 1.2, 0.0, 280)
-        self.assertEqual(p["verdict"], "Out of reach")
-        self.assertIn("over the linear limit even at 0.75 s", p["reason"])
+    def test_too_bright_saturates_with_the_reason(self):
+        p = planner.exposure_plan(transit(v=3.0, exposure_mode="precision"), optics(), {}, 1.2, 0.0, 280)
+        self.assertEqual(p["verdict"], "Saturates?")                    # the peak is from the guessed zero point
+        self.assertIn("of your linear limit at 0.75 s (defocus)", p["reason"])
         self.assertTrue(p["note"].startswith("⚠ estimate: even 0.75 s may saturate"))
 
     def test_no_v_or_no_depth(self):
@@ -376,7 +388,7 @@ class ExposurePlan(unittest.TestCase):
         self.assertIn("no amplitude", c["reason"])
         v = Target(kind="variable", vmag=11, ra=1, dec=40,
                    elements=VarElements(vtype="EA", mag_max=11.0, mag_min=11.6).__dict__.copy())
-        self.assertEqual(planner.exposure_plan(v, optics(), {}, 1.2)["verdict"], "Marginal?")
+        self.assertEqual(planner.exposure_plan(v, optics(), {}, 1.2)["verdict"], "Detectable?")
         self.assertEqual(planner.exposure_plan(transit(), Optics(), {}, 1.2)["reason"][:9], "telescope")
 
     def test_target_cycle_sets_the_frames_per_bin(self):
@@ -398,14 +410,17 @@ class ExposurePlan(unittest.TestCase):
         t = Target(id="m", name="Mid b", kind="transit", mode="T", ra=ra % 360, dec=40.0, vmag=11.0,
                    planet=pl.__dict__.copy())
         b = planner.build_night(d, site, optics(), [t], {}).blocks_obj()[0]
+        self.assertEqual(b.exposure_how, "safe")                       # no FLUX profile: Longest safe
+        t.exposure_mode = "precision"
+        b = planner.build_night(d, site, optics(), [t], {}).blocks_obj()[0]
         self.assertEqual(b.exposure_how, "precision")
-        self.assertEqual(b.verdict, "Marginal?")
-        self.assertTrue(b.notes[0].startswith("Marginal? (S/N ~"), b.notes[0])
+        self.assertEqual(b.verdict, "Detectable?")
+        self.assertTrue(b.notes[0].startswith("Detectable? (S/N ~"), b.notes[0])
         import export
         r = export.table_rows(planner.build_night(d, site, optics(), [t], {}), site)[0]
         self.assertTrue(r["exposure"].endswith(" s (S/N)"), r["exposure"])
         self.assertFalse(r["exposure_is_estimate"])
-        self.assertEqual(r["verdict"], "Marginal?")
+        self.assertEqual(r["verdict"], "Detectable?")
 
 
 class FlipNotes(unittest.TestCase):

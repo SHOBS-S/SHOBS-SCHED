@@ -23,9 +23,17 @@ A 10-MINUTE BIN holds n = 600 / (t + overhead) frames: σ_bin = sqrt(Σ variance
 the comparison stars add a little more.
 
 TRANSIT S/N = depth / (σ_bin / sqrt(bins in transit)),  bins in transit = duration / 10 min.
-VARIABLE S/N = amplitude (as a flux fraction, 0.921 × Δmag) / σ_bin: one 10-minute bin against the range.
-Verdict: S/N ≥ 10 Detectable, 5–10 Marginal, under 5 Out of reach. Inputs that are only the cold-start guess
-(no measured zero point) never read as a measurement: the verdict is capped at "Marginal?".
+VARIABLE S/N = amplitude (as a flux fraction, 1 − 10^(−0.4 Δmag)) / σ_bin: one 10-minute bin against the range.
+Verdict: S/N ≥ 10 Detectable, 5–10 Marginal, under 5 Out of reach; a predicted peak over the linear limit (any way
+the exposure was chosen) is "Saturates" whatever the S/N. Inputs that are only the cold-start guess (no measured
+zero point) never read as a measurement: the same thresholds, and the word gets a "?" ("Detectable?", "Marginal?",
+"Out of reach?", and "Saturates?" because the predicted peak then comes from the same guessed zero point; John,
+8 Nov 2026).
+
+THE MOON. The planner's Moon penalty is magnitudes of brightening against Setup's dark sky (21.5, as 1.3.0's
+exposure estimate uses it). A profile's measured sky can be much brighter (18.8 at a suburban site): subtracting the
+same magnitudes from it would add the Moon several times over. rebase_moon_penalty turns the penalty into the Moon's
+own flux and adds that to the measured sky.
 
 PEAK of the brightest raw pixel (saturation guard): Gaussian of the FWHM integrated over the central pixel, times the
 band's rate × 4 / (its pixels per cell) (the star's electrons spread over the band's pixels only), plus sky and dark;
@@ -42,10 +50,10 @@ DETECTABLE_SNR = 10.0
 MARGINAL_SNR = 5.0
 NEAR_BEST = 0.02               # Best precision: the shortest exposure within 2 % of the best 10-min precision
 SATURATION_ADU = 65535.0       # a 16-bit camera's top (a camera profile's saturation_adu wins)
-AMPLITUDE_FLUX = 0.921         # Δmag → flux fraction (2.5 / ln 10 inverted)
 
 VERDICTS = ("Detectable", "Marginal", "Out of reach")
-ROUGH_CAP = "Marginal?"        # the best a rough estimate may say
+SATURATES = "Saturates"        # the predicted peak is over the linear limit (rough: "Saturates?")
+ROUGH_MARK = "?"               # a rough estimate's verdict word ends in this
 
 
 @dataclass
@@ -66,6 +74,10 @@ class Inputs:
     overhead_s: float = 3.0            # per frame on top of the exposure
     elevation_m: float = 0.0
     pix_per_cell: int = 2              # raw band pixels per 2×2 cell: TG 2, TR / TB 1, mono 4
+                                       # (a one-shot-color camera binned 2×2 in hardware still keeps its Bayer
+                                       # pattern on most CMOS sensors, so the same counts are used; a camera that
+                                       # merges colours when binned would want 4 — not modelled)
+    bias_adu: float = 0.0              # the camera's bias level (raw ADU), added to the peak (linear limits are raw)
     rough: bool = False                # the zero point is only the cold-start guess
     sources: dict = field(default_factory=dict)   # key → "from FLUX" / "set here" / "estimate" (for the readout)
 
@@ -83,6 +95,22 @@ def star_rate(inp: Inputs, mag: float, airmass: float = 1.0) -> float:
     return 10.0 ** (-0.4 * (float(mag) - inp.zp + inp.k * (x - 1.0)))
 
 
+def flux_fraction(delta_mag: float) -> float:
+    """A range of Δmag as a flux fraction of the bright state: 1 − 10^(−0.4 Δmag)."""
+    return 1.0 - 10.0 ** (-0.4 * abs(float(delta_mag)))
+
+
+def rebase_moon_penalty(moon_penalty: float, dark_v: float, sky_mag: float) -> float:
+    """The Moon's brightening (mag) of a sky of sky_mag, from its brightening of a dark_v sky: the Moon's own flux
+    10^(−0.4 (dark_v − pen)) − 10^(−0.4 dark_v) added to the sky_mag sky."""
+    pen = max(0.0, float(moon_penalty or 0.0))
+    if pen <= 0:
+        return 0.0
+    moon = 10.0 ** (-0.4 * (float(dark_v) - pen)) - 10.0 ** (-0.4 * float(dark_v))
+    base = 10.0 ** (-0.4 * float(sky_mag))
+    return 2.5 * math.log10(1.0 + moon / base)
+
+
 def sky_rate(inp: Inputs, moon_penalty: float = 0.0) -> float:
     """Sky electrons per second per arcsec² in the band (moon_penalty magnitudes brighter than the dark sky)."""
     return 10.0 ** (-0.4 * (inp.sky_mag - max(0.0, float(moon_penalty or 0.0)) - inp.zp))
@@ -95,11 +123,11 @@ def central_fraction(fwhm_arcsec: float, scale: float) -> float:
 
 
 def peak_adu(inp: Inputs, mag: float, t: float, airmass: float = 1.0, moon_penalty: float = 0.0) -> float:
-    """Predicted raw peak (ADU above the bias) of the star's brightest pixel."""
+    """Predicted raw peak (ADU, the bias included when known) of the star's brightest pixel."""
     share = inp.band_share()
     star = star_rate(inp, mag, airmass) * central_fraction(inp.fwhm, inp.scale) * share
     sky = sky_rate(inp, moon_penalty) * inp.scale ** 2 * share
-    return (star + sky + inp.dark_e_s) * float(t) / max(1e-9, inp.gain)
+    return (star + sky + inp.dark_e_s) * float(t) / max(1e-9, inp.gain) + float(inp.bias_adu or 0.0)
 
 
 def scint_variance(inp: Inputs, t: float, airmass: float) -> float:
@@ -184,28 +212,29 @@ def transit_snr(depth: float, sigma_bin: float, duration_days: float, bin_min: f
 
 
 def amplitude_snr(delta_mag: float, sigma_bin: float) -> float | None:
-    """A variable's range (Δmag as a flux fraction) against one 10-minute bin's scatter."""
+    """A variable's range (Δmag as a flux fraction, flux_fraction) against one 10-minute bin's scatter."""
     if not delta_mag or not sigma_bin or not math.isfinite(sigma_bin):
         return None
-    return AMPLITUDE_FLUX * abs(float(delta_mag)) / float(sigma_bin)
+    return flux_fraction(delta_mag) / float(sigma_bin)
 
 
 def verdict(snr: float | None, rough: bool = False) -> str:
-    """"Detectable" (S/N ≥ 10), "Marginal" (5–10), "Out of reach" (under 5); a rough estimate never says more than
-    "Marginal?". "" when there is no S/N."""
+    """"Detectable" (S/N ≥ 10), "Marginal" (5–10), "Out of reach" (under 5); from a rough estimate the same word
+    with a "?" ("Detectable?"), never a bare word. "" when there is no S/N."""
     if snr is None or not math.isfinite(snr):
         return ""
-    if snr < MARGINAL_SNR:
-        return "Out of reach"
-    if rough:
-        return ROUGH_CAP
-    return "Detectable" if snr >= DETECTABLE_SNR else "Marginal"
+    word = "Out of reach" if snr < MARGINAL_SNR else ("Detectable" if snr >= DETECTABLE_SNR else "Marginal")
+    return word + ROUGH_MARK if rough else word
+
+
+def saturates(rough: bool = False) -> str:
+    return SATURATES + (ROUGH_MARK if rough else "")
 
 
 def verdict_kind(word: str) -> str:
     """The colour key of a verdict word: "good" (green), "marginal" (yellow), "" (plain)."""
     w = str(word or "")
-    if w == "Detectable":
+    if w.startswith("Detectable"):
         return "good"
     if w.startswith("Marginal"):
         return "marginal"

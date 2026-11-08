@@ -270,7 +270,8 @@ class Block:
     exposure_is_estimate: bool = True
     exposure_how: str = ""                    # 1.4.0: "precision" / "safe" / "own" (how the exposure was chosen)
     snr: float | None = None                  # 1.4.0: S/N of the transit (or of a variable's range) at that exposure
-    verdict: str = ""                         # "Detectable", "Marginal", "Out of reach", "Marginal?" or ""
+    verdict: str = ""                         # "Detectable", "Marginal", "Out of reach", "Saturates";
+                                              # with "?" from a rough estimate; or ""
     precision_bin: float | None = None        # relative flux scatter per 10-minute bin
     frames: int | None = None
     frames_in_transit: int | None = None

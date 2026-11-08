@@ -211,9 +211,16 @@ def s4b_snr():
           res["id"] if res else "none")
     t = Target.from_dict([x for x in g["targets"] if x["name"] == "TOI-2046 b"][0])
     t.exposure_s = None
+    d = planner.exposure_plan(t, optics, {}, airmass=1.3, moon_penalty=0.0, elevation_m=280)
+    check("rough numbers: a transit stays on Longest safe", d["mode"] == "safe" and d["safe_until_measured"])
+    t.exposure_mode = "precision"
     p = planner.exposure_plan(t, optics, {}, airmass=1.3, moon_penalty=0.0, elevation_m=280)
     check(f"TOI-2046 b by S/N: {p['exposure_s']:g} s, {snr.ppt(p['sigma'])} per 10 min, {p['verdict']}",
-          p["mode"] == "precision" and p["verdict"] == "Marginal?" and p["snr"] and p["snr"] > 10, p["reason"])
+          p["mode"] == "precision" and p["verdict"] == "Detectable?" and p["snr"] and p["snr"] > 10, p["reason"])
+    sat = planner.exposure_plan(t, optics, {}, 1.3, 0.0, 280, mode="own", exposure_s=600)
+    check(f"a saturating exposure says {sat['verdict']}", sat["verdict"] == "Saturates?", sat["reason"])
+    m = snr.rebase_moon_penalty(3.0, 21.5, 18.84)
+    check(f"the Moon on a measured 18.84 sky adds {m:.2f} mag (not 3)", 0.5 < m < 1.0)
     safe = planner.exposure_plan(t, optics, {}, 1.3, 0.0, 280, mode="safe")
     check("Longest safe is 1.3.0's rule", safe["exposure_s"] == planner.estimate_exposure(t, optics, {}, 1.3)[
         "exposure_s"])

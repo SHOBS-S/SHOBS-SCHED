@@ -242,10 +242,10 @@ def status_style(kind: str) -> str:
 
 
 def verdict_style(word: str) -> str:
-    """The label style of an S/N verdict word: green for Detectable, yellow for Marginal (and Marginal?), plain
-    otherwise."""
+    """The label style of an S/N verdict word: green for Detectable (and Detectable?), yellow for Marginal (and
+    Marginal?), plain otherwise (Out of reach, Saturates)."""
     w = str(word or "")
-    if w == "Detectable":
+    if w.startswith("Detectable"):
         return "VerdictGood.TLabel"
     if w.startswith("Marginal"):
         return "VerdictMarginal.TLabel"
