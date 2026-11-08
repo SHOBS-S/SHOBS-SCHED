@@ -99,7 +99,8 @@ place for it: it leaves a step in the light curve. The planner places flexible b
    tracking margin; stop by 23:47 at the latest*: stop the run by then, or the mount flips.
 2. **Otherwise, flip at the start.** When a full block does not fit before the meridian, the block starts about 12
    minutes before the meridian. The mount flips while you are there at the start, and the rest of the run is on one
-   side of the pier. The note says *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*.
+   side of the pier. The note says *Start before the meridian and let it flip (~22:40). Pre-flip frames carry no
+   weight in the night mean.*: SHOBS-P leaves the few frames before the flip out of the night's mean.
 3. **A flip in the middle only as a last resort.** The planner counts a mid-run flip as a heavy cost (as bad as
    starting 4 hours from the best time), so it only places one there when nothing better fits. The block then gets
    *⚠ Meridian flip in the middle of the run (~01:10): a pier-side step in the series*.
@@ -113,7 +114,11 @@ way. Only a room that holds the **whole** block counts as "fits before the merid
 over a full flip-at-start block.
 
 Fixed-time blocks (transits, timed events) cannot move: their flip falls where it falls, with a note (and a ⚠ when it
-is inside the transit).
+is inside the transit). A transit block that starts just before its meridian says *Start before the meridian and let
+it flip (~22:40). Pre-flip frames are kept; SHOBS-P fits the flip step.* For a transit every minute of baseline
+counts, so the frames before the flip are not thrown away: SHOBS-P fits the small step the flip leaves. The baseline
+note then counts from the flip: *Baseline 48 min before ingress (after the flip; the kept pre-flip frames add more),
+60 min after egress*.
 
 ## The night tabs
 
@@ -134,7 +139,7 @@ The Moon is given in the order the dark night meets it: whether it is up or down
 dawn. For example *Moon 62 % (down at dusk, rises 23:10)*, *Moon 48 % (up at dusk, sets 01:35)*, or, when it does not
 rise or set in the dark, *Moon 95 % (up all night)* or *Moon 3 % (down all night)*.
 
-![A night tab (Sat 31 Oct): the night's line and a ⚠ dew line, the weather strip above the night plot, the HAT-P-32 b transit selected and drawn bright, DY Peg and the HD 219134 campaign, the nightly table with (est.) exposures and its notes, and the Flats and darks, Didn't fit (with Plan this instead) and Free time boxes](img/06-night-tab.png)
+![A night tab (Sat 31 Oct): the night's line and a ⚠ dew line, the weather strip above the night plot, the HAT-P-32 b transit selected and drawn bright, DY Peg and the HD 219134 campaign, the nightly table with (est.) exposures and its notes, each led by its verdict (Detectable? (S/N ~…, rough estimate): …), and the Flats and darks, Didn't fit (with Plan this instead) and Free time boxes](img/06-night-tab.png)
 
 ## The night plot
 
@@ -185,15 +190,25 @@ One row per block, in time order, tinted by the target's type:
 | **RA / Dec (J2000)** | The target's position. |
 | **Alt** | The highest altitude in the block and its airmass, e.g. *62° (X 1.13)*. |
 | **Meridian** | When the target crosses the meridian; *(flip)* when the mount flips during the block, e.g. *22:44 (flip)* (the flip's time is in the notes). |
-| **Exposure** | The exposure, e.g. *40 s*, with *(est.)* when SHOBS-SCHED estimated it (*40 s (est.)*). The OBSPlan page and the plan card write *est.* |
+| **Exposure** | The exposure, e.g. *40 s*. *(S/N)* when it was chosen by S/N, with **Best precision** (*120 s (S/N)*); *(est.)* when it is SHOBS-SCHED's **Longest safe** estimate (*40 s (est.)*), and also for a Best precision exposure that could not keep the peak under the aim (the shortest standard exposure, with a ⚠). Your own exposure has no mark. The OBSPlan page and the plan card write the same, with *est.* for *(est.)*. |
 | **Frames** | About how many frames fit (*~240*); for a transit also how many fall in the transit (*~240 (~135 in transit)*). |
-| **Notes** | What to know about this block (below), then its cautions. |
+| **Notes** | The block's verdict first, then what to know about this block (below), then its cautions. |
 
 Click a row to select it (and pick it out on the plot). The line under the table shows its notes and cautions in
 full, with each caution on its own ⚠ line.
 
 ### Notes you will see
 
+- **The verdict** leads every block's notes (chapter 5, "How the S/N works"). It is worked out for this block: the
+  target's best airmass during it and that night's Moon, with the block's exposure. For example:
+  - *Detectable (S/N 18): a 1.00 % dip against 1.7 ppt per 10-min bin, 9 bins in transit*;
+  - *Marginal (S/N 7.4): a 0.08 mag range against 9.6 ppt per 10-min bin* for a variable;
+  - *Out of reach (S/N 3.1, needs 5): a 0.40 % dip against 3.6 ppt per 10-min bin, 8 bins in transit*;
+  - *Saturates: peak ~140 % of your linear limit at 120 s (shorten it or defocus)*.
+
+  From rough numbers (no measured zero point) the S/N gets a *~* and the note says so: *Detectable? (S/N ~54, rough
+  estimate): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*, or *Out of reach? (S/N ~3.1, needs 5,
+  rough estimate): …*. A block with nothing to judge (no V, no depth, no VSX range) has no verdict note.
 - **Transits**: *Ingress 21:32, mid 22:44, egress 23:56 (±1 min)* and *Baseline 60 min before ingress, 60 min after
   egress*.
 - **Timed variables**: *Minimum at 01:14* or *Maximum at 22:05*.
@@ -203,8 +218,10 @@ full, with each caution on its own ⚠ line.
 - **No-transit windows**: *No HD 219134 after 04:28 (planet c transit)*.
 - **Flips** (equatorial mount; see *Flexible blocks and the meridian flip*): *Ends 3 min past its meridian, inside
   your tracking margin; stop by 03:38 at the latest* (or *Ends at its meridian; stop by 03:40 at the latest*), *Start
-  before the meridian and let it flip (~22:40); drop the pre-flip frames*, *Meridian flip at ~01:10; drop the frames
-  during the flip*, and *Flips at the start (not run wholly before its meridian) so another target fits tonight*.
+  before the meridian and let it flip (~22:40). Pre-flip frames carry no weight in the night mean.* (a variable or a
+  campaign) or *Start before the meridian and let it flip (~22:40). Pre-flip frames are kept; SHOBS-P fits the flip
+  step.* (a transit), *Meridian flip at ~01:10; drop the frames during the flip*, and *Flips at the start (not run
+  wholly before its meridian) so another target fits tonight*.
 - **Room for the next block**: *Ends 12 min early so DY Peg can start before its meridian*.
 - **Clouds**: *Cloud ≥ 70 % forecast for most of this block*. A plain note, not a caution.
 - **Your own frame interval**: *Frames every 45 s (your seconds between frames)*.
