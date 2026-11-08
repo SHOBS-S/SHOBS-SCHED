@@ -19,8 +19,9 @@ tagged *from SHOBS-P*; check them and go on.
 2. Check **Time zone**. SHOBS-SCHED guesses it from the computer's clock and says so under the box (*Times show as
    Local time (UTC−5) now; guessed from this computer's clock: check it and Save.*). For our example site pick
    `America/Chicago`. You can type in the box to jump through the list.
-3. In **Telescope and camera**, type the **Aperture** (`250` mm), **Focal length** and **Pixel size**. The pixel
-   scale appears beside **Binning** (for example *1.24″ per pixel*). If you have a FITS frame from this camera and
+3. In **Telescope and camera**, type the **Aperture** (`250` mm), **Focal length** and **Pixel size** (the example
+   uses `1600` mm and `3.76` µm, a ZWO ASI2600MC Air). The pixel scale appears beside **Binning** (here *0.48″ per
+   pixel*). If you have a FITS frame from this camera and
    telescope, **Read from a FITS frame…** fills the camera fields for you (chapter 4).
 4. Type your camera's **Linear limit** in raw ADU, if you know it. It is the brightness above which your camera stops
    responding in proportion to the light. The planner keeps star peaks under it. If you only have the spec sheet's
@@ -32,7 +33,9 @@ tagged *from SHOBS-P*; check them and go on.
    darks** box (for example `60, 120, 180`). The night's **Darks to shoot** then lists only the others. The other
    fields in that box filter **Find suggested transits…** and **Find suggested variables…**; their starting values
    will do for now.
-7. Press the green **Save** button at the bottom. It says **✔ Saved.**
+7. Leave the **Photometry noise (exposure by S/N)** box as it is. Without a SHOBS-FLUX profile its fields use rough
+   estimates, which is fine for a first night (chapter 4 explains them).
+8. Press the green **Save** button at the bottom. It says **✔ Saved.**
 
 ![The Setup page filled in for Example Observatory (40.0, −100.0, America/Chicago, 250 mm aperture), with "✔ Saved." beside the Save button](img/03-setup-saved.png)
 
@@ -47,7 +50,9 @@ tagged *from SHOBS-P*; check them and go on.
    lands in the **Variables** box, also ticked.
 
 Each row shows the target's next event in the planned nights: for a transit, the night and its ingress, mid and egress
-times; for a variable, its next timed minimum or maximum, or *any time* for a star with no event worth timing. A
+times; for a variable, its next timed minimum or maximum, or *any time* for a star with no event worth timing. The
+**Verdict** column says whether your telescope can measure it: both say **Detectable?**, "detectable, from rough
+numbers" (the **?** goes once SHOBS-FLUX has measured your system; chapter 5, "How the S/N works"). A
 transit marked *(partial)* is only partly in the dark; if a transit shows *none in the next 7 nights*, no part of any
 transit is in the dark this week. Pick another planet, or try **Find suggested transits…** (chapter 5).
 
@@ -78,10 +83,14 @@ or no dark time. A target that didn't fit, or a cloudy forecast, is listed on th
      exposure, frames and notes;
    - under it, **Flats and darks to shoot**, **Didn't fit, and why**, and **Free time**.
 
-Click a row (or a block on the plot) to pick it out. Read the notes: they say, for example, *Ingress 23:50, mid
-01:20, egress 02:50 (±1 min)* and *Start before the meridian and let it flip (~21:01); drop the pre-flip frames*.
+Click a row (or a block on the plot) to pick it out. Read the notes. Each block's notes start with its verdict, for
+example *Detectable? (S/N ~54, rough estimate): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*
+for WASP-12 b; then come, for example, *Ingress 23:50, mid 01:20, egress 02:50 (±1 min)*, and for DY Peg *Start
+before the meridian and let it flip (~21:01). Pre-flip frames carry no weight in the night mean.* The exposures read
+*(est.)*: without a SHOBS-FLUX profile they are SHOBS-SCHED's safe estimates (here 180 s for WASP-12 b, 60 s for DY
+Peg).
 
-![The Mon 02 Nov tab: the night's line (Moon 35 %, down at dusk, rises 01:12) and a dew line, the night plot with the DY Peg block (20:48–22:48) and the WASP-12 b transit block, and the nightly table under it](img/03-night-tab.png)
+![The Mon 02 Nov tab: the night's line (Moon 35 %, down at dusk, rises 01:12) and a dew line, the night plot with the DY Peg block (20:48–22:48) and the WASP-12 b transit block, and the nightly table under it, with 180 s (est.) and 60 s (est.) exposures and notes that start with "Detectable? (S/N ~…, rough estimate)"](img/03-night-tab.png)
 
 ## Step 4: Print the plan card
 
