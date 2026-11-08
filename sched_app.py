@@ -3817,7 +3817,7 @@ class EditTargetDialog:
                              "whose peak stays under your linear-limit aim (the default for transits once a zero "
                              "point is measured by SHOBS-FLUX or typed in Setup). Longest "
                              "safe: the longest standard exposure whose predicted peak stays under the aim (1.3.0's "
-                             "rule on rough numbers). My exposure: yours.",
+                             "rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours.",
                   style="Hint.TLabel", justify=tk.LEFT, wraplength=px(app, 460)).grid(
             row=r, column=0, columnspan=3, sticky="w", pady=(0, px(app, 4)))
         r += 1

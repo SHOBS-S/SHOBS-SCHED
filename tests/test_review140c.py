@@ -284,6 +284,7 @@ class Window(Base):
         joined = " ".join(texts)
         self.assertIn("once a zero point is measured by SHOBS-FLUX or typed in Setup", joined)
         self.assertIn("until a zero point is measured or typed here", joined)
+        self.assertIn("(1.3.0's rule while no SHOBS-FLUX profile or typed value is in use)", joined)
         self.assertIn("(Detectable?, Marginal?, Out of reach?, Saturates?)", joined)
         self.assertNotIn("until a profile measures the system", joined)
 
