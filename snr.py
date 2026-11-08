@@ -184,6 +184,21 @@ def curve(inp: Inputs, mag: float, exposures, airmass: float = 1.0, moon_penalty
     return out
 
 
+def exposure_at_peak(points: list[dict], limit_adu: float) -> float | None:
+    """The exposure (s) at which the curve's raw peak reaches limit_adu, read off the curve's own peaks (raw ADU with
+    the bias, the same units as the limits; the peak is a straight line in t, so linear interpolation is exact).
+    The shortest exposure when even that is at or over the limit; None when the curve never reaches it."""
+    pts = sorted((p for p in points if math.isfinite(p.get("peak") or math.nan)), key=lambda p: p["t"])
+    if not pts or not limit_adu or limit_adu <= 0:
+        return None
+    if pts[0]["peak"] >= limit_adu:
+        return pts[0]["t"]
+    for a, b in zip(pts, pts[1:]):
+        if a["peak"] < limit_adu <= b["peak"]:
+            return a["t"] + (limit_adu - a["peak"]) * (b["t"] - a["t"]) / (b["peak"] - a["peak"])
+    return None
+
+
 def best_exposure(points: list[dict], aim_frac: float = 0.8) -> tuple[dict | None, bool]:
     """Best precision: of the exposures whose peak stays under aim_frac × the linear limit, the shortest whose
     10-minute precision is within NEAR_BEST of the best one (a curve that has flattened gains nothing from longer

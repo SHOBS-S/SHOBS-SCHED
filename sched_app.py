@@ -4065,14 +4065,13 @@ class EditTargetDialog:
         ymax = max(p["sigma"] for p in pts) * 1.1
         left, bottom, top = px(app, 44), h - px(app, 26), px(app, 10)
         # shaded: over the linear limit, saturated (the peak grows in step with the exposure)
-        p0 = pts[0]
-        per_s = p0["peak"] / p0["t"] if p0["t"] else 0
+        # read off the curve's own raw peaks (bias included, like the limits): peak/t from the shortest frame put the
+        # whole bias into the slope and drew 'saturated' ~7x too short (1.4.0 first look, TOI-6130 b)
         lin, sat = plan.get("linear_adu"), plan.get("sat_adu")
+        noise = mod("snr")
         for limit, fill, word in ((lin, style.WARN_BG, "over linear"), (sat, "#f3d6d6", "saturated")):
-            if not limit or per_s <= 0:
-                continue
-            t_at = limit / per_s
-            if t_at >= hi:
+            t_at = noise.exposure_at_peak(pts, limit) if (limit and noise) else None
+            if t_at is None or t_at >= hi:
                 continue
             x0 = self._plot_xy(max(lo, t_at), 0, lo, hi, ymax)[0]
             c.create_rectangle(x0, top, w - px(app, 10), bottom, fill=fill, outline="")

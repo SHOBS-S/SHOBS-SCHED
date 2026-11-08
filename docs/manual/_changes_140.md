@@ -90,3 +90,9 @@ Exact new wording in *italics*.
   stays.
 * Manual ch 4 and 5: "exactly 1.3.0" reworded — on the cold start Longest safe *chooses* as 1.3.0 did, the peak shown is
   the noise model's, and it never hands on a Saturates exposure.
+
+## After John's first look (8 Nov 2026)
+- Edit → Exposure plot: the "over linear" and "saturated" shading now starts where the curve's own raw peak (bias included,
+  like the limits) reaches each limit (`snr.exposure_at_peak`). It used peak/t at the shortest exposure, which put the
+  whole bias into the slope: TOI-6130 b (502 ADU bias) showed "saturated" from ~83 s against a true ~546 s. Test:
+  tests/test_review140d.py.
