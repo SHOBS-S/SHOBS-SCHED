@@ -15,8 +15,19 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAN = ROOT / "docs" / "manual"
-VERSION = "1.3.0"
-EDITION = "Third edition"
+
+
+def app_version():
+    """settings.APP_VERSION, read from settings.py (not imported: the manual builds without the app's packages)."""
+    text = (ROOT / "settings.py").read_text(encoding="utf-8")
+    m = re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']', text, flags=re.M)
+    if not m:
+        raise SystemExit("APP_VERSION not found in settings.py")
+    return m.group(1)
+
+
+VERSION = app_version()
+EDITION = "Fourth edition"
 TITLE = "SHOBS-SCHED User's Manual"
 
 CSS = """
