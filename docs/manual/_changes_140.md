@@ -80,3 +80,13 @@ Exact new wording in *italics*.
   meridian and let it flip (~22:40). Pre-flip frames are kept; SHOBS-P fits the flip step.*; Out of reach keeps
   *needs 5* (Edit reason *… (needs 5; rough estimate, no measured zero point)*, Targets *S/N 3.1 (needs 5): …*,
   Schedule *Out of reach (S/N 3.1, needs 5): …*).
+
+## After the Fable review of 8f834b8..dd898f1
+
+* **My exposure that saturates always warns (Fable S1).** On the bare cold start 1.3.0's notes warned only from 1.5×
+  the linear limit, so a My exposure between 1× and 1.5× read *Saturates?* with no ⚠ (and no caution in the
+  Schedule). Now any own exposure over the limit gets the noise model's note: *⚠ Your exposure: predicted peak ~41k,
+  over your 32k linear limit — shorten 180 s or defocus* (✖ from twice the limit). Below the limit the 1.3.0 wording
+  stays.
+* Manual ch 4 and 5: "exactly 1.3.0" reworded — on the cold start Longest safe *chooses* as 1.3.0 did, the peak shown is
+  the noise model's, and it never hands on a Saturates exposure.

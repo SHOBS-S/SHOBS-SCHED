@@ -380,6 +380,18 @@ def _pct(x: float) -> str:
     return f"{x * 100:.2f} %" if x < 0.1 else f"{x * 100:.1f} %"
 
 
+def _own_note(pk, lim, e, dword, dfc):
+    """The note on the user's own exposure, from the noise model's peak: ✖ at twice the linear limit, ⚠ over it."""
+    more = " or defocus more" if dfc else " or defocus"
+    if pk >= 2.0 * lim:
+        return (f"✖ Your exposure{dword}: predicted peak ~{_k(pk)}, over twice your {_k(lim)} linear limit — "
+                f"shorten {fmt_exposure(e)}" + more)
+    if pk > lim:
+        return (f"⚠ Your exposure{dword}: predicted peak ~{_k(pk)}, over your {_k(lim)} linear limit — "
+                f"shorten {fmt_exposure(e)}" + more)
+    return f"Your exposure{';' + dword if dfc else ''}: predicted peak ~{pk:,.0f} ADU"
+
+
 def exposure_plan(target: Target, optics, options: dict | None = None, airmass: float = 1.2,
                   moon_penalty: float = 0.0, elevation_m: float = 0.0, band: str | None = None,
                   mode: str | None = None, exposure_s: float | None = None) -> dict:
@@ -442,14 +454,7 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     if mode == "own" and model:
         e = float(exposure_s if exposure_s else (t.exposure_s or 60.0))
         pk = S.peak_adu(S.replace(inp, overhead_s=max(0.0, overhead(e))), mag, e, airmass, pen_snr)
-        if pk >= 2.0 * lim:
-            note = (f"✖ Your exposure{dword}: predicted peak ~{_k(pk)}, over twice your {_k(lim)} linear limit — "
-                    f"shorten {fmt_exposure(e)}" + (" or defocus more" if dfc else " or defocus"))
-        elif pk > lim:
-            note = (f"⚠ Your exposure{dword}: predicted peak ~{_k(pk)}, over your {_k(lim)} linear limit — "
-                    f"shorten {fmt_exposure(e)}" + (" or defocus more" if dfc else " or defocus"))
-        else:
-            note = f"Your exposure{';' + dword if dfc else ''}: predicted peak ~{pk:,.0f} ADU"
+        note = _own_note(pk, lim, e, dword, dfc)
         out.update(exposure_s=e, peak_adu=pk, is_estimate=False, note=note)
     elif mode == "own":
         e = float(exposure_s if exposure_s else (t.exposure_s or 60.0))
@@ -516,6 +521,10 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
         out["peak_adu"] = pk
         note = re.sub(r"peak ~[\d,]+ ADU", f"peak ~{pk:,.0f} ADU", str(out.get("note") or ""))
         out["note"] = re.sub(r"peak ~\d+k,", f"peak ~{_k(pk)},", note)
+        if out.get("mode") == "own" and pk > inp.linear_adu and not out["note"].startswith(("⚠", "✖")):
+            # 1.3.0 warned only from 1.5× the limit; a "Saturates?" own exposure always carries its caution into
+            # the Schedule (Fable S1)
+            out["note"] = _own_note(pk, inp.linear_adu, e, dword, dfc)
     rough = inp.rough
     if t.kind == "transit":
         pl = t.planet_obj()

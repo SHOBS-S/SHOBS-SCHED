@@ -208,6 +208,21 @@ class Wording(unittest.TestCase):
             self.assertTrue(note.startswith("Saturates? (rough estimate): peak ~" if rough else "Saturates: peak ~"),
                             note)
 
+    def test_cold_own_exposure_that_saturates_carries_its_caution(self):
+        """Fable S1: on the bare cold start a My exposure between 1x and 1.5x the linear limit read 'Saturates?' but
+        its note had no ⚠, so the Schedule showed no caution. Every Saturates own exposure now carries ⚠ or ✖."""
+        Home(self, copy_fixture=False)
+        hit = 0
+        for e in (60, 90, 120, 180, 240, 300, 600, 900):
+            p = planner.exposure_plan(transit(v=11.5), optics(), {}, 1.2, 0.0, 280, mode="own", exposure_s=e)
+            if p["saturated"]:
+                hit += 1
+                self.assertTrue(p["note"].startswith(("⚠", "✖")), (e, p["note"]))
+                self.assertIn(f"~{planner._k(p['peak_adu'])}", p["note"])
+            else:
+                self.assertFalse(p["note"].startswith(("⚠", "✖")), (e, p["note"]))
+        self.assertGreater(hit, 0)
+
     def test_out_of_reach_says_needs_5(self):
         for o in ({}, TYPED):
             Home(self, copy_fixture=False)

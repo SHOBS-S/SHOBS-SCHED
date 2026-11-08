@@ -289,8 +289,8 @@ exposure is chosen, and shows what that exposure buys you: the precision, the S/
   one that is within 2 % of the best precision per 10-minute bin. Longer frames would gain almost nothing, and
   shorter frames time ingress and egress better.
 - **Longest safe**: the longest standard exposure whose predicted peak stays under the aim. With no SHOBS-FLUX profile
-  and nothing typed in Setup's Photometry noise box this is 1.3.0's rule, unchanged; otherwise the peak is the
-  noise model's (the same one the verdict **Saturates** uses), so Longest safe never picks an exposure the verdict
+  and nothing typed in Setup's Photometry noise box it chooses as 1.3.0 did (the peak it shows is the noise
+  model's); otherwise the peak is the noise model's (the same one the verdict **Saturates** uses), so Longest safe never picks an exposure the verdict
   calls Saturates. The warnings on **My exposure** follow the same rule.
 - **My exposure**: your own, in seconds, in the box beside it. Typing in the box chooses **My exposure** for you.
 

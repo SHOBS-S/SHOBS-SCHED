@@ -437,8 +437,9 @@ Some details:
   You can always choose **Best precision** (or pin **Longest safe**) for a target yourself (chapter 5).
 - **One peak model.** Whenever a SHOBS-FLUX profile is in use (even one whose zero point is only FLUX's estimate)
   or any value is typed here, every predicted peak (Longest safe's choice, the warnings on your own exposure, and
-  **Saturates**) comes from the same noise model, with the profile's seeing and linear limit. Only with no profile
-  and nothing typed are Longest safe and those warnings exactly 1.3.0's.
+  **Saturates**) comes from the same noise model, with the profile's seeing and linear limit. With no profile and
+  nothing typed, Longest safe chooses the exposure as 1.3.0 did (the peak shown is still the noise model's), and never
+  one the verdict calls Saturates; the warnings on your own exposure follow the noise model's peak too.
 - **Empty fields.** Leave a field empty for its estimate; the tag shows the value used (*estimate 0.2*).
 - **The limits.** Zero point 10 to 30, extinction 0 to 1.5, dark sky 15 to 23, seeing 0.3 to 20, read noise 0 to 50,
   dark current 0 to 10, C_Y 0.1 to 10. A wrong value gives, for example, *✖ Not saved: Scintillation C_Y must be
