@@ -282,7 +282,7 @@ verdict. Everything in it updates as you change it (or the V magnitude above), b
 | Choice | What it does |
 |---|---|
 | **Best precision** | The shortest standard exposure whose 10-minute precision is within 2 % of the best one, with the star's peak still under your linear-limit aim (80 % of the limit). Longer frames than that gain nothing, and shorter frames time ingress and egress better. |
-| **Longest safe** | The longest standard exposure whose predicted peak stays under the aim: SHOBS-SCHED 1.3.0's rule. |
+| **Longest safe** | The longest standard exposure whose predicted peak stays under the aim: SHOBS-SCHED 1.3.0's rule (with a SHOBS-FLUX profile or values typed in Setup, worked out with the same predicted peak as the **Saturates** check). |
 | **My exposure** | Yours: type the seconds in the box beside it. Typing an exposure chooses **My exposure** for you. |
 
 The standard exposures are 0.75, 1, 2, 5, 10, 20, 30, 40, 60, 90, 120, 180 and 300 s.
