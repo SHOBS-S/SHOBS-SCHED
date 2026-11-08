@@ -25,6 +25,7 @@ You see it while SHOBS-SCHED is:
 | Building the schedule | *Building 7 nights…*, *Re-reviewing 7 nights…*, *Working out twilight and Moon times…*, *Rebuilding Mon 02 Nov…* |
 | Checking transit ephemerides (at startup, and when you tick or keep a transit) | *Checking transit ephemerides at the NASA Exoplanet Archive…* |
 | Drawing the night plots for the printed card | *Drawing the night plots for the plan card… 3 of 7* |
+| Checking a target's comparison stars (Edit dialog, **Check comps**; in the dialog) | *Asking APASS (VizieR) for comparison stars…* |
 
 Some things to know:
 
@@ -39,9 +40,9 @@ Some things to know:
 
 ![The green busy bar with "Finding suggested transits: the best with their most precise ephemeris… 10 of 37": the second pass of the search](img/08-busy-bar-find.png)
 
-- **Dialogs have their own busy bar.** The Edit dialog's planet lookup, for example, shows its busy bar at the
-  **dialog's** lower left (*Looking up HD 219134's planets at the NASA Exoplanet Archive…*), so the main window stays
-  free.
+- **Dialogs have their own busy bar.** The Edit dialog's planet lookup and its **Check comps**, for example, show
+  their green busy bar at the **dialog's** lower left (*Looking up HD 219134's planets at the NASA Exoplanet
+  Archive…*, *Asking APASS (VizieR) for comparison stars…*), so the main window stays free.
 - **You can keep working.** Lookups, searches and builds run in the background; the window stays responsive. The only
   thing that waits is the schedule itself: while a build runs, **Build schedule** and **Re-review schedule** are grayed
   out, and changes to a night's blocks say *⚠ Wait for the build to finish.*
@@ -105,6 +106,9 @@ If something unexpected goes wrong inside the window, the status strip says *✖
 | *✖ Not saved: Horizon line 3 ("…") is not two numbers: azimuth and altitude.* | A horizon line cannot be read. | Fix or delete that line. |
 | *⚠ Site name cleared: it was SHOBS-P's telescope name (…)* | An older SHOBS-SCHED copied SHOBS-P's telescope name into the site name. | Type your observatory's name and **Save**. |
 | *✖ … could not be read: it does not start like a FITS file (no SIMPLE card). Nothing changed.* | The file chosen for **Read from a FITS frame…** is not FITS. | Choose a `.fits` frame from your camera. |
+| *No SHOBS-FLUX profile matches the telescope and camera above (SCHED works without one): …* | In the Photometry noise box: no SHOBS-FLUX profile for this telescope and camera. | Nothing to do; the S/N numbers are rough estimates (with a **?**). |
+| *⚠ Several SHOBS-FLUX camera profiles fit (…) and Setup has no gain setting to tell them apart: …* | Automatic cannot tell which gain's camera profile is yours. | Choose the profile in **Instrument profile**, or type the **Gain setting**. |
+| *⚠ A newer SHOBS-FLUX wrote … profile(s) here (…): update SHOBS-SCHED to read …* | A profile in a newer format than this SHOBS-SCHED knows. | Update SHOBS-SCHED. |
 
 ### Targets
 
@@ -116,6 +120,8 @@ If something unexpected goes wrong inside the window, the status strip says *✖
 | *✖ SIMBAD did not answer (…; its mirror: …) and there is no saved copy for …. Try again later.* | SIMBAD is in trouble, not your name: SIMBAD at CDS did not answer, and neither did its mirror at IDIA (Cape Town). The first reason reads *SIMBAD reported a problem on its side* when SIMBAD answered with an error of its own. For a planet host star you do not see this: its position then comes from the NASA Exoplanet Archive instead. | Try again later. The name is not wrong. |
 | *⚠ Added … (…). … did not answer (…); using the copy from … ago.* | A saved answer was used. | Fine for planning; it refreshes when the service answers. |
 | *⚠ … is already in the list.* | You added a target twice. | Nothing to do. |
+| *✖ Not saved: My exposure is empty: type your exposure in seconds, or choose Best precision or Longest safe.* | The Edit dialog: **My exposure** chosen with no seconds typed. | Type the exposure, or choose another button. |
+| *✖ Comps not checked: …* | The Edit dialog's **Check comps** could not reach APASS at VizieR. | Try again later; the comps line keeps the last saved answer. |
 | *✖ SIMBAD lists … as a planet, but the NASA Exoplanet Archive has no transit ephemeris under that name. Try its Archive name (for example WASP-12 b), or type the planet's values by hand.* | A planet SIMBAD knows but the Archive does not (under that name). | Try its Archive name, or add the star and type the ephemeris. |
 | *⚠ … Planet list: …* after **Find suggested transits…** | The Archive's planet list could not be refreshed. | The saved list was used; suggestions may miss the newest planets. |
 | *✔ … suggested transits found, soonest first. Used priorities from ExoClock … (… planets) and ExoFOP SG1 … (… TOIs), either list: … planets searched, … of them not in the Archive's list.* | **Find suggested transits…** with a Priority chosen. | Nothing to do. |
