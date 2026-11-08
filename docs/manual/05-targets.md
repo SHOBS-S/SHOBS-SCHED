@@ -9,15 +9,16 @@ drag the bar between Transits and Variables to share the room.*
 
 This chapter covers:
 
-- the three boxes (Campaigns, Transits, Variables) and their columns,
+- the three boxes (Campaigns, Transits, Variables) and their columns, including the **Verdict**,
 - the **Nights** row,
 - adding a target by name, and what happens with stars that are not a planet or a known variable,
 - **Plan**, **Priority**, **Keep**, **Edit…** and **Remove**,
-- the Edit dialog, including a star's known planets and no-transit windows,
+- the Edit dialog, including its **Exposure** section, a star's known planets and no-transit windows,
 - **Find suggested transits…** and **Find suggested variables…**,
+- how the S/N works: where its numbers come from, the verdict, and a worked example,
 - ephemeris precision, and how SHOBS-SCHED upgrades it for you.
 
-![The Targets page: Add a target and the Nights row at the top; the Campaigns box with HD 219134 (next blackout Tue 03 Nov), the Transits box with suggested planets and HAT-P-32 b ticked and selected (its Source now ✔ NEA), and the Variables box with suggestions and AB And ticked (✔ VizieR VSX); the details line, the "will be planned … Kept" line, and the Edit…, Remove, Keep and Find buttons at the bottom](img/05-targets-page.png)
+![The Targets page: Add a target and the Nights row at the top; the Campaigns box with HD 219134 (next blackout Tue 03 Nov, Type and Period —), the Transits box with suggested planets and HAT-P-32 b ticked and selected (its Source now ✔ NEA), and the Variables box with suggestions and AB And ticked (✔ VizieR VSX); every box with its Verdict column (Detectable?, Marginal?, Out of reach?, —); the details line, the "will be planned … Kept" line, and the Edit…, Remove, Keep and Find buttons at the bottom](img/05-targets-page.png)
 
 ## The three boxes
 
@@ -45,11 +46,31 @@ The others depend on the box:
 
 | Box | Columns |
 |---|---|
-| **Campaigns** | **Next useful event**, **This week**, **Priority**, **RA / Dec (J2000)**, **Source** |
-| **Transits** | **Period**, **Night**, **Ingress**, **Mid**, **Egress**, **Priority**, **RA / Dec (J2000)**, **Source** |
-| **Variables** | **Type**, **Period**, **Night**, **Next min / max**, **Priority**, **RA / Dec (J2000)**, **Source** |
+| **Campaigns** | **Type**, **Period**, **Next useful event**, **This week**, **Verdict**, **Priority**, **RA / Dec (J2000)**, **Source** |
+| **Transits** | **Period**, **Night**, **Ingress**, **Mid**, **Egress**, **Verdict**, **Priority**, **RA / Dec (J2000)**, **Source** |
+| **Variables** | **Type**, **Period**, **Night**, **Next min / max**, **Verdict**, **Priority**, **RA / Dec (J2000)**, **Source** |
 
-Periods under a day are shown in hours (*5.31 h*), longer ones in days (*3.52490 d*).
+Periods under a day are shown in hours (*5.31 h*), longer ones in days (*3.52490 d*). A campaign's **Type** and
+**Period** are the star's VSX type and period: a variable star you move to Campaigns keeps them. A campaign that is
+not a known variable (a star field, a planet host) shows **—** in both.
+
+### The Verdict column
+
+**Verdict** says, in one word, whether your telescope can measure what the target offers: a transit's dip, or a
+variable's range. It is worked out with the target's exposure, at its best airmass from your site, under a dark sky
+(a suggestion's: on its own night, see "Find suggested transits"):
+
+| Verdict | Means |
+|---|---|
+| **Detectable** | S/N 10 or more: you should see it clearly. |
+| **Marginal** | S/N 5 to 10: there, but noisy. Good nights only, or bin hard. |
+| **Out of reach** | S/N under 5: lost in the noise with this telescope. |
+| **Saturates** | The star's predicted peak is over your linear limit at this exposure, whatever the S/N. Shorten the exposure or defocus. |
+| **Detectable?**, **Marginal?**, **Out of reach?**, **Saturates?** | The same, worked out from rough numbers (no measured zero point yet): a good guess, not a measurement. |
+| **—** | Nothing to judge: no V magnitude, no transit depth or duration, or a campaign with no VSX range. |
+
+Until SHOBS-FLUX has measured your system (or you have typed a zero point in Setup), every verdict carries the
+**?**. "How the S/N works", at the end of this chapter, explains the numbers behind the word.
 
 ### The next event in the planned nights
 
@@ -90,8 +111,13 @@ note (see "Ephemeris precision" below).
 
 Click a row to see its details on a line under the boxes: for a transit, its depth, duration, period, the predicted
 mid-time uncertainty (*Tc ± 1.4 min*) and where the ephemeris came from; for a variable, its type and period; for a
-campaign, its rules, goal and progress; and for every target, its exposure (yours, or *SCHED estimates it*), block
-length and notes. A suggestion also shows its score.
+campaign, its rules, goal and progress; and for every target, how its exposure is chosen (*exposure: Best precision
+(by S/N)*, *exposure: Longest safe* or *exposure 60 s (yours)*), its verdict with the reason, block length and
+notes. A suggestion also shows its score.
+
+The verdict part reads, for example, *Detectable? (at its best airmass, dark sky): S/N ~54 (rough estimate, no
+measured zero point): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*. For a suggestion it says
+*(on its night)* instead of *(at its best airmass, dark sky)*.
 
 ## The Nights row
 
@@ -230,10 +256,10 @@ others.
 ## The Edit dialog
 
 **Edit…** opens a dialog titled with the target's name (**Edit HD 219134**) with its settings in parts: **Target**,
-**Observing**, **Ephemeris** (transits only), **No data while a planet transits** and **Notes**. The dialog sizes
-itself to its contents and scrolls if it is taller than the screen.
+**Exposure**, **Observing**, **Ephemeris** (transits only), **No data while a planet transits** and **Notes**. The
+dialog sizes itself to its contents and scrolls if it is taller than the screen.
 
-![The Edit dialog for the HD 219134 campaign: Target, Observing (block length 120, shortest useful block 45, goal 0), No data while a planet transits with planets b and c ticked and d, f, g, h grayed, and Notes](img/05-edit-dialog.png)
+![The Edit dialog for the HD 219134 campaign: Target, Exposure (Longest safe chosen, the band and its "estimate (no FLUX profile)" tag, the readout with "—" for the verdict, as the campaign has no VSX range), Observing (block length 120, shortest useful block 45, goal 0), No data while a planet transits with planets b and c ticked and d, f, g, h grayed, and Notes](img/05-edit-dialog.png)
 
 ### Target
 
@@ -244,12 +270,85 @@ Moving a target to another group: a planet moved out of Transits loses its ephem
 moves … out of Transits; its ephemeris is dropped.*) and becomes its star. A star moved into Transits needs a typed
 period and Tc; if it has transiting planets, the dialog suggests adding the planet on the Targets page instead.
 
+### Exposure
+
+This part chooses the target's exposure and shows what that exposure buys you: the precision, the S/N and the
+verdict. Everything in it updates as you change it (or the V magnitude above), before you save.
+
+![The Exposure section of WASP-12 b's Edit dialog, with no SHOBS-FLUX profile: Longest safe chosen; Band "Green channel (TG)" with "estimate (no FLUX profile)"; the readout "Exposure 180 s (Longest safe) · predicted peak ~48 % of the linear limit", "Precision 1.1 ppt per 10-minute bin", the noise budget bar, "Transit 1.37 % deep, 3.0 h long: 18 ten-minute bins in transit", the green "S/N 54  Detectable?" with its reason, and the grey line; the precision vs exposure plot with 180 s circled; the Comps line and Check comps](img/05-edit-exposure.png)
+
+**How the exposure is chosen.** Three buttons:
+
+| Choice | What it does |
+|---|---|
+| **Best precision** | The shortest standard exposure whose 10-minute precision is within 2 % of the best one, with the star's peak still under your linear-limit aim (80 % of the limit). Longer frames than that gain nothing, and shorter frames time ingress and egress better. |
+| **Longest safe** | The longest standard exposure whose predicted peak stays under the aim: SHOBS-SCHED 1.3.0's rule. |
+| **My exposure** | Yours: type the seconds in the box beside it. Typing an exposure chooses **My exposure** for you. |
+
+The standard exposures are 0.75, 1, 2, 5, 10, 20, 30, 40, 60, 90, 120, 180 and 300 s.
+
+What a target gets when you have not chosen:
+
+- **A transit**: **Best precision** once the zero point is known (measured by a SHOBS-FLUX profile, or typed in
+  Setup's **Photometry noise** box, chapter 4). Until then, **Longest safe**: rough numbers do not pick exposures.
+  The grey line under the readout then ends *Longest safe until SHOBS-FLUX measures this system (then Best precision
+  is the default; your own choice above always wins).*
+- **A variable or a campaign**: **Longest safe**.
+
+Your own choice always wins. Click one of the three buttons and save, and that choice is the target's own: it stays,
+even when a SHOBS-FLUX profile later changes the default. A target you never set follows the default.
+
+**Band.** The drop-down lists the bands SHOBS-SCHED has a zero point for: the bands a SHOBS-FLUX profile measured,
+and always Setup's main band (**Green channel (TG)** on a color camera, **Clear band (CV)** on a mono one). The tag
+beside it says where the numbers came from: *from FLUX*, *set here* (typed in Setup), *estimate (no FLUX profile)*
+or *estimate (FLUX has no measured zero point yet)*. The line under it says which magnitude was used. SHOBS-SCHED
+knows only the star's V, so the green channel takes it as it is (*V 11.57 → your green channel (TG) (taken as V)*);
+for a red, blue or Sloan band it adds a Sun-like star's colour, and says so (*… (R ≈ V − 0.39 for a Sun-like star;
+SCHED knows only V, a redder or bluer star differs)*).
+
+**The readout**, line by line (WASP-12 b with the example site, no SHOBS-FLUX profile):
+
+- *Exposure 180 s (Longest safe) · predicted peak ~48 % of the linear limit (15,505 ADU)*. Over the linear limit,
+  this line turns yellow.
+- *Precision 1.1 ppt per 10-minute bin (~3 frames a bin; the target star alone)*: the scatter you can expect when
+  you average 10 minutes of frames. The comparison stars add a little more.
+- **The noise budget bar**, a small coloured bar with the words under it: *Noise budget: photon 77 % · sky 1 % ·
+  scintillation 22 % · read + dark 0 %*. It shows where the noise comes from (see "How the S/N works" below).
+- What there is to measure: *Transit 1.37 % deep, 3.0 h long: 18 ten-minute bins in transit*, or for a variable
+  *Range 0.56 mag (VSX; 40 % in flux), against one 10-minute bin*.
+- **The S/N and the verdict**: *S/N 54  Detectable?*, green for Detectable, yellow for Marginal, plain for Out of
+  reach and Saturates, with the reason beside it (*a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in
+  transit*). When the peak is over your linear limit, the word is **Saturates** (or **Saturates?**) whatever the
+  S/N, and the reason says by how much: *peak ~162 % of your linear limit at 600 s (shorten it or defocus)*.
+- The grey line: *Worked out at airmass 1.02 (its highest from your site) under a dark sky; the Schedule uses each
+  night's own airmass and Moon.* From rough numbers it adds *Rough estimate (no measured zero point): the verdict
+  word carries a “?”.*
+
+**The plot** shows the precision per 10-minute bin against the exposure (a log scale, *1 s*, *10 s*, *100 s*). Where
+the star's peak would go over your linear limit it is shaded yellow (*over linear*), and pink where the pixels would
+saturate (*saturated*). The chosen exposure is circled in green. Click the plot to pick the nearest standard exposure
+as **My exposure**.
+
+The curve shows why longer is not always better: it falls steeply for short frames, then flattens out, while the peak
+climbs toward your linear limit. WASP-12 b's curve is 1.23 ppt at 10 s, 1.10 ppt at 60 s and 1.08 ppt at 180 s.
+
+**Comps.** A line under the plot says how good the field's comparison stars are, and **Check comps** asks APASS at
+VizieR for the stars around the target (the dialog's green busy bar says *Asking APASS (VizieR) for comparison
+stars…*). The line then says, for example, *Comps: 3 within 1 mag (APASS, 17′ around the target); 1 within 0.3 in
+B−V (the star's B−V 0.65).*, or *Comps: none within 1 mag of V 11.6 (APASS, 17′ around the target). Fainter or
+brighter comps add noise; expect a noisier ratio.* Under it: *✔ Checked with APASS.*, a ⚠ when a saved copy was used,
+or *✖ Comps not checked: …*. Until you press it the line says *Comps: not checked yet. Check comps asks APASS at
+VizieR (needs the internet).* The answer is saved, so the line shows again offline. The search radius is half the
+shorter side of your field of view (between 5′ and 30′).
+
+If **My exposure** is chosen with the box empty, **Save** says *✖ Not saved: My exposure is empty: type your exposure
+in seconds, or choose Best precision or Longest safe.*
+
 ### Observing
 
 | Field | What it does |
 |---|---|
-| **Exposure** | Your exposure in seconds. Empty: SHOBS-SCHED estimates one from V, your telescope and camera, and the seeing, so the star's peak stays under your linear limit. |
-| **Seconds between frames (full interval, this target)** | The whole frame-to-frame time, exposure plus download and save, for this target only. Empty: the exposure plus Setup's per-frame overhead. Used to count frames. |
+| **Seconds between frames (full interval, this target)** | The whole frame-to-frame time, exposure plus download and save, for this target only (*s (empty = exposure + Setup's per-frame overhead)*). Used to count frames, and in the S/N (frames per 10-minute bin). |
 | **Block length** | Minutes you want per visit (flexible targets: campaigns and any-time variables). 120 by default. |
 | **Shortest useful block** | The fewest minutes worth a visit. 45 by default. A visit shorter than this is not planned. |
 | **Goal** | Nights a week (0 to 7) for a campaign; 0 = no goal. |
@@ -257,9 +356,11 @@ period and Tc; if it has transiting planets, the dialog suggests adding the plan
 | **Moon at least** | The closest the Moon may come while it is up, in degrees (the hint says *° away (empty = Setup's default)*). Empty = Setup's **Moon distance at least** (chapter 4). A value here wins over that default, even a smaller one. |
 | **Only between** | Clock times on the site's clock, `HH:MM-HH:MM` (e.g. `21:00-02:30`). Empty = any time. |
 
-Why an own exposure matters: the estimate is a cold start, good to within a factor of two or so. Once you know what
-works for a star (from SHOBS-P's peak values, for example), type it here. The planner then predicts the peak for your
-exposure and warns (*⚠ estimate: peak ~52k, near your 32k limit — check a frame*) only when it looks clearly too
+Why an own exposure matters: without a SHOBS-FLUX profile, the predicted peak is a cold start, good to within a
+factor of two or so. Once you know what works for a star (from SHOBS-P's peak values, for example), choose **My
+exposure** and type it. The readout then shows what it buys, and the Edit dialog's verdict turns to **Saturates**
+the moment the predicted peak goes over your linear limit. The plan's cautions stay gentle with your own exposure:
+the planner warns (*⚠ estimate: peak ~52k, near your 32k limit — check a frame*) only when it looks clearly too
 long (over 1.5 × your limit); past twice the limit the line is a ✖ (*… over twice your 32k limit — shorten 60 s or
 defocus*).
 
@@ -309,8 +410,9 @@ your site.
    *filtered by Setup's “Suggestions and darks” box (host V 9–13, depth at least 0.5 %, baseline 30 min each side,
    Moon-brightened sky up to 3 mag) and Setup's Moon distance (by phase, 20–70°)*. With a fixed Moon distance that
    last part reads *(30°)*, and with none *(off)*. To change these, go to the Setup page (chapter 4).
-3. If you like, choose a **Priority** (see "Priority: ExoClock and ExoFOP" below). Then press **Search**. Your
-   Priority choices are remembered for next time.
+3. If you like, choose a **Priority** (see "Priority: ExoClock and ExoFOP" below), and tick **Hide out of reach**
+   (*(transits whose S/N would be under 5 with your telescope; each suggestion's Verdict shows on the Targets
+   page)*). Then press **Search**. Your Priority choices and the tick are remembered for next time.
 4. The busy bar at the lower left counts through the search in two stages, each with its own count. First it
    looks for the transits of every planet in the Archive's list of transiting planets (refreshed weekly):
    *Finding suggested transits: transits of each planet… 120 of 640*. Then it checks the best of them again with
@@ -318,9 +420,11 @@ your site.
    ephemeris… 12 of 50*.
 5. The result line says, for example, *✔ 12 suggested transits found, soonest first.* When nothing fits, it says
    *Done: no new full transits fit the next 7 nights with Setup's “Suggestions and darks” filter (planets already
-   listed are not suggested again).*
+   listed are not suggested again).* With **Hide out of reach** ticked it adds how many it left out, *3 out of reach
+   left out (Hide out of reach).*, and how many rough guesses it kept, *2 rough estimates kept (“Out of reach?”: no
+   measured zero point, so not hidden).*
 
-![The Find suggested transits window: what it searches, the filter values from Setup's "Suggestions and darks" box and Setup's Moon distance, Show at most 25, the nights, the optional Priority rows (ExoClock priority ticks, ExoFOP SG1 priority), and Search and Cancel](img/05-find-transits.png)
+![The Find suggested transits window: what it searches, the filter values from Setup's "Suggestions and darks" box and Setup's Moon distance, Show at most 25, the nights, the optional Priority rows (ExoClock priority ticks, ExoFOP SG1 priority), the Hide out of reach tick with its grey words, and Search and Cancel](img/05-find-transits.png)
 
 The suggestions land **unticked** in the Transits box, among your own targets. Tick one to plan it (that keeps it
 too), or press **Keep** to keep it without planning it. Suggestions you neither ticked nor kept are replaced when
@@ -343,6 +447,22 @@ defaults):
 
 Each planet appears once, on its best night. Planets already in your list (your own, kept or ticked) are not
 suggested again.
+
+### Each suggestion's verdict, and Hide out of reach
+
+Every suggested transit gets a **Verdict** (see "The Verdict column" above), worked out for **its own night**: the
+star's mean airmass during the transit and that night's Moon. Its details line says *(on its night)*. When you
+change Setup or the SHOBS-FLUX profiles after the search, the verdict is worked out again at the star's best airmass
+under a dark sky, like any other target's.
+
+**Hide out of reach** leaves out the transits whose verdict is **Out of reach** (S/N under 5), so the list holds only
+transits your telescope can measure; the search goes on down the ranking to fill **Show at most**. It never hides a
+guess: an **Out of reach?** from rough numbers (no measured zero point) is kept, and counted in the result line, as
+the guess may be wrong. Until SHOBS-FLUX has measured your system (or you have typed a zero point in Setup), the tick
+therefore hides nothing.
+
+The ranking (point 5 above) is a quick score of its own, made before the verdict; the details line shows it as
+*suggested transit: score …, S/N …*. The verdict is the fuller sum described in "How the S/N works", below.
 
 > **Tip:** If SHOBS-P is installed, its *Tonight's transits* finder's V range, depth and baseline were taken as
 > these starting values, once (chapter 4).
@@ -436,6 +556,110 @@ small bonus for being good on many of the nights. They land unticked in the Vari
 
 If VizieR's row limit was reached, the line under the boxes says so: narrow the V range, the period range or the types
 to reach the rest.
+
+## How the S/N works
+
+The **S/N** (signal-to-noise ratio) says how clearly what you want to measure stands out from the noise of your
+measurement. SHOBS-SCHED works it out for every target, with your telescope, camera and sky, and turns it into the
+verdict word. This section says where the numbers come from, so you can judge how far to trust them.
+
+### Where the numbers come from
+
+The noise model needs a few facts about your system: the **zero point** (how many electrons a second a star of a
+given magnitude gives), the **extinction**, the **dark-sky brightness**, the **seeing**, the camera's **read noise**
+and **dark current**, and the site's **scintillation** (C_Y). SHOBS-SCHED takes each of them from the first place
+that has it:
+
+1. **A SHOBS-FLUX profile** (*from FLUX*). SHOBS-FLUX, the SHOBS program for characterizing a telescope and camera,
+   measures these from your own nights and keeps them in a profile. SHOBS-SCHED only reads it, and works fully
+   without one.
+2. **Setup's Photometry noise box** (*set here*): the values you typed there (chapter 4).
+3. **A rough estimate** (*estimate*): SHOBS-SCHED's own cold-start values. The zero point then comes from your
+   aperture and camera by the same model 1.3.0 used for its exposure estimate; the others are typical values
+   (extinction 0.20 mag per airmass, a dark sky of 21.5 mag/″², 3″ seeing, read noise 2 e⁻, dark current 0.01
+   e⁻/px/s, C_Y 1.5, and 3 s per frame on top of the exposure).
+
+The zero point matters most. While it is only the rough estimate, the numbers are **rough**: every verdict word gets
+a **?** (**Detectable?**, **Marginal?**, **Out of reach?**, **Saturates?**), the S/N in the notes reads *~54* with
+*rough estimate*, and transits stay on **Longest safe**. A zero point measured by SHOBS-FLUX, or typed in Setup,
+takes the **?** away and makes **Best precision** a transit's default.
+
+### The precision per 10-minute bin
+
+For one frame, SHOBS-SCHED adds up four kinds of noise on the target star, measured in an aperture of 1.5 × the
+seeing (FWHM) in radius:
+
+- **photon noise**: the star's own light comes in random packets, more noise for a fainter star;
+- **sky**: the sky's light in the aperture (with the Moon's light added on a moonlit night);
+- **scintillation**: the atmosphere's twinkling, worse for small telescopes, short frames and high airmass
+  (Osborn et al. 2015);
+- **read + dark**: the camera's read noise and dark current in the aperture's pixels.
+
+Then it averages the frames that fit in 10 minutes (600 s ÷ (exposure + the time between frames)). The result is
+the **precision per 10-minute bin**, in **ppt** (parts per thousand: 1 ppt = 0.1 %). The noise budget bar in the
+Edit dialog shows the four parts' shares. It is the target star alone; the comparison stars add a little more.
+
+### From precision to S/N
+
+- **A transit**: S/N = depth ÷ (σbin ÷ √(bins in transit)), where σbin is the precision per 10-minute bin and the
+  bins in transit are the transit's duration ÷ 10 minutes. A long transit gives many bins, so even a shallow dip can
+  stand out.
+- **A variable** (or a campaign on a known variable): S/N = its VSX range, as a share of its light (1 − 10^(−0.4 ×
+  range in mag)), ÷ σbin: one 10-minute bin against the whole range.
+
+Then the verdict: **Detectable** at S/N 10 or more, **Marginal** from 5 to 10, **Out of reach** under 5, and
+**Saturates** whenever the predicted peak is over your linear limit, whatever the S/N. The Targets page and the Edit
+dialog work it out at the target's best airmass under a dark sky; the Schedule works it out for each block with that
+night's airmass and Moon (chapter 6).
+
+### Best precision, Longest safe, My exposure
+
+All three use the same noise model; they differ in how they pick the exposure.
+
+- **Best precision** picks the shortest exposure that is within 2 % of the best 10-minute precision with the peak
+  under the aim (80 % of your linear limit). It is a transit's default once the zero point is known.
+- **Longest safe** picks the longest standard exposure with the peak under the aim, as SHOBS-SCHED 1.3.0 did. It is
+  the default for variables and campaigns, and for transits while the numbers are rough. When the profile's or your
+  typed values are used, Longest safe and the **Saturates** warning use the same predicted peak, so they always agree.
+- **My exposure** is yours; the readout and the verdict tell you what it buys.
+
+The difference between the first two is often small in precision and large in time resolution: a curve that has
+flattened gains almost nothing from longer frames.
+
+### A worked example: WASP-12 b at the example site
+
+The example site's telescope (chapter 3): a 250 mm aperture at 1600 mm focal length, a one-shot-color camera with
+3.76 µm pixels (0.48″ per pixel), linear limit 32,000 ADU, no gain or e⁻ per ADU typed, and **no SHOBS-FLUX
+profile**. WASP-12 b: V 11.57, a 1.37 % deep transit, 3.0 hours long. From latitude 40.0° the star (Dec +29.7°)
+reaches 80° altitude, airmass 1.02.
+
+1. **The inputs** are all rough estimates. The zero point of the green channel comes out at 19.76; the rest are the
+   cold-start values above. Setup's Photometry noise box shows them greyed out as *estimate 19.76*, *estimate 0.2*
+   and so on.
+2. **The exposure.** No profile, so the transit is on **Longest safe**: 180 s, the longest standard exposure whose
+   predicted peak (~48 % of the linear limit, 15,505 ADU) stays under the 80 % aim. At 300 s the peak would be 81 %.
+3. **One frame.** At 180 s the star gives about 340,000 electrons in the aperture. Its photon noise is 1.7 ppt; the
+   scintillation 0.9 ppt; the sky and the camera much less. Together, 1.95 ppt per frame.
+4. **One 10-minute bin** holds 600 ÷ (180 + 3) ≈ 3.3 frames, so σbin = 1.95 ÷ √3.3 ≈ **1.1 ppt** (1.08 ppt). The
+   noise budget: photon 77 %, scintillation 22 %, sky 1 %, read + dark 0 %. A bright star on a small telescope is
+   limited by its own photons and the twinkling, not by the sky.
+5. **Bins in transit**: 3.0 h ÷ 10 min = **18**.
+6. **S/N** = 0.0137 ÷ (0.00108 ÷ √18) ≈ **54**. That is over 10: **Detectable**, and from rough numbers,
+   **Detectable?**.
+
+The Edit dialog shows *S/N 54  Detectable?*; the Targets page's details line *Detectable? (at its best airmass, dark
+sky): S/N ~54 (rough estimate, no measured zero point): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in
+transit*; and the plan's notes *Detectable? (S/N ~54, rough estimate): a 1.37 % dip against 1.1 ppt per 10-min bin,
+18 bins in transit*.
+
+Choose **Best precision** instead and the exposure drops to 60 s (peak ~16 %): about 10 frames a bin, still 1.1 ppt,
+S/N 53. Three times the time resolution for the same precision, which is why it becomes the default once SHOBS-FLUX
+has measured the system. Type 600 s as **My exposure** and the verdict turns to **Saturates?**: *peak ~162 % of your
+linear limit at 600 s (shorten it or defocus)*.
+
+> **Tip:** An S/N of 54 sounds like plenty, and for WASP-12 b it is. But it is the best case: the star at its
+> highest, a dark sky, and the target star's noise alone. Low in the sky, under a bright Moon, or with poor comparison
+> stars, it falls. Treat **Marginal** as "only on a good night".
 
 ## Ephemeris precision
 
