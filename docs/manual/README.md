@@ -1,9 +1,9 @@
-# SHOBS-SCHED User's Manual (version 1.3.0)
+# SHOBS-SCHED User's Manual (version 1.4.0)
 
 **Shiloh Hill Observatory Photometry Scheduler (SHOBS-SCHED)**
 *Plans each night's photometry: transits, variable stars and campaigns.*
 
-> Third edition, November 2026. Written for SHOBS-SCHED 1.3.0 and checked against the program; the screenshots
+> Fourth edition, November 2026. Written for SHOBS-SCHED 1.4.0 and checked against the program; the screenshots
 > are real captures from SHOBS-SCHED on Windows, using a made-up example site. Each chapter is its own file in this
 > folder; this page is the table of contents. A PDF of the whole manual is built with
 > `python tools/build_manual_pdf.py`.
@@ -11,7 +11,7 @@
 ## Part 1: Getting started
 
 1. **[What SHOBS-SCHED is](01-what-it-is.md)**: a photometry scheduler (and what it is not), the four pages, how it
-   works with SHOBS-P, the site's clock.
+   works with SHOBS-P and SHOBS-FLUX, the site's clock.
 2. **[Installing and starting](02-installing.md)**: Python, **Create shortcuts.bat**, the self-test,
    **run_windows.bat**, the Mac and Linux launchers, where your settings, targets and schedule are kept, updating.
 3. **[Your first night, step by step](03-first-night.md)**: Setup, a transit and a variable star, Build schedule,
@@ -20,16 +20,22 @@
 ## Part 2: The four pages
 
 4. **[Setup](04-setup.md)**: site and time zone, telescope and camera, reading a FITS frame, mount and meridian
-   flips, limits and darkness, the default **Moon distance** (by Moon phase), the horizon profile, weather and dew, **Suggestions and darks**, the source tags (*from SHOBS-P*, *from FITS*,
-   *set here*), and the planner settings you do not see.
-5. **[Targets](05-targets.md)**: the Campaigns, Transits and Variables boxes, the **Plan** tick, **Priority**,
-   **Keep**, adding by name, the **Edit** dialog (known planets and no-transit windows), **Find suggested
-   transits…** (with the optional **ExoClock** and **ExoFOP** priorities) and **Find suggested variables…**, the
-   next-event columns, ephemeris precision.
-6. **[Schedule](06-schedule.md)**: building, the night tabs, the night plot, the nightly table, locking and moving
+   flips, limits and darkness, the default **Moon distance** (by Moon phase), the horizon profile, weather and dew,
+   **Suggestions and darks**, the new **Photometry noise** box (the SHOBS-FLUX profile and the values behind the
+   S/N), the source tags (*from SHOBS-P*, *from FITS*, *set here*, *from FLUX*), and the planner settings you do not
+   see.
+5. **[Targets](05-targets.md)**: the Campaigns, Transits and Variables boxes and their **Verdict** column, the
+   **Plan** tick, **Priority**, **Keep**, adding by name, the **Edit** dialog (the **Exposure** section: Best
+   precision, Longest safe or My exposure, the precision and S/N readout, Check comps; known planets and no-transit
+   windows), **Find suggested transits…** (with the optional **ExoClock** and **ExoFOP** priorities and **Hide out of
+   reach**) and **Find suggested variables…**, the next-event columns, **how the S/N works** (with a worked example),
+   ephemeris precision.
+6. **[Schedule](06-schedule.md)**: building, the night tabs, the night plot, the nightly table (S/N exposures, notes
+   that start with the verdict), locking and moving
    blocks, the meridian flip, flats and darks, what didn't fit and **Plan this instead**, free time, weather and dew, marking **Done**,
    **Partial** and **Clouded out**, **Re-review**, weekly goals, the out-of-date warning.
-7. **[OBSPlan: the plan card, ASIAIR and NINA](07-obsplan.md)**: printing (with or without the night plots),
+7. **[OBSPlan: the plan card, ASIAIR and NINA](07-obsplan.md)**: the verdict under each exposure, printing (with or
+   without the night plots),
    **Export to ASIAIR**, **Copy ASIAIR list**, **Export to NINA**, the camera angle.
 
 ## Part 3: Reference
@@ -42,7 +48,8 @@
     missing-matplotlib message on each system, network failures (including ExoClock and ExoFOP), the cache, starting
     afresh.
 11. **[Glossary](11-glossary.md)**: airmass, baseline, ephemeris, linear limit, meridian flip, O − C, and the other
-    photometry words this manual uses (now with ExoClock, ExoFOP, TOI, SG1 priority and the Moon phase).
+    photometry words this manual uses (now with S/N, verdict, zero point, scintillation, noise budget, ppt, Best
+    precision, Longest safe and SHOBS-FLUX).
 
 ---
-*Screenshots taken from SHOBS-SCHED 1.3.0 on Windows.*
+*Screenshots taken from SHOBS-SCHED 1.4.0 on Windows.*

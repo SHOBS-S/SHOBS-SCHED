@@ -30,6 +30,13 @@ The sections:
    hand-made plans (each within a few minutes).
 3. **Planner**: those five nights built again (every target placed, no overlaps), and a seven-night build.
 4. **Weather and export**: a recorded forecast, the nightly table, the ASIAIR list and the plan card.
+
+   **4b. Exposure by S/N**: the shared `shobs_profile.py` (the profile reader SHOBS-SCHED shares with SHOBS-FLUX) is
+   the version this copy was built with; with no SHOBS-FLUX profile the numbers are a rough estimate, and its peak
+   is 1.3.0's; an example SHOBS-FLUX profile (a test copy, never yours) is found for the test telescope; rough numbers
+   keep a transit on Longest safe; a transit by S/N reads *Detectable?*, and a much too long exposure *Saturates?*;
+   the Moon's light is added to a measured sky; Longest safe is 1.3.0's rule; the flip notes by type; and SHOBS-P's
+   concept DOI in the credits.
 5. **Window**: the app opened on a temporary folder with the network switched off: every page, a build, and the
    ASIAIR list copied. Without a screen it says `SKIP`.
 6. **Live services (information only)**: whether the NASA Exoplanet Archive, SIMBAD, VizieR (VSX copy), SIMBAD
@@ -158,7 +165,11 @@ The latest printed card, `plan_card.html`, is kept in the same folder.
 | A transit you expected says *none in the next 7 nights*. | Not all of it is in the dark and above your limits on those nights. | Look at more nights, lower **Minimum altitude** if your sky allows, or check the horizon profile. |
 | A target never gets a block. | Read its line under **Didn't fit, and why** on the night's tab. | The reason says what to change (limits, Moon distance, its own window, priority). |
 | *✖ No dark time tonight: the Sun gets no lower than …* in summer. | The Sun never reaches −18°. | If the line goes on *nautical darkness (Sun below −12°) is possible if you allow it in Setup*, choose **Nautical (Sun −12°)** in Setup. |
-| Exposures look much too short or too long. | Missing or wrong telescope or camera values, or the linear limit. | Check Setup; or type your own exposure in the target's Edit dialog. |
+| Exposures look much too short or too long. | Missing or wrong telescope or camera values, or the linear limit. | Check Setup; look at the target's Exposure section in its Edit dialog (the readout and the plot show why); or choose **My exposure** and type your own. |
+| Every verdict ends in **?** (*Detectable?*, *Out of reach?*). | No measured zero point: no SHOBS-FLUX profile matches your telescope and camera, and none is typed in Setup's Photometry noise box. | Nothing is wrong: the verdicts are rough estimates. Measure your system with SHOBS-FLUX, or type a zero point you have measured (chapter 4). |
+| **Hide out of reach** in **Find suggested transits…** hides nothing. | It never hides a rough **Out of reach?** (the result line counts them as *rough estimates kept*). | As above: with a measured zero point it hides the real **Out of reach** ones. |
+| A target says **Saturates** although the frames look fine. | The predicted peak is over your linear limit; the prediction is only as good as the zero point and seeing behind it (very rough with **?**). | Check a frame's peak in SHOBS-P; then choose **My exposure** with what works. |
+| Setup's Photometry noise box shows *⚠ Several SHOBS-FLUX camera profiles fit …*. | SHOBS-FLUX has a camera profile for each gain, and Setup has no **Gain setting**. | Type the **Gain setting** in Telescope and camera, or choose the profile in **Instrument profile**. |
 | The window does not open from the icon. | Python or a package problem. | Start **run_windows.bat** and read the console. |
 | Setup changes "did not stick". | They were saved, but the schedule was built before. | Press **Build schedule** (the ⚠ line says so). |
 | **Find suggested transits…** finds few planets, or none. | The filters in Setup's **Suggestions and darks** box (host V range, depth, baseline, Moon-brightened sky) are tight for your nights. The Find suggested transits pop-up shows the values it uses. | Widen them in Setup and **Save**, then Find again. |
