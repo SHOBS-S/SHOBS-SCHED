@@ -185,8 +185,8 @@ For every block:
 - **A block that must cross the meridian flips at the start.** It starts about 12 minutes *before* the meridian, so
   the mount flips right at the start, while you are there, and the rest of the run is on one side of the pier. The
   note says *Start before the meridian and let it flip (~22:40). Pre-flip frames carry no weight in the night
-  mean.* for a variable or campaign, and *Start before the meridian and let it flip. Pre-flip frames are kept;
-  SHOBS-P fits the flip step.* for a transit.
+  mean.* for a variable or campaign, and *Start before the meridian and let it flip (~22:40). Pre-flip frames are
+  kept; SHOBS-P fits the flip step.* for a transit.
 - **The flip costs time.** The frame count of a block with a flip allows for a few minutes of lost time.
 
 For a **fixed-time block**, a flip in the middle is noted (*Meridian flip at ~01:10; drop the frames during the
@@ -425,16 +425,19 @@ the profile when it has them, otherwise from the **Telescope and camera** box (t
 
 The gray hint under the box sums it up: *SHOBS-FLUX measures these from your nights (it never needs SCHED, and SCHED
 only reads its profiles). Without a profile, type what you know; empty fields use rough estimates, and a verdict from
-an estimated zero point gets a “?” (Detectable?, Marginal?, Out of reach?), and transits stay on Longest safe until a
-profile measures the system.*
+an estimated zero point gets a “?” (Detectable?, Marginal?, Out of reach?, Saturates?), and transits stay on Longest
+safe until a zero point is measured or typed here.*
 
 Some details:
 
 - **Only a measured zero point removes the "?".** The verdict is a guess while the zero point is. Typing your own
   zero point here (*set here*) counts as known, so its verdicts lose the "?" too.
-- **Transits and Best precision.** A transit's exposure is chosen for the best precision only when a SHOBS-FLUX
-  profile has measured the zero point. Until then transits stay on **Longest safe**, 1.3.0's rule, even when you typed
-  a zero point here. You can always choose **Best precision** for a target yourself (chapter 5).
+- **Transits and Best precision.** A transit's exposure is chosen for the best precision only when the zero point is
+  known: measured by a SHOBS-FLUX profile, or typed here. Until then transits stay on **Longest safe**, 1.3.0's rule.
+  You can always choose **Best precision** (or pin **Longest safe**) for a target yourself (chapter 5).
+- **One peak model.** Once the zero point is measured or typed, every predicted peak (Longest safe's choice, the
+  warnings on your own exposure, and **Saturates**) comes from the same noise model, with the profile's seeing and
+  linear limit; with only rough numbers Longest safe and those warnings are exactly 1.3.0's.
 - **Empty fields.** Leave a field empty for its estimate; the tag shows the value used (*estimate 0.2*).
 - **The limits.** Zero point 10 to 30, extinction 0 to 1.5, dark sky 15 to 23, seeing 0.3 to 20, read noise 0 to 50,
   dark current 0 to 10, C_Y 0.1 to 10. A wrong value gives, for example, *✖ Not saved: Scintillation C_Y must be

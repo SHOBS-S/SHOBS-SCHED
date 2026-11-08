@@ -222,9 +222,16 @@ def s4b_snr():
     m = snr.rebase_moon_penalty(3.0, 21.5, 18.84)
     check(f"the Moon on a measured 18.84 sky adds {m:.2f} mag (not 3)", 0.5 < m < 1.0)
     safe = planner.exposure_plan(t, optics, {}, 1.3, 0.0, 280, mode="safe")
-    check("Longest safe is 1.3.0's rule", safe["exposure_s"] == planner.estimate_exposure(t, optics, {}, 1.3)[
-        "exposure_s"])
-    check("flip notes by type", planner.flip_start_note("transit", "22:40").endswith("SHOBS-P fits the flip step.")
+    check("Longest safe on rough numbers is 1.3.0's rule", safe["exposure_s"] == planner.estimate_exposure(
+        t, optics, {}, 1.3)["exposure_s"])
+    t.exposure_mode = ""
+    typed = planner.exposure_plan(t, optics, {"snr_zp": 21.0}, 1.3, 0.0, 280)
+    tsafe = planner.exposure_plan(t, optics, {"snr_zp": 21.0}, 1.3, 0.0, 280, mode="safe")
+    check("a zero point typed in Setup: Best precision, and Longest safe on the same peak model",
+          typed["mode"] == "precision" and not typed["rough"] and tsafe["peak_frac"] <= 0.8 + 1e-9,
+          f"Longest safe {tsafe['exposure_s']:g} s, peak {tsafe['peak_frac'] * 100:.0f} %")
+    check("flip notes by type", planner.flip_start_note("transit", "22:40") == "Start before the meridian and let it "
+          "flip (~22:40). Pre-flip frames are kept; SHOBS-P fits the flip step."
           and "no weight in the night mean" in planner.flip_start_note("variable", "22:40"))
     check("SHOBS-P cited by its concept DOI", "zenodo.23417063" in credits.credits_text()
           and "23417064" not in credits.credits_text())

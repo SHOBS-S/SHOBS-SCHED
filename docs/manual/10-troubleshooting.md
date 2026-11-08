@@ -33,8 +33,9 @@ The sections:
 - **4b. Exposure by S/N** (new in 1.4.0): the shared `shobs_profile.py` file is the version SHOBS-SCHED was built
   with; with no SHOBS-FLUX profile the numbers are a rough estimate, and the cold start predicts the same peak as
   1.3.0; the example SHOBS-FLUX profile is found; rough numbers keep a transit on Longest safe; TOI-2046 b by S/N
-  gives *Detectable?*; a saturating exposure says *Saturates?*; the Moon on a measured sky; Longest safe is 1.3.0's
-  rule; the flip notes by type; SHOBS-P's DOI.
+  gives *Detectable?*; a saturating exposure says *Saturates?*; the Moon on a measured sky; Longest safe on rough
+  numbers is 1.3.0's rule; a zero point typed in Setup gives Best precision and one peak model; the flip notes by
+  type; SHOBS-P's DOI.
 - **5. Window**: the app opened on a temporary folder with the network switched off: every page, a build, and the
   ASIAIR list copied. Without a screen it says `SKIP`.
 - **6. Live services (information only)**: whether the NASA Exoplanet Archive, SIMBAD, VizieR (VSX copy), SIMBAD
@@ -165,7 +166,7 @@ The latest printed card, `plan_card.html`, is kept in the same folder.
 | *✖ No dark time tonight: the Sun gets no lower than …* in summer. | The Sun never reaches −18°. | If the line goes on *nautical darkness (Sun below −12°) is possible if you allow it in Setup*, choose **Nautical (Sun −12°)** in Setup. |
 | Exposures look much too short or too long. | Missing or wrong telescope or camera values, or the linear limit. | Check Setup; or choose **My exposure** in the target's Edit dialog and type your own. |
 | Every verdict ends in "?" (*Detectable?*, *Out of reach?*). | No measured zero point: no SHOBS-FLUX profile was found, or it has not measured one yet. | That is expected without SHOBS-FLUX. Check Setup's **Photometry noise** line; choose your profile there if Automatic does not find it. Typing a zero point you trust also removes the "?". |
-| Transits are on **Longest safe**, not **Best precision**. | Best precision is a transit's default only once SHOBS-FLUX has measured the zero point. | Choose **Best precision** for the target in its Edit dialog if you want it anyway. |
+| Transits are on **Longest safe**, not **Best precision**. | Best precision is a transit's default only once the zero point is measured by SHOBS-FLUX or typed in Setup's Photometry noise box. | Type a zero point in Setup, or choose **Best precision** for the target in its Edit dialog. |
 | Setup says *⚠ Several SHOBS-FLUX camera profiles fit …* | SHOBS-FLUX has a camera profile for more than one gain, and Setup has no **Gain setting**. | Choose the profile in **Instrument profile**, or type the **Gain setting**, and **Save**. |
 | Setup says *⚠ A newer SHOBS-FLUX wrote … profiles here* | SHOBS-FLUX is newer than this SHOBS-SCHED. | Install the newest SHOBS-SCHED. |
 | A target is **Out of reach** but you have measured it before. | A rough zero point, or a wrong seeing or sky value, can make the S/N too low; or the transit's depth or the star's VSX range is wrong. | Check the Edit dialog's readout and Setup's Photometry noise values. The verdict is advice; you can still plan the target. |

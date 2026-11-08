@@ -1,6 +1,7 @@
 """planner.py unit tests (golden-site based; network never used)."""
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -455,8 +456,9 @@ class ReviewFixes(unittest.TestCase):
         b = planner.build_night(self.d, self.site, self.optics, [t], {}).blocks_obj()[0]
         self.assertAlmostEqual((b.meridian - b.start) * 1440, 12, delta=1.5)
         self.assertIn("(after the flip", b.notes[2])            # verdict, ingress, baseline
-        self.assertTrue(any(n == "Start before the meridian and let it flip. Pre-flip frames are kept; SHOBS-P "
-                                 "fits the flip step." for n in b.notes), b.notes)
+        self.assertTrue(any(re.fullmatch(r"Start before the meridian and let it flip \(~\d\d:\d\d\)\. Pre-flip "
+                                         r"frames are kept; SHOBS-P fits the flip step\.", n) for n in b.notes),
+                        b.notes)
 
     def test_tracking_margin_with_meridian_in_transit(self):
         site = Site.from_dict(self.site.to_dict())

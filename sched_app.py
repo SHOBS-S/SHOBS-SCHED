@@ -1494,8 +1494,9 @@ class SetupPage:
         self._hint(box, 2 + len(fields), "SHOBS-FLUX measures these from your nights (it never needs SCHED, and SCHED "
                                          "only reads its profiles). Without a profile, type what you know; empty "
                                          "fields use rough estimates, and a verdict from an estimated zero point "
-                                         "gets a “?” (Detectable?, Marginal?, Out of reach?), "
-                                         "and transits stay on Longest safe until a profile measures the system.")
+                                         "gets a “?” (Detectable?, Marginal?, Out of reach?, "
+                                         "Saturates?), and transits stay on Longest safe until a zero point is "
+                                         "measured or typed here.")
         return box
 
     def _snr_choice(self) -> str:
@@ -3795,9 +3796,15 @@ class EditTargetDialog:
         self.how_var = tk.StringVar(value=how)
         f = ttk.Frame(body, style="Card.TFrame")
         f.grid(row=r, column=0, columnspan=3, sticky="w", pady=px(app, 2))
+        # a click on a button is the user's choice, even on the one already showing (it pins that mode; untouched,
+        # the target keeps following the default)
+        self._how_touched = False
+        self.how_buttons = {}
         for text, value in self.HOW_CHOICES:
-            ttk.Radiobutton(f, text=text, value=value, variable=self.how_var, style="Card.TRadiobutton").pack(
-                side=tk.LEFT, padx=(0, px(app, 8)))
+            b = ttk.Radiobutton(f, text=text, value=value, variable=self.how_var, style="Card.TRadiobutton",
+                                command=self._how_clicked)
+            b.pack(side=tk.LEFT, padx=(0, px(app, 8)))
+            self.how_buttons[value] = b
         self.vars["exposure_s"] = var = tk.StringVar(value=fmt_num(t.exposure_s))
         self.loaded["exposure_s"] = var.get().strip()
         self.widgets["exposure_s"] = ttk.Entry(f, textvariable=var, width=7)
@@ -3805,7 +3812,8 @@ class EditTargetDialog:
         ttk.Label(f, text="s", style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 4), 0))
         r += 1
         ttk.Label(body, text="Best precision: the shortest exposure within 2 % of the best 10-minute precision "
-                             "whose peak stays under your linear-limit aim (the default for transits). Longest "
+                             "whose peak stays under your linear-limit aim (the default for transits once a zero "
+                             "point is measured by SHOBS-FLUX or typed in Setup). Longest "
                              "safe: 1.3.0's rule, the longest standard exposure under the aim. My exposure: yours.",
                   style="Hint.TLabel", justify=tk.LEFT, wraplength=px(app, 460)).grid(
             row=r, column=0, columnspan=3, sticky="w", pady=(0, px(app, 4)))
@@ -3867,6 +3875,7 @@ class EditTargetDialog:
         self.comp_ind.grid(row=r, column=0, columnspan=3, sticky="w")
         r += 1
         self._show_saved_comps()
+        self.how_var.trace_add("write", lambda *_a: self._how_clicked(redraw=False))
         self.how_var.trace_add("write", lambda *_a: self._readout_later())
         self.band_var.trace_add("write", lambda *_a: self._readout_later())
         var.trace_add("write", self._exposure_typed)
@@ -3883,6 +3892,11 @@ class EditTargetDialog:
             if self._band_label(b) == shown:
                 return b
         return self._bands[0] if self._bands else "TG"
+
+    def _how_clicked(self, redraw: bool = True):
+        self._how_touched = True
+        if redraw:
+            self._readout_later()
 
     def _exposure_typed(self, *_a):
         """Typing an exposure chooses My exposure."""
@@ -3985,12 +3999,16 @@ class EditTargetDialog:
                                    style=style.verdict_style(word))
         reason = str(plan.get("reason") or "")
         if word and reason.startswith("S/N"):
-            reason = reason.split(": ", 1)[1] if ": " in reason and reason.startswith("S/N") else reason
+            # the S/N is on the verdict label already; what stood in brackets after it ("needs 5", "rough
+            # estimate …") stays, after the words
+            m = re.match(r"S/N ~?[\d.]+(?: \((.*?)\))?: (.*)$", reason)
+            if m:
+                reason = m.group(2) + (f" ({m.group(1)})" if m.group(1) else "")
         self.reason_var.set(reason)
         rough = (" Rough estimate (no measured zero point): the verdict word carries a “?”." if plan.get("rough")
                  and word else "")
-        until = (" Longest safe until SHOBS-FLUX measures this system (then Best precision is the default; your own "
-                 "choice above always wins)." if plan.get("safe_until_measured") else "")
+        until = (" Longest safe until a zero point is measured or typed in Setup (then Best precision is the "
+                 "default; your own choice above always wins)." if plan.get("safe_until_measured") else "")
         self.ro_vars["where"].set(f"Worked out at airmass {airmass:.2f} (its highest from your site) under a dark "
                                   f"sky; the Schedule uses each night's own airmass and Moon.{rough}{until}")
         self.draw_plot(plan)
@@ -4506,10 +4524,9 @@ class EditTargetDialog:
             else:
                 t.exposure_s = None
                 pl_mod = mod("planner")
-                # the default (Best precision for a transit once SHOBS-FLUX has measured the system, else Longest
-                # safe) stays "": it then follows the type and the profile; any other choice is the user's own
-                by_type = "precision" if (new_kind == "transit" and getattr(self, "_measured", False)) else "safe"
-                t.exposure_mode = "" if (how == by_type and not self.t.exposure_mode) else how
+                # a button the user touched pins that mode; untouched, the target keeps what it had ("" = follow the
+                # default: Best precision for a transit once a zero point is measured or typed, else Longest safe)
+                t.exposure_mode = how if getattr(self, "_how_touched", False) else (self.t.exposure_mode or "")
                 if pl_mod is None:
                     t.exposure_mode = how
             band = self.band_code()

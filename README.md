@@ -58,9 +58,11 @@ camera angle), and every Setup value is tagged with where it came from: *from SH
 
 * **Exposure by S/N, with a verdict** (GitHub issue #4). A target's **Edit…** window has an **Exposure** section:
   *Best precision* (the shortest standard exposure within 2 % of the best 10-minute precision whose peak stays under
-  your linear-limit aim), *Longest safe* (1.3.0's rule, unchanged) or *My exposure*. A transit's default is Best
-  precision once a SHOBS-FLUX profile has measured your system, and *Longest safe until SHOBS-FLUX measures this
-  system*; variables and campaigns default to Longest safe. Your own choice always wins. It shows the band, which
+  your linear-limit aim), *Longest safe* (1.3.0's rule on rough numbers; with a measured or typed zero point the
+  same noise model's peak that the verdict uses) or *My exposure*. A transit's default is Best precision once its
+  zero point is measured by SHOBS-FLUX or typed in Setup, and *Longest safe until a zero point is measured or typed
+  in Setup*; variables and campaigns default to Longest safe. Your own choice always wins: a click on a button pins
+  it. It shows the band, which
   magnitude was used and how, where the numbers came from (*from FLUX*, *set here* or *estimate*), the predicted peak,
   the precision per 10-minute bin, the noise budget (photon, sky, scintillation, read) as a small bar, the transit's
   bins and the S/N with a verdict word: **Detectable** (S/N 10 or more, green), **Marginal** (5–10, yellow), **Out of
@@ -77,7 +79,7 @@ camera angle), and every Setup value is tagged with where it came from: *from SH
   **Hide out of reach** never hides a guess.
   SCHED reads the profiles through `shobs_profile.py`, the file the SHOBS apps share, and never writes them.
 * Flip notes by type: a variable's or campaign's says *Pre-flip frames carry no weight in the night mean*, a
-  transit's *Pre-flip frames are kept; SHOBS-P fits the flip step*.
+  transit's *(~HH:MM). Pre-flip frames are kept; SHOBS-P fits the flip step*.
 * The **Campaigns** box shows the star's VSX **Type** and **Period** (kept when a variable becomes a campaign).
 * SHOBS-P is cited by its concept DOI, 10.5281/zenodo.23417063.
 

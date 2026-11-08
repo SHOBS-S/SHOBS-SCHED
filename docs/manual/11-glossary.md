@@ -27,7 +27,7 @@ trimmed to no less than 20 when two targets share a night.
 
 **Best precision** — One of the three ways to choose a target's exposure (Edit dialog, Exposure): the shortest
 standard exposure within 2 % of the best **precision per 10-minute bin** whose peak stays under 80 % of the **linear
-limit**. A transit's default once **SHOBS-FLUX** has measured your **zero point**. Shown as *(S/N)* after the exposure
+limit**. A transit's default once your **zero point** is measured by **SHOBS-FLUX** or typed in Setup. Shown as *(S/N)* after the exposure
 on the Schedule page and plan card.
 
 **BJD_TDB** — Barycentric Julian Date in Barycentric Dynamical Time: a time stamp corrected to the center of mass of
@@ -78,7 +78,7 @@ follow-up groups' priorities (see **SG1 priority**).
 
 **Exposure estimate** — SHOBS-SCHED's first guess of a good exposure for a star, from its V magnitude, your aperture,
 camera and the seeing: the longest standard exposure that keeps the star's peak under about 80 % of your **linear
-limit**. This is the **Longest safe** rule. Marked *(est.)* in the Schedule page's table and *est.* on the plan card.
+limit**. This is the **Longest safe** rule while the numbers are rough. Marked *(est.)* in the Schedule page's table and *est.* on the plan card.
 
 **Extinction** — How much the atmosphere dims a star, in magnitudes per **airmass**: about 0.2 in V at a low site.
 In Setup's **Photometry noise** box.
@@ -108,9 +108,10 @@ camera).
 light. A star whose brightest pixel goes past it is measured too faint. Set it in Setup (or let a **SHOBS-FLUX** profile give it); the exposure estimate keeps
 star peaks under it, and a predicted peak over it makes the **verdict** **Saturates**.
 
-**Longest safe** — One of the three ways to choose a target's exposure (Edit dialog, Exposure): 1.3.0's rule, the
-longest standard exposure whose predicted peak stays under 80 % of the **linear limit** (the **exposure estimate**).
-The default for variables and campaigns, and for transits until **SHOBS-FLUX** has measured the **zero point**.
+**Longest safe** — One of the three ways to choose a target's exposure (Edit dialog, Exposure): the longest standard
+exposure whose predicted peak stays under 80 % of the **linear limit** — 1.3.0's rule (the **exposure estimate**) on
+rough numbers, the noise model's peak once the **zero point** is measured or typed. The default for variables and
+campaigns, and for transits until the **zero point** is measured by **SHOBS-FLUX** or typed in Setup.
 
 **Meridian** — The north–south line through the zenith. A star is highest (lowest **airmass**) when it crosses the
 meridian.

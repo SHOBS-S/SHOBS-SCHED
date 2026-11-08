@@ -432,8 +432,8 @@ class FlipNotes(unittest.TestCase):
                          "Start before the meridian and let it flip (~01:05). Pre-flip frames carry no weight in the "
                          "night mean.")
         self.assertEqual(planner.flip_start_note("transit", "22:40"),
-                         "Start before the meridian and let it flip. Pre-flip frames are kept; SHOBS-P fits the flip "
-                         "step.")
+                         "Start before the meridian and let it flip (~22:40). Pre-flip frames are kept; SHOBS-P fits "
+                         "the flip step.")
         for k in ("variable", "campaign", "transit"):
             self.assertNotIn("drop the pre-flip", planner.flip_start_note(k, "22:40"))
 

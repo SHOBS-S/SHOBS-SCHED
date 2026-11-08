@@ -258,10 +258,10 @@ class TestWindow(Base):
         dlg = self.sa.EditTargetDialog(app, t, on_save=saved.append, modal=False)
         app.update()
         self.assertEqual(dlg.how_var.get(), "safe")            # rough numbers: Longest safe by default
-        self.assertIn("Longest safe until SHOBS-FLUX measures this system", dlg.ro_vars["where"].get())
+        self.assertIn("Longest safe until a zero point is measured or typed in Setup", dlg.ro_vars["where"].get())
         dlg.how_var.set("precision")                           # the user's choice wins
         dlg.update_readout()
-        self.assertNotIn("until SHOBS-FLUX", dlg.ro_vars["where"].get())
+        self.assertNotIn("until a zero point", dlg.ro_vars["where"].get())
         self.assertEqual(dlg.src_tag.cget("text"), "estimate (no FLUX profile)")
         self.assertEqual(dlg.cat_var.get(), "V 11.55 → your green channel (TG) (taken as V)")
         self.assertIn("(Best precision) · predicted peak ~", dlg.ro_vars["exposure"].get())

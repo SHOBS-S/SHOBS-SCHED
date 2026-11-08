@@ -123,9 +123,10 @@ class Moon(unittest.TestCase):
         wrong = snr.bin_precision(snr.replace(inp, overhead_s=3.0), 11.5, p["exposure_s"], 1.2, 3.0)
         self.assertAlmostEqual(p["sigma"], right["sigma"], places=12)
         self.assertLess(p["sigma"], wrong["sigma"])
-        # Longest safe keeps 1.3.0's 21.5-based penalty
+        # with a measured zero point Longest safe uses the same model (and the rebased Moon)
         safe = planner.exposure_plan(t, optics(), {}, 1.2, 3.0, 280, mode="safe")
-        self.assertEqual(safe["exposure_s"], planner.estimate_exposure(t, optics(), {}, 1.2, 3.0)["exposure_s"])
+        under = [q for q in safe["curve"] if q["peak_frac"] <= 0.8]
+        self.assertEqual(safe["exposure_s"], max(q["t"] for q in under))
 
 
 class Verdicts(unittest.TestCase):
@@ -194,9 +195,12 @@ class DefaultMode(unittest.TestCase):
         self.assertEqual(planner.exposure_plan(transit(exposure_mode="safe"), optics(), {}, 1.2)["mode"], "safe")
         self.assertEqual(planner.exposure_plan(Target(kind="variable", vmag=11, ra=1, dec=40), optics(), {},
                                                1.2)["mode"], "safe")
-        # a typed Setup zero point is not a FLUX measurement: Longest safe stays the default
+        # a zero point typed in Setup counts too (manual review): Best precision, no "until" line
         Home(self, copy_fixture=False)
-        self.assertFalse(planner.measured(optics(), {"snr_zp": 21.0}))
+        self.assertFalse(planner.measured(optics(), {}))
+        self.assertTrue(planner.measured(optics(), {"snr_zp": 21.0}))
+        p = planner.exposure_plan(transit(), optics(), {"snr_zp": 21.0}, 1.2, 0.0, 280)
+        self.assertEqual((p["mode"], p["safe_until_measured"]), ("precision", False))
 
 
 class Profiles(unittest.TestCase):
@@ -306,6 +310,53 @@ class Window(Base):
         dlg.update_readout()
         self.assertEqual(str(dlg.exp_lbl.cget("style")), "Card.TLabel")
 
+    def test_click_on_the_shown_button_pins_it(self):
+        self.golden_home()
+        app = self.open()
+        for name in ("K2-29 b", "HAT-P-23 b"):
+            t = next(x for x in app.targets if x.name == name)
+            t.exposure_s = None
+        t = next(x for x in app.targets if x.name == "K2-29 b")
+        out = []
+        dlg = self.sa.EditTargetDialog(app, t, on_save=out.append, modal=False)
+        self.assertEqual(dlg.how_var.get(), "safe")            # rough: the default
+        dlg.save()
+        self.assertEqual(out[-1].exposure_mode, "")            # untouched: keeps following the default
+        dlg = self.sa.EditTargetDialog(app, t, on_save=out.append, modal=False)
+        dlg.how_buttons["safe"].invoke()                       # the button already showing
+        self.assertEqual(dlg.how_var.get(), "safe")
+        dlg.save()
+        self.assertEqual(out[-1].exposure_mode, "safe")        # pinned
+
+    def test_needs_5_stays_in_the_reason(self):
+        self.golden_home()
+        app = self.open()
+        t = next(x for x in app.targets if x.name == "K2-29 b")
+        t.exposure_s = None
+        t.planet = dict(t.planet, depth=0.0002)
+        dlg = self.sa.EditTargetDialog(app, t, modal=False)
+        app.update()
+        self.assertTrue(dlg.verdict_lbl.cget("text").endswith("Out of reach?"), dlg.verdict_lbl.cget("text"))
+        self.assertIn("needs 5", dlg.reason_var.get())
+        self.assertFalse(dlg.reason_var.get().startswith("S/N"))
+
+    def test_setup_hint_names_saturates(self):
+        self.golden_home()
+        app = self.open()
+        texts = []
+
+        def walk(w):
+            for c in w.winfo_children():
+                try:
+                    texts.append(str(c.cget("text")))
+                except Exception:
+                    pass
+                walk(c)
+        walk(app.pages[0].frame)
+        hint = next(x for x in texts if "Detectable?, Marginal?, Out of reach?" in x)
+        self.assertIn("Saturates?", hint)
+        self.assertIn("measured or typed here", hint)
+
     def test_rough_out_of_reach_is_not_hidden(self):
         self.golden_home()
         app = self.open()
@@ -315,6 +366,71 @@ class Window(Base):
         text = page.find_ind.var.get()
         self.assertIn("1 out of reach left out", text)
         self.assertIn("3 rough estimates kept", text)
+
+
+class ManualTool(unittest.TestCase):
+    def test_pdf_tool_reads_the_app_version(self):
+        import importlib.util
+        import settings
+        spec = importlib.util.spec_from_file_location("build_manual_pdf",
+                                                      os.path.join(ROOT, "tools", "build_manual_pdf.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        self.assertEqual(m.VERSION, settings.APP_VERSION)
+        self.assertEqual(m.EDITION, "Fourth edition")
+
+
+class OnePeakModel(unittest.TestCase):
+    """Manual review: with a measured or typed zero point, Longest safe and My exposure's warnings use the noise
+    model's peak (the one Saturates uses); on rough numbers they stay 1.3.0's exactly."""
+
+    def test_rough_is_1_3_0(self):
+        Home(self, copy_fixture=False)
+        for v in (6.0, 9.0, 11.4, 14.0):
+            t = Target(name="x", kind="variable", vmag=v, ra=10, dec=40)
+            old = planner.estimate_exposure(t, optics(), {}, 1.3, 0.5)
+            new = planner.exposure_plan(t, optics(), {}, 1.3, 0.5, 280, mode="safe")
+            self.assertEqual((new["exposure_s"], new["note"]), (old["exposure_s"], old["note"]))
+            own = Target(name="x", kind="variable", vmag=v, ra=10, dec=40, exposure_s=60)
+            self.assertEqual(planner.exposure_plan(own, optics(), {}, 1.3, 0.5, 280)["note"],
+                             planner.estimate_exposure(own, optics(), {}, 1.3, 0.5)["note"])
+
+    def test_model_agrees_with_the_verdict(self):
+        h = Home(self)
+        h.measure(zp=22.3)                 # a zero point a magnitude fainter-going than the cold start's
+        for v in (6.0, 8.0, 9.5, 11.0, 12.5):
+            t = transit(v=v)
+            safe = planner.exposure_plan(t, optics(), {}, 1.2, 0.0, 280, mode="safe")
+            if safe["note"].startswith("⚠ even"):                 # too bright for any exposure: the shortest
+                self.assertEqual(safe["exposure_s"], planner.STANDARD_EXPOSURES[0])
+                continue
+            self.assertLessEqual(safe["peak_frac"], 0.8 + 1e-9, (v, safe["exposure_s"]))
+            self.assertNotIn("Saturates", safe["verdict"])         # Longest safe never picks a saturating one
+            self.assertTrue(safe["note"].startswith(("Longest safe", "⚠ even")), safe["note"])
+        # My exposure: the warning and Saturates come from the same peak
+        own = planner.exposure_plan(transit(v=8.0), optics(), {}, 1.2, 0.0, 280, mode="own", exposure_s=60)
+        self.assertGreater(own["peak_frac"], 2.0)
+        self.assertTrue(own["note"].startswith("✖ Your exposure: predicted peak ~"), own["note"])
+        self.assertEqual(own["verdict"], "Saturates")
+        mid = None
+        for e in planner.STANDARD_EXPOSURES:
+            p = planner.exposure_plan(transit(v=10.0), optics(), {}, 1.2, 0.0, 280, mode="own", exposure_s=e)
+            if 1.0 < p["peak_frac"] < 2.0:
+                mid = p
+                break
+        self.assertIsNotNone(mid)
+        self.assertTrue(mid["note"].startswith("⚠ Your exposure: predicted peak ~"), mid["note"])
+        self.assertEqual(mid["verdict"], "Saturates")
+        fine = planner.exposure_plan(transit(v=12.0), optics(), {}, 1.2, 0.0, 280, mode="own", exposure_s=10)
+        self.assertTrue(fine["note"].startswith("Your exposure: predicted peak ~"))
+
+    def test_typed_zero_point_uses_the_model_too(self):
+        Home(self, copy_fixture=False)
+        o = {"snr_zp": 21.8}
+        t = Target(name="x", kind="variable", vmag=9.0, ra=10, dec=40)
+        safe = planner.exposure_plan(t, optics(), o, 1.3, 0.0, 280, mode="safe")
+        self.assertTrue(safe["note"].startswith("Longest safe"))
+        self.assertLessEqual(safe["peak_frac"], 0.8 + 1e-9)
 
 
 if __name__ == "__main__":

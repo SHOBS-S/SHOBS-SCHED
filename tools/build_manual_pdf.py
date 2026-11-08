@@ -15,8 +15,10 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAN = ROOT / "docs" / "manual"
-VERSION = "1.3.0"
-EDITION = "Third edition"
+# 1.4.0: the version comes from the app (settings.APP_VERSION; it was typed here and went stale, as in SHOBS-P)
+VERSION = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', (ROOT / "settings.py").read_text(encoding="utf-8"),
+                    re.M).group(1)
+EDITION = "Fourth edition"
 TITLE = "SHOBS-SCHED User's Manual"
 
 CSS = """

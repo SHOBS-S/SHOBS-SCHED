@@ -288,24 +288,30 @@ exposure is chosen, and shows what that exposure buys you: the precision, the S/
   whose predicted peak stays under your linear-limit aim (80 % of the linear limit), SHOBS-SCHED takes the shortest
   one that is within 2 % of the best precision per 10-minute bin. Longer frames would gain almost nothing, and
   shorter frames time ingress and egress better.
-- **Longest safe**: 1.3.0's rule, unchanged: the longest standard exposure whose predicted peak stays under the aim.
+- **Longest safe**: the longest standard exposure whose predicted peak stays under the aim. With only rough numbers
+  this is 1.3.0's rule, unchanged; once the zero point is measured by SHOBS-FLUX or typed in Setup, the peak is the
+  noise model's (the same one the verdict **Saturates** uses), so Longest safe never picks an exposure the verdict
+  calls Saturates. The warnings on **My exposure** follow the same rule.
 - **My exposure**: your own, in seconds, in the box beside it. Typing in the box chooses **My exposure** for you.
 
 The gray line under the buttons says the same in short: *Best precision: the shortest exposure within 2 % of the best
-10-minute precision whose peak stays under your linear-limit aim (the default for transits). Longest safe: 1.3.0's
-rule, the longest standard exposure under the aim. My exposure: yours.*
+10-minute precision whose peak stays under your linear-limit aim (the default for transits once a zero point is
+measured by SHOBS-FLUX or typed in Setup). Longest safe: 1.3.0's rule, the longest standard exposure under the aim.
+My exposure: yours.*
 
 **The default.** When you have not chosen, a target gets:
 
-- a **transit**: **Best precision**, but only when a SHOBS-FLUX profile has measured your system's zero point. Until
-  then it gets **Longest safe**, and the gray line at the bottom of the readout ends *Longest safe until SHOBS-FLUX
-  measures this system (then Best precision is the default; your own choice above always wins).* The reason: Best
-  precision trusts the noise model, and with only rough numbers it should not pick your exposures.
+- a **transit**: **Best precision**, but only when the zero point is known: measured by a SHOBS-FLUX profile or
+  typed in Setup's Photometry noise box. Until then it gets **Longest safe**, and the gray line at the bottom of the
+  readout ends *Longest safe until a zero point is measured or typed in Setup (then Best precision is the default;
+  your own choice above always wins).* The reason: Best precision trusts the noise model, and with only rough
+  numbers it should not pick your exposures.
 - a **variable** or **campaign**: **Longest safe**.
 
-Your own choice always wins. Choose a button other than the default and **Save**, and the target keeps it whatever
-Setup says later. If you leave the default button chosen, the target keeps following the
-default: a transit on Longest safe today moves to Best precision by itself once SHOBS-FLUX has measured your system.
+Your own choice always wins. Click a button and **Save**, and the target keeps that way whatever Setup says later —
+even a click on the button that is already chosen pins it (so you can keep a transit on **Longest safe** for good).
+If you do not touch the buttons, the target keeps following the default: a transit on Longest safe today moves to
+Best precision by itself once its zero point is measured or typed.
 
 **Band.** The band the S/N is worked out for. The drop-down lists only bands SHOBS-SCHED has a zero point for: the
 bands your SHOBS-FLUX profile has measured, or else Setup's main band, **Green channel (TG)** on a color camera or
@@ -484,7 +490,8 @@ The S/N is **optimistic**, on purpose kept simple:
 - **A rough estimate is rough.** Without a measured zero point, the S/N can be off by a factor of two either way.
 
 So read **Marginal** as "worth a try on a good night", and **Detectable?** as "probably, but not yet measured". Once
-SHOBS-FLUX has measured your system, the verdicts lose their "?" and transits move to **Best precision**.
+the zero point is measured by SHOBS-FLUX or typed in Setup, the verdicts lose their "?" and transits move to **Best
+precision** (unless you pinned another way).
 
 ## Find suggested transits
 

@@ -17,7 +17,8 @@ One night (build_night), in this order:
      only"); nothing else does.
   4. Flip rule (GEM): never START a block within an hour after its target's meridian; the start goes to
      `flip_lead_min` before the meridian ("Start before the meridian and let it flip (~HH:MM). Pre-flip frames carry
-     no weight in the night mean."; a transit's: "… Pre-flip frames are kept; SHOBS-P fits the flip step."; 1.4.0),
+     no weight in the night mean."; a transit's: "Start before the meridian and let it flip (~HH:MM). Pre-flip frames are kept; SHOBS-P fits the
+     flip step."; 1.4.0),
      and a flip costs `flip_settle_min` of usable time. A block ending inside the mount's
      `site.past_meridian_min` tracking margin needs no flip ("stop by HH:MM at the latest"). Alt-az mounts never
      flip (⚠ zenith keyhole above 85°). Southern sites: the same hour-angle logic.
@@ -310,11 +311,13 @@ def frame_cycle_s(target: Target, exposure_s, optics=None) -> tuple[float, str]:
 # ---- exposure by S/N (1.4.0, GitHub issue #4) --------------------------------------------------------------------
 #
 # Three ways to choose a target's exposure (the Edit dialog's radio buttons, Target.exposure_mode):
-#   "precision"  Best precision (default for transits once a SHOBS-FLUX profile has a measured zero point; until
-#                then Longest safe — John, 8 Nov 2026): snr.best_exposure over STANDARD_EXPOSURES with the noise
+#   "precision"  Best precision (default for transits once the zero point is measured by SHOBS-FLUX or typed in
+#                Setup; until then Longest safe — John, 8 Nov 2026): snr.best_exposure over STANDARD_EXPOSURES with the noise
 #                model's own peak (a FLUX profile's zero point, seeing and linear limit when there is one).
-#   "safe"       Longest safe (default for the others, and for transits on rough numbers): estimate_exposure above,
-#                exactly as in 1.3.0.
+#   "safe"       Longest safe (default for the others, and for transits on rough numbers): the longest standard
+#                exposure whose predicted peak stays under the aim. With a measured or typed zero point the peak is the
+#                noise model's (the same one "Saturates" uses); on rough numbers it is estimate_exposure above,
+#                exactly as in 1.3.0. My exposure's peak warnings follow the same rule.
 #   "own"        My exposure: Target.exposure_s (an exposure_s in an older file is this).
 # Whatever chose it, the noise model then gives that exposure's 10-minute precision, the S/N and the verdict
 # (snr.py; the inputs and their sources from instrument.py).
@@ -324,19 +327,19 @@ MODE_WORDS = {"precision": "Best precision", "safe": "Longest safe", "own": "My 
 
 
 def measured(optics, options=None) -> bool:
-    """Is there a SHOBS-FLUX profile with a measured zero point for Setup's main band? (Best precision is a
-    transit's default only then; John, 8 Nov 2026.)"""
+    """Is the main band's zero point measured (a SHOBS-FLUX profile) or typed in Setup (set here)? Best precision is
+    a transit's default only then (John, 8 Nov 2026), and the noise model's peak replaces 1.3.0's."""
     import instrument
     try:
         inp = instrument.inputs(optics, _opts(options))
     except Exception:
         return False
-    return bool(inp is not None and inp.sources.get("zp") == "from FLUX")
+    return bool(inp is not None and inp.sources.get("zp") in ("from FLUX", "set here"))
 
 
 def default_mode(t: Target, is_measured: bool) -> str:
-    """The exposure mode a target gets when the user has chosen none: Best precision for a transit once SHOBS-FLUX
-    has measured the system, Longest safe otherwise (rough numbers do not pick exposures)."""
+    """The exposure mode a target gets when the user has chosen none: Best precision for a transit once its zero
+    point is measured (SHOBS-FLUX) or typed in Setup, Longest safe otherwise (rough numbers do not pick exposures)."""
     return "precision" if (t is not None and t.kind == "transit" and is_measured) else "safe"
 
 
@@ -396,7 +399,7 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
            "duration_days": None, "bins": None, "snr": None, "verdict": "", "reason": "",
            "linear_adu": inp.linear_adu if inp else None, "sat_adu": inp.sat_adu if inp else None,
            "inputs": inp, "measured": is_measured,
-           # a transit on Longest safe only because the numbers are rough (the readout says so)
+           # a transit on Longest safe only because no zero point is measured or typed (the readout says so)
            "safe_until_measured": bool(by_default and t.kind == "transit" and not is_measured)}
 
     def overhead(e):
@@ -415,16 +418,41 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     aim = float(o.get("target_peak_frac") or 0.8)
     pts = S.curve(inp, mag, STANDARD_EXPOSURES, airmass, pen_snr, overhead) if (inp and mag is not None) else []
     out["curve"] = pts
-    if mode == "own":
+    model = bool(pts) and not inp.rough             # a measured or typed zero point: one peak model everywhere
+    lim = inp.linear_adu if inp else None
+    dword = f" defocused (stars ~{_defocus_factor(o):g}× wider)" if dfc else ""
+    if mode == "own" and model:
+        e = float(exposure_s if exposure_s else (t.exposure_s or 60.0))
+        pk = S.peak_adu(S.replace(inp, overhead_s=max(0.0, overhead(e))), mag, e, airmass, pen_snr)
+        if pk >= 2.0 * lim:
+            note = (f"✖ Your exposure{dword}: predicted peak ~{_k(pk)}, over twice your {_k(lim)} linear limit — "
+                    f"shorten {fmt_exposure(e)}" + (" or defocus more" if dfc else " or defocus"))
+        elif pk > lim:
+            note = (f"⚠ Your exposure{dword}: predicted peak ~{_k(pk)}, over your {_k(lim)} linear limit — "
+                    f"shorten {fmt_exposure(e)}" + (" or defocus more" if dfc else " or defocus"))
+        else:
+            note = f"Your exposure{';' + dword if dfc else ''}: predicted peak ~{pk:,.0f} ADU"
+        out.update(exposure_s=e, peak_adu=pk, is_estimate=False, note=note)
+    elif mode == "own":
         e = float(exposure_s if exposure_s else (t.exposure_s or 60.0))
         tt = Target.from_dict(dict(t.to_dict(), exposure_s=e))
         ex = estimate_exposure(tt, optics, o, airmass, moon_penalty)
         out.update(exposure_s=e, peak_adu=ex["peak_adu"], is_estimate=False, note=ex["note"])
+    elif mode == "safe" and model:
+        under = [p for p in pts if p["peak_frac"] <= aim]
+        if under:
+            pick = max(under, key=lambda p: p["t"])
+            note = (f"Longest safe{dword}: peak ~{pick['peak_frac'] * 100:.0f} % of your {_k(lim)} linear limit "
+                    f"(~{pick['peak']:,.0f} ADU)")
+        else:
+            pick = min(pts, key=lambda p: p["t"])
+            note = (f"⚠ even {fmt_exposure(pick['t'])} may saturate{dword} (predicted peak ~{pick['peak']:,.0f} ADU, "
+                    f"limit {lim:,.0f}); " + ("defocus more" if dfc else "defocus"))
+        out.update(exposure_s=float(pick["t"]), peak_adu=pick["peak"], is_estimate=True, note=note)
     elif mode == "precision" and pts:
         pick, fits = S.best_exposure(pts, aim)
         out["fits"] = fits
         e = pick["t"]
-        lim = inp.linear_adu
         if fits:
             note = (f"S/N exposure: peak ~{pick['peak_frac'] * 100:.0f} % of your {_k(lim)} linear limit; "
                     f"{S.ppt(pick['sigma'])} per 10 min")
@@ -497,8 +525,8 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
 
 
 def verdict_note(plan: dict) -> str:
-    """The Notes column's first line for a block: "Detectable (S/N 18): a 0.80 % dip against 1.1 ppt per 10-min
-    bin, 9 bins in transit", "Detectable? (S/N ~62, rough estimate): …", "Out of reach (S/N 3.1, needs 5): …",
+    """The Notes column's first line for a block: "Detectable (S/N 27): a 1.00 % dip against 1.1 ppt per 10-min
+    bin, 9 bins in transit" (0.01 / (0.0011 / √9) = 27), "Detectable? (S/N ~62, rough estimate): …", "Out of reach (S/N 3.1, needs 5): …",
     "Saturates: peak ~1070 % of your linear limit at 60 s (…)"."""
     word = plan.get("verdict") or ""
     if not word:
@@ -1582,7 +1610,8 @@ def flip_start_note(kind: str, hhmm: str) -> str:
     transit's pre-flip frames are kept (SHOBS-P fits the flip step); a variable's or campaign's carry no weight in the
     night mean."""
     if kind == "transit":
-        return "Start before the meridian and let it flip. Pre-flip frames are kept; SHOBS-P fits the flip step."
+        return (f"Start before the meridian and let it flip (~{hhmm}). Pre-flip frames are kept; SHOBS-P fits the "
+                "flip step.")
     return f"Start before the meridian and let it flip (~{hhmm}). Pre-flip frames carry no weight in the night mean."
 
 
