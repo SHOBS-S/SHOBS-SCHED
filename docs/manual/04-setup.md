@@ -16,13 +16,15 @@ This chapter covers:
 - the Horizon profile box,
 - the Weather box (forecast source and dew),
 - the Suggestions and darks box (the filter for the Find buttons, and the darks you already have),
+- the Photometry noise box (the SHOBS-FLUX profile and the values behind each target's S/N),
 - saving, and leaving the page with unsaved changes,
 - the planner settings that are not on the page.
 
-![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values) and Weather on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
+![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values), Weather and Photometry noise (exposure by S/N) on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
 
-The boxes sit in two columns when the window is wide enough: **Site**, **Mount and limits** and **Weather** on the
-left; **Telescope and camera**, **Horizon profile** and **Suggestions and darks** on the right. In a narrow window
+The boxes sit in two columns when the window is wide enough: **Site**, **Mount and limits**, **Weather** and
+**Photometry noise (exposure by S/N)** on the left; **Telescope and camera**, **Horizon profile** and **Suggestions
+and darks** on the right. In a narrow window
 they sit in one column, in the order this chapter follows. The page scrolls when it does not fit.
 
 ## Where the values came from
@@ -62,7 +64,7 @@ SHOBS-P's value and save, it follows SHOBS-P again.
 | **Name** | Your observatory's name. It is printed on the plan card. Optional. |
 | **Latitude** | Degrees, north positive, south negative (e.g. `40.0`). Required. |
 | **Longitude** | Degrees, **east positive, west negative** (e.g. `-100.0` for 100° W). Required. |
-| **Elevation** | Height above sea level, in meters or feet (see **Lengths**). Optional; it fine-tunes the sky noise estimate. |
+| **Elevation** | Height above sea level, in meters or feet (see **Lengths**). Optional; it fine-tunes the noise estimate (a higher site twinkles less). |
 | **Time zone** | Your site's time zone, by its standard name (`America/Chicago`, `Europe/London`, `Australia/Sydney`). Required. |
 | **Temperatures** | **°C** or **°F**, for the weather and the dew setting. Display only. |
 | **Lengths** | **m** or **ft**, for the elevation (and wind in km/h or mph). Display only. |
@@ -90,7 +92,7 @@ remote observatory in another zone, or a laptop that travels, still gets the tim
 | **Camera** | The camera's name (e.g. its model). | Also sets the field of view written to the ASIAIR and NINA lists, for the common ZWO sensors. |
 | **Sensor** | **Color (one-shot)** or **Mono**. | A color camera's green pixels see less light than an unfiltered mono pixel. |
 | **Gain setting** | The gain you shoot at (as in the FITS GAIN keyword). | Your reference, next to the e⁻ per ADU that goes with it. |
-| **e⁻ per ADU** | Electrons per count at that gain. | Turns the predicted electrons into ADU for the peak estimate. |
+| **e⁻ per ADU** | Electrons per count at that gain. | Turns the predicted electrons into ADU for the peak estimate. With several SHOBS-FLUX camera profiles (one per gain), it picks the right one. |
 | **Full well** | Electrons. | Used for e⁻ per ADU when that is empty. |
 | **Linear limit** | Raw ADU a star's peak should stay under (32000 if empty). | The exposure estimate keeps peaks under it. |
 
@@ -174,7 +176,9 @@ For every block:
   latest*.
 - **A block that must cross the meridian flips at the start.** It starts about 12 minutes *before* the meridian, so
   the mount flips right at the start, while you are there, and the rest of the run is on one side of the pier. The
-  note says *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*.
+  note says, for a variable or a campaign, *Start before the meridian and let it flip (~22:40). Pre-flip frames carry
+  no weight in the night mean.*, and for a transit *Start before the meridian and let it flip (~22:40). Pre-flip
+  frames are kept; SHOBS-P fits the flip step.*
 - **The flip costs time.** The frame count of a block with a flip allows for a few minutes of lost time.
 
 For a **fixed-time block**, a flip in the middle is noted (*Meridian flip at ~01:10; drop the frames during the
@@ -289,7 +293,7 @@ magnetic declination, east positive) so the profile is turned to true north.
 
 | Field | What it does |
 |---|---|
-| **Forecast source** | Where the forecast comes from. In 1.3.0 the only source is **Open-Meteo** (free, no account). |
+| **Forecast source** | Where the forecast comes from. In 1.4.0 the only source is **Open-Meteo** (free, no account). |
 | **Dew when temp − dew point under** | The dew threshold: dew is expected from the first moment in the dark when the air temperature is less than this many degrees above the dew point. 2.5 °C by default. |
 | **End dew-sensitive runs at the predicted dew onset** | When ticked (the default), flexible blocks (campaigns and any-time variables) end when dew is expected. Fixed-time blocks are not cut; they get a ⚠ instead. |
 
@@ -334,6 +338,77 @@ Some details:
 Why the Moon limit matters for photometry: moonlight raises the sky background, and the sky's noise rises with it.
 A 1 % transit on a V 12 star that is easy on a dark night can be lost in the noise when the Moon is near and bright.
 
+## Photometry noise (exposure by S/N)
+
+This box holds the values behind each target's precision, S/N and verdict (chapter 5, "How the S/N works"), and
+tells SHOBS-SCHED which SHOBS-FLUX profile to read. You can leave it alone: with nothing in it, SHOBS-SCHED uses
+rough estimates, and says so with a **?** on every verdict.
+
+![The Photometry noise (exposure by S/N) box with no SHOBS-FLUX profile: Instrument profile "Automatic (matches the telescope and camera)", the line "No SHOBS-FLUX profile matches the telescope and camera above (SCHED works without one): the values below, or rough estimates, are used.", the seven empty fields each tagged "estimate" with the value used (estimate 19.76, estimate 0.2, estimate 21.5, estimate 3, estimate 2, estimate 0.01, estimate 1.5), and the grey hint under them](img/04-photometry-noise.png)
+
+**Instrument profile.** **SHOBS-FLUX**, a SHOBS program for characterizing a telescope and camera on the bench and on
+the sky, keeps what it measured in a *profile* (in the `.shobs` folder in your user folder). SHOBS-SCHED only reads
+these profiles; it never writes them, and works fully without them. The drop-down offers:
+
+- **Automatic (matches the telescope and camera)** (the default): the profile whose camera, gain setting, binning,
+  telescope name and focal length (within 3 %) match the **Telescope and camera** box;
+- **None (use the values below)**: no profile, only the values typed here (and rough estimates);
+- each SHOBS-FLUX system profile on this computer by its name, with its telescope, focal length and camera.
+
+The line under it says what is used, for example:
+
+- *✔ SHOBS-FLUX profile … (matches the telescope and camera above; revision 3, 2026-11-02). Its values are shown
+  greyed below (from FLUX); empty fields use rough estimates. SCHED only reads it.* (*chosen here* when you picked it.)
+- *No SHOBS-FLUX profile matches the telescope and camera above (SCHED works without one): the values below, or
+  rough estimates, are used.*
+- *No SHOBS-FLUX profile (you chose none): the values below, or rough estimates, are used.*
+- *⚠ The chosen profile … is not in … any more: choose another, or Automatic. Until then the values below, or rough
+  estimates, are used.*
+- *⚠ Several SHOBS-FLUX camera profiles fit (…) and Setup has no gain setting to tell them apart: choose the profile
+  above (or type the gain setting under Telescope and camera). Until then the values below, or rough estimates, are
+  used.* With no **Gain setting**, Automatic first takes the camera profile whose e⁻ per ADU is Setup's **e⁻ per
+  ADU**; this line appears only when that cannot decide either.
+- *⚠ A newer SHOBS-FLUX wrote 2 profiles here (…): update SHOBS-SCHED to read them. Until then the values below, or
+  rough estimates, are used.*
+
+**The seven values:**
+
+| Field | Unit | Rough estimate | What it is |
+|---|---|---|---|
+| **Zero point** | mag for 1 e⁻/s (main band) | from your aperture and camera | The magnitude of a star that gives 1 electron a second in your main band (the green channel of a color camera, clear on a mono one), at airmass 1. The most important of the seven. |
+| **Extinction** | mag per airmass | 0.20 | How much the atmosphere dims a star for each extra airmass. |
+| **Dark-sky brightness** | mag/arcsec² | 21.5 | Your sky on a moonless night (a bigger number is darker). The Moon's light is added to it on a moonlit night. |
+| **Seeing (FWHM, in focus)** | arcsec | 3 (`fwhm_arcsec`, below) | How wide your stars are in focus. The photometry aperture is 1.5 × this in radius. |
+| **Read noise** | e⁻ | 2 | The camera's read noise per pixel. |
+| **Dark current** | e⁻/px/s | 0.01 | The camera's dark current, per pixel per second. |
+| **Scintillation C_Y** | (Young; 1.5 typical) | 1.5 | How strongly your site twinkles (Osborn et al. 2015's factor). |
+
+Each field has a tag beside it:
+
+- *from FLUX*: the profile measured this value. It is shown greyed out, and it wins over anything typed here. (What
+  you typed is kept, and comes back if you choose **None**.)
+- *set here*: you typed it.
+- *estimate 21.5* (the value used): the field is empty, so a rough estimate is used: the profile's own estimate, or
+  SHOBS-SCHED's cold-start one. For the example site the zero point shows *estimate 19.76*.
+
+The grey hint under the box says it in short: *SHOBS-FLUX measures these from your nights (it never needs SCHED, and
+SCHED only reads its profiles). Without a profile, type what you know; empty fields use rough estimates, and a
+verdict from an estimated zero point gets a “?” (Detectable?, Marginal?, Out of reach?), and transits stay on
+Longest safe until a profile measures the system.*
+
+What a typed zero point does: it counts like a measured one. The verdicts lose their **?**, and transits whose
+exposure you have not chosen move to **Best precision** (chapter 5). So type one only if you have really measured it
+(for example from a SHOBS-P light curve of a star of known magnitude); a wrong one is worse than the estimate, as it
+hides the **?**.
+
+A value out of range is not saved, for example *✖ Not saved: Scintillation C_Y must be between 0.1 and 10.* The
+ranges: zero point 10 to 30, extinction 0 to 1.5, dark sky 15 to 23, seeing 0.3 to 20, read noise 0 to 50, dark
+current 0 to 10.
+
+Why it matters for photometry: whether a transit is worth a night depends on more than its depth. A 0.5 % dip is
+easy on a bright star with a 0.35 m telescope and hopeless on a faint one with a 0.1 m; the noise model says which,
+before you spend the night.
+
 ## Saving
 
 Press the green **Save** button at the bottom. It says **✔ Saved.**, and the status strip says **✔ Setup saved.**
@@ -365,15 +440,18 @@ editing the file by hand.
 | `flip_settle_min` | 4 | Minutes lost to a flip. |
 | `min_gap_report_min` | 15 | Free gaps shorter than this are not listed. |
 | `tc_sigma_warn_min` | 10 | A transit whose predicted mid-time uncertainty is larger than this many minutes gets a ⚠. |
-| `fwhm_arcsec` | 3.0 | Typical seeing (star width), for the exposure estimate. |
-| `target_peak_frac` | 0.8 | The exposure estimate aims the star's peak at this fraction of the linear limit. |
+| `fwhm_arcsec` | 3.0 | Typical seeing (star width), for the exposure estimate (and the noise model's seeing, unless **Seeing** is set in the Photometry noise box or measured by SHOBS-FLUX). |
+| `target_peak_frac` | 0.8 | The exposure estimate aims the star's peak at this fraction of the linear limit (Longest safe and Best precision both keep under it). |
+| `dark_sky_v` | 21.5 | The dark sky (mag/arcsec²) the Moon's brightening is worked out against. |
 
 The suggestion filter (`suggest_vmin`, `suggest_vmax`, `suggest_min_depth`, `suggest_baseline_min`,
 `suggest_moon_penalty_max`) and `darks_on_hand` are kept in the same `options` section, but you set them in the
 **Suggestions and darks** box (above). So are the Moon distance (`moon_sep_mode`, `moon_sep_fixed`,
 `moon_sep_crescent`, `moon_sep_quarter`, `moon_sep_gibbous`, `moon_sep_full`), set in **Mount and limits**, and the
-Priority choices of **Find suggested transits…** (`suggest_exoclock_levels`, `suggest_exofop_max`), set in its
-window (chapter 5).
+Priority choices of **Find suggested transits…** (`suggest_exoclock_levels`, `suggest_exofop_max`) and its **Hide out
+of reach** tick (`suggest_hide_out_of_reach`, off by default), set in its window (chapter 5). The Photometry noise
+box keeps its choice and values there too: `snr_profile` (`auto`, `none`, or a profile's name), `snr_zp`, `snr_k`,
+`snr_sky`, `snr_fwhm`, `snr_read_noise`, `snr_dark` and `snr_cy` (empty, `null`, for a rough estimate).
 
 ---
 
