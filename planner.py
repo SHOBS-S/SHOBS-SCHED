@@ -450,18 +450,31 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
         out["reason"] = (what if saturated else f"S/N {val:.1f} (needs {S.MARGINAL_SNR:g}): {what}") + (
             " (rough estimate)" if rough else "")
     elif rough:
-        out["reason"] = f"S/N ~{val:.0f} by a rough estimate (no measured zero point): {what}"
+        out["reason"] = f"S/N ~{val:.0f} (rough estimate, no measured zero point): {what}"
     else:
         out["reason"] = f"S/N {val:.0f}: {what}" if val >= 10 else f"S/N {val:.1f}: {what}"
+    out["what"] = what
     return out
 
 
 def verdict_note(plan: dict) -> str:
-    """The Notes column's first line for a block: "Detectable: S/N 18 (a 0.80 % dip …)"."""
+    """The Notes column's first line for a block: "Detectable (S/N 18): a 0.80 % dip against 1.1 ppt per 10-min
+    bin, 9 bins in transit", "Marginal? (S/N ~62, rough estimate): …", "Out of reach (S/N 3.1, needs 5): …"."""
     word = plan.get("verdict") or ""
     if not word:
         return ""
-    return f"{word}: {plan.get('reason') or ''}".rstrip(": ")
+    v, what = plan.get("snr"), plan.get("what") or ""
+    if word == "Out of reach" and (v is None or "linear limit" in what):
+        return f"{word}: {what}"
+    if v is None:
+        return word
+    if word == "Out of reach":
+        head = f"S/N {v:.1f}, needs 5"
+    elif word.endswith("?"):
+        head = f"S/N ~{v:.0f}, rough estimate"
+    else:
+        head = f"S/N {v:.0f}" if v >= 10 else f"S/N {v:.1f}"
+    return f"{word} ({head}): {what}" if what else f"{word} ({head})"
 
 
 def best_airmass(t: Target, site) -> float:

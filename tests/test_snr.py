@@ -400,7 +400,7 @@ class ExposurePlan(unittest.TestCase):
         b = planner.build_night(d, site, optics(), [t], {}).blocks_obj()[0]
         self.assertEqual(b.exposure_how, "precision")
         self.assertEqual(b.verdict, "Marginal?")
-        self.assertTrue(b.notes[0].startswith("Marginal?: S/N ~"), b.notes[0])
+        self.assertTrue(b.notes[0].startswith("Marginal? (S/N ~"), b.notes[0])
         import export
         r = export.table_rows(planner.build_night(d, site, optics(), [t], {}), site)[0]
         self.assertTrue(r["exposure"].endswith(" s (S/N)"), r["exposure"])

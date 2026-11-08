@@ -6769,6 +6769,7 @@ def selftest_ui() -> int:
     tmp = tempfile.mkdtemp(prefix="shobs_sched_ui_")
     os.environ["SHOBS_SCHED_HOME"] = tmp
     os.environ["SHOBS_P_SETTINGS"] = os.path.join(tmp, "no_shobs_p.json")
+    os.environ.setdefault("SHOBS_DATA_HOME", os.path.join(tmp, "shobs"))   # not the computer's own FLUX profiles
 
     def offline(*_a, **_k):
         raise OSError("network is off in the self-test")

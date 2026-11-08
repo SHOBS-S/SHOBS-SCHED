@@ -180,7 +180,7 @@ class TestScheduleAndCard(unittest.TestCase):
     def night(self, how="precision", verdict="Detectable"):
         b = Block(target_id="x", name="X b", kind="transit", mode="T", start=2461000.6, end=2461000.7,
                   exposure_s=120.0, exposure_is_estimate=True, exposure_how=how, verdict=verdict,
-                  notes=["Detectable: S/N 18: a 1.00 % dip", "Ingress 21:00"])
+                  notes=["Detectable (S/N 18): a 1.00 % dip", "Ingress 21:00"])
         return NightPlan(date="2026-10-20", blocks=[b.to_dict()])
 
     def test_table_and_card(self):
@@ -189,7 +189,7 @@ class TestScheduleAndCard(unittest.TestCase):
         self.assertEqual(r["exposure"], "120 s (S/N)")
         self.assertFalse(r["exposure_is_estimate"])
         self.assertEqual(r["verdict"], "Detectable")
-        self.assertTrue(r["notes"].startswith("Detectable: S/N 18"))
+        self.assertTrue(r["notes"].startswith("Detectable (S/N 18)"))
         html = export.plan_card_html([self.night()], site)
         self.assertIn('120 s (S/N)<br><span class="verdict">Detectable</span>', html)
         self.assertNotIn("120 s (S/N) est.", html)
@@ -430,7 +430,7 @@ class TestWindow(Base):
         toi = rows["TOI-2046 b"]
         self.assertTrue(toi["exposure"].endswith(" s (S/N)"), toi)
         self.assertNotIn("(est.)", toi["exposure"])
-        self.assertTrue(toi["notes"].startswith("Marginal?: S/N ~"), toi["notes"])
+        self.assertTrue(toi["notes"].startswith("Marginal? (S/N ~"), toi["notes"])
         app.show_page(3)
         app.update()
         self.assertIn("Marginal?", app.pages[3].card_text())
