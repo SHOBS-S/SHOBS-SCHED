@@ -206,6 +206,10 @@ class Target:
     min_block_min: float = 45.0               # shortest block worth scheduling
     goal_per_week: int = 0                    # campaigns: wanted nights per week (0 = no goal)
     exposure_s: float | None = None           # user's exposure (None = SCHED estimates one)
+    exposure_mode: str = ""                   # 1.4.0: "precision" (Best precision), "safe" (Longest safe, 1.3.0's
+                                              # rule) or "own" (My exposure = exposure_s); "" = by type (transits
+                                              # precision, others safe; an exposure_s of an older file = own)
+    snr_band: str = ""                        # 1.4.0: the band the S/N is worked out in ("" = Setup's main band)
     cadence_overhead_s: float | None = 3.0    # old per-frame overhead field (kept for old files); a value other
                                               # than the old 3 s default still applies (planner.frame_cycle_s)
     cycle_s: float | None = None              # "seconds between frames" (total cycle); None = exposure + overhead
@@ -264,6 +268,10 @@ class Block:
     moon_sep: float | None = None
     exposure_s: float | None = None
     exposure_is_estimate: bool = True
+    exposure_how: str = ""                    # 1.4.0: "precision" / "safe" / "own" (how the exposure was chosen)
+    snr: float | None = None                  # 1.4.0: S/N of the transit (or of a variable's range) at that exposure
+    verdict: str = ""                         # "Detectable", "Marginal", "Out of reach", "Marginal?" or ""
+    precision_bin: float | None = None        # relative flux scatter per 10-minute bin
     frames: int | None = None
     frames_in_transit: int | None = None
     cycle_s: float | None = None              # seconds per frame used for the frame counts

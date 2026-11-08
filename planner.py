@@ -16,8 +16,9 @@ One night (build_night), in this order:
      its weekly goal that finds no room may shrink other flexible blocks toward their minimum ("shorten for goals
      only"); nothing else does.
   4. Flip rule (GEM): never START a block within an hour after its target's meridian; the start goes to
-     `flip_lead_min` before the meridian ("Start before the meridian and let it flip (~HH:MM); drop the pre-flip
-     frames"), and a flip costs `flip_settle_min` of usable time. A block ending inside the mount's
+     `flip_lead_min` before the meridian ("Start before the meridian and let it flip (~HH:MM). Pre-flip frames carry
+     no weight in the night mean."; a transit's: "… Pre-flip frames are kept; SHOBS-P fits the flip step."; 1.4.0),
+     and a flip costs `flip_settle_min` of usable time. A block ending inside the mount's
      `site.past_meridian_min` tracking margin needs no flip ("stop by HH:MM at the latest"). Alt-az mounts never
      flip (⚠ zenith keyhole above 85°). Southern sites: the same hour-angle logic.
   5. Overheads: `overhead_slew_min` between blocks, `overhead_focus_min` at the start of the night (flexible blocks
@@ -304,6 +305,179 @@ def frame_cycle_s(target: Target, exposure_s, optics=None) -> tuple[float, str]:
     if site is not None:
         return e + max(0.0, float(site)), "setup"
     return e + (float(own) if own is not None else OLD_DEFAULT_OVERHEAD_S), "default"
+
+
+# ---- exposure by S/N (1.4.0, GitHub issue #4) --------------------------------------------------------------------
+#
+# Three ways to choose a target's exposure (the Edit dialog's radio buttons, Target.exposure_mode):
+#   "precision"  Best precision (default for transits): snr.best_exposure over STANDARD_EXPOSURES with the noise
+#                model's own peak (a FLUX profile's zero point, seeing and linear limit when there is one).
+#   "safe"       Longest safe (default for the others): estimate_exposure above, exactly as in 1.3.0.
+#   "own"        My exposure: Target.exposure_s (an exposure_s in an older file is this).
+# Whatever chose it, the noise model then gives that exposure's 10-minute precision, the S/N and the verdict
+# (snr.py; the inputs and their sources from instrument.py).
+
+EXPOSURE_MODES = ("precision", "safe", "own")
+MODE_WORDS = {"precision": "Best precision", "safe": "Longest safe", "own": "My exposure"}
+
+
+def exposure_mode(t: Target) -> str:
+    """The way this target's exposure is chosen (see above)."""
+    if t is not None and t.exposure_s:
+        return "own"
+    m = str(getattr(t, "exposure_mode", "") or "")
+    if m in ("precision", "safe"):
+        return m
+    return "precision" if (t is not None and t.kind == "transit") else "safe"
+
+
+def _amplitude(t: Target) -> float | None:
+    el = t.elements_obj()
+    if el and el.mag_max is not None and el.mag_min is not None and el.mag_min != el.mag_max:
+        return abs(float(el.mag_min) - float(el.mag_max))
+    return None
+
+
+def _pct(x: float) -> str:
+    return f"{x * 100:.2f} %" if x < 0.1 else f"{x * 100:.1f} %"
+
+
+def exposure_plan(target: Target, optics, options: dict | None = None, airmass: float = 1.2,
+                  moon_penalty: float = 0.0, elevation_m: float = 0.0, band: str | None = None,
+                  mode: str | None = None, exposure_s: float | None = None) -> dict:
+    """The exposure and what it buys, for the planner, the Edit dialog's readout, the Targets list and Find
+    suggested transits:
+      mode, exposure_s, peak_adu, is_estimate, note (as estimate_exposure's: a ⚠/✖ one is a caution),
+      band, band_words, catalog_line, tag ("from FLUX" / "set here" / "estimate (…)"), rough,
+      sigma (per 10-min bin), parts {photon, sky, read, scint} (shares of the variance), frames_per_bin,
+      peak_frac (of the linear limit), linear_adu, sat_adu, curve (precision vs exposure),
+      depth, duration_days, bins, snr, verdict, reason (plain words; the readout's and the notes' line).
+    mode / exposure_s override the target's own (the dialog shows a choice before it is saved)."""
+    import instrument
+    import snr as S
+    o = _opts(options)
+    t = target
+    mode = mode if mode in EXPOSURE_MODES else exposure_mode(t)
+    dfc = _defocused(t)
+    band = band or (getattr(t, "snr_band", "") or "") or None
+    if band and band not in instrument.bands(optics, o):
+        band = None
+    band = band or instrument.main_band(optics)
+    inp = instrument.inputs(optics, o, elevation_m, band, defocused=dfc, notes=t.notes or "")
+    mag, cat_line = instrument.catalog_mag(t.vmag, band)
+    out = {"mode": mode, "band": band, "band_words": instrument.band_words(band), "catalog_line": cat_line,
+           "tag": (inp.sources.get("all") if inp else "estimate (no FLUX profile)"), "rough": bool(inp is None
+                                                                                                 or inp.rough),
+           "sigma": None, "parts": {}, "frames_per_bin": None, "peak_frac": None, "curve": [], "depth": None,
+           "duration_days": None, "bins": None, "snr": None, "verdict": "", "reason": "",
+           "linear_adu": inp.linear_adu if inp else None, "sat_adu": inp.sat_adu if inp else None,
+           "inputs": inp}
+
+    def overhead(e):
+        per, how = frame_cycle_s(t, e, optics)
+        if how in ("cycle", "target"):
+            return per - e
+        return inp.overhead_s if inp else per - e
+
+    aim = float(o.get("target_peak_frac") or 0.8)
+    pts = S.curve(inp, mag, STANDARD_EXPOSURES, airmass, moon_penalty, overhead) if (inp and mag is not None) else []
+    out["curve"] = pts
+    if mode == "own":
+        e = float(exposure_s if exposure_s else (t.exposure_s or 60.0))
+        tt = Target.from_dict(dict(t.to_dict(), exposure_s=e))
+        ex = estimate_exposure(tt, optics, o, airmass, moon_penalty)
+        out.update(exposure_s=e, peak_adu=ex["peak_adu"], is_estimate=False, note=ex["note"])
+    elif mode == "precision" and pts:
+        pick, fits = S.best_exposure(pts, aim)
+        e = pick["t"]
+        lim = inp.linear_adu
+        if fits:
+            note = (f"S/N exposure: peak ~{pick['peak_frac'] * 100:.0f} % of your {_k(lim)} linear limit; "
+                    f"{S.ppt(pick['sigma'])} per 10 min")
+        elif dfc:
+            note = (f"⚠ estimate: even {fmt_exposure(e)} may saturate defocused (predicted peak ~{pick['peak']:,.0f} "
+                    f"ADU, limit {lim:,.0f}); defocus more")
+        else:
+            note = (f"⚠ estimate: even {fmt_exposure(e)} may saturate (predicted peak ~{pick['peak']:,.0f} ADU, "
+                    f"limit {lim:,.0f}); defocus")
+        out.update(exposure_s=float(e), peak_adu=pick["peak"], is_estimate=True, note=note)
+    else:
+        if mode == "precision":
+            out["mode"] = "safe"                        # nothing to work the S/N from: 1.3.0's rule
+        ex = estimate_exposure(Target.from_dict(dict(t.to_dict(), exposure_s=None)), optics, o, airmass,
+                               moon_penalty)
+        out.update(exposure_s=ex["exposure_s"], peak_adu=ex["peak_adu"], is_estimate=True, note=ex["note"])
+    if not inp:
+        out["reason"] = ("telescope and camera not set up (aperture, focal length, pixel size)"
+                         if not (optics and optics.aperture_mm and optics.pixel_scale()) else
+                         f"no zero point for {instrument.band_words(band)}")
+        return out
+    if mag is None:
+        out["reason"] = "no V magnitude"
+        return out
+    e = out["exposure_s"]
+    use = S.replace(inp, overhead_s=max(0.0, overhead(e)))
+    bp = S.bin_precision(use, mag, e, airmass, moon_penalty)
+    pk = S.peak_adu(use, mag, e, airmass, moon_penalty)
+    out.update(sigma=bp["sigma"], parts=bp["parts"], frames_per_bin=bp["frames"], peak_frac=pk / inp.linear_adu,
+               model_peak_adu=pk)
+    rough = inp.rough
+    if t.kind == "transit":
+        pl = t.planet_obj()
+        depth, dur = (pl.depth, pl.t14) if pl else (None, None)
+        out.update(depth=depth, duration_days=dur, bins=S.bins_in(dur) if dur else None)
+        val = S.transit_snr(depth, bp["sigma"], dur) if depth and dur else None
+        what = (f"a {_pct(depth)} dip against {S.ppt(bp['sigma'])} per 10-min bin, "
+                f"{S.bins_in(dur):.0f} bins in transit") if (depth and dur) else ""
+        missing_why = "no transit depth or duration to judge" if not (depth and dur) else ""
+    else:
+        amp = _amplitude(t)
+        out.update(depth=(S.AMPLITUDE_FLUX * amp) if amp else None)
+        val = S.amplitude_snr(amp, bp["sigma"]) if amp else None
+        what = f"a {amp:.2f} mag range against {S.ppt(bp['sigma'])} per 10-min bin" if amp else ""
+        missing_why = "no amplitude to judge (VSX range)" if not amp else ""
+    out["snr"] = val
+    word = S.verdict(val, rough)
+    saturated = pk > inp.linear_adu and e <= STANDARD_EXPOSURES[0] and mode != "own"
+    if saturated:
+        word = "Out of reach"
+        what = (f"over the linear limit even at {fmt_exposure(e)} ({'defocus more' if dfc else 'defocus'} to bring "
+                "it in)")
+    out["verdict"] = word
+    if not word:
+        out["reason"] = missing_why
+    elif word == "Out of reach":
+        out["reason"] = (what if saturated else f"S/N {val:.1f} (needs {S.MARGINAL_SNR:g}): {what}") + (
+            " (rough estimate)" if rough else "")
+    elif rough:
+        out["reason"] = f"S/N ~{val:.0f} by a rough estimate (no measured zero point): {what}"
+    else:
+        out["reason"] = f"S/N {val:.0f}: {what}" if val >= 10 else f"S/N {val:.1f}: {what}"
+    return out
+
+
+def verdict_note(plan: dict) -> str:
+    """The Notes column's first line for a block: "Detectable: S/N 18 (a 0.80 % dip …)"."""
+    word = plan.get("verdict") or ""
+    if not word:
+        return ""
+    return f"{word}: {plan.get('reason') or ''}".rstrip(": ")
+
+
+def best_airmass(t: Target, site) -> float:
+    """The target's airmass at its highest from the site (1.2 when the site or position is unknown)."""
+    if site is None or getattr(site, "lat", None) is None or t.dec is None:
+        return 1.2
+    alt = 90.0 - abs(float(site.lat) - float(t.dec))
+    if alt <= 1.0:
+        return float(getattr(site, "max_airmass", 2.0) or 2.0)
+    return max(1.0, 1.0 / math.sin(math.radians(alt)))
+
+
+def target_verdict(t: Target, optics, options, site) -> dict:
+    """exposure_plan at the target's best airmass under a dark sky (the Targets list's Verdict column)."""
+    return exposure_plan(t, optics, options, airmass=best_airmass(t, site), moon_penalty=0.0,
+                         elevation_m=float(getattr(site, "elevation_m", 0.0) or 0.0) if site else 0.0)
 
 
 # ---- darkness cache (next-chance searches look at many nights) -------------------------------------------------
@@ -1253,11 +1427,11 @@ class _Night:
                         b.meridian = float(mm)
                         before = (mm - b.start) * 1440.0
                         if before <= float(o["flip_lead_min"]) + 10.0:
-                            notes.append(f"Start before the meridian and let it flip (~{self.hh(mm)}); "
-                                         f"drop the pre-flip frames")
+                            notes.append(flip_start_note(t.kind, self.hh(mm)))
                             if base_i is not None and mm < b.t1:
                                 kept = max(0.0, (b.t1 - mm) * 1440 - float(o["flip_settle_min"]))
-                                notes[base_i] = (f"Baseline {kept:.0f} min before ingress (after the flip), "
+                                notes[base_i] = (f"Baseline {kept:.0f} min before ingress (after the flip; the kept "
+                                                 f"pre-flip frames add more), "
                                                  f"{max(0.0, (b.end - b.t4) * 1440):.0f} min after egress")
                         else:
                             notes.append(f"Meridian flip at ~{self.hh(mm)}; drop the frames during the flip")
@@ -1309,10 +1483,13 @@ class _Night:
         # exposure and frames
         pen = float(np.mean(sky.moon_sky_penalty(t.ra, t.dec, site, jd[:: max(1, len(jd) // 20)],
                                                  float(o.get("dark_sky_v", sky.DARK_SKY_V)))))
-        ex = estimate_exposure(t, self.optics, o, airmass=b.airmass_best or 1.2, moon_penalty=pen)
+        ex = exposure_plan(t, self.optics, o, airmass=b.airmass_best or 1.2, moon_penalty=pen,
+                           elevation_m=float(site.elevation_m or 0.0))
         b.exposure_s = ex["exposure_s"]
         b.exposure_is_estimate = ex["is_estimate"]
         b.peak_adu = ex["peak_adu"]
+        b.exposure_how = ex["mode"]
+        b.snr, b.verdict, b.precision_bin = ex["snr"], ex["verdict"], ex["sigma"]
         if ex["note"].startswith(("⚠", "✖")):
             cautions.append(ex["note"])
         per, how = frame_cycle_s(t, b.exposure_s, self.optics)
@@ -1339,9 +1516,21 @@ class _Night:
             if len(cloudy) > len(inside) / 2.0:
                 # a plain note, not a ⚠: clouds are what they are (John 27 Oct; fix list 25)
                 notes.append(f"Cloud ≥ {CLOUDY_PCT:.0f} % forecast for most of this block")
+        vn = verdict_note(ex)
+        if vn:
+            notes.insert(0, vn)                        # the Notes column leads with the verdict (1.4.0)
         b.notes = notes
         b.cautions = list(dict.fromkeys(cautions))
         return b
+
+
+def flip_start_note(kind: str, hhmm: str) -> str:
+    """The note of a block that starts just before its meridian and lets the mount flip (1.4.0, by type): a
+    transit's pre-flip frames are kept (SHOBS-P fits the flip step); a variable's or campaign's carry no weight in the
+    night mean."""
+    if kind == "transit":
+        return "Start before the meridian and let it flip. Pre-flip frames are kept; SHOBS-P fits the flip step."
+    return f"Start before the meridian and let it flip (~{hhmm}). Pre-flip frames carry no weight in the night mean."
 
 
 FLIP_AT_START_NOTE = "Flips at the start (not run wholly before its meridian) so another target fits tonight"

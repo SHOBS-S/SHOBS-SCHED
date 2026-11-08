@@ -73,6 +73,12 @@ def fmt_exposure(s: float | None) -> str:
     return f"{float(s):g} s"
 
 
+def exposure_text(b) -> str:
+    """The Exposure column: '120 s (S/N)' when the exposure was chosen by S/N (Best precision, 1.4.0), else '60 s'."""
+    text = fmt_exposure(b.exposure_s)
+    return text + " (S/N)" if text != "—" and getattr(b, "exposure_how", "") == "precision" else text
+
+
 def fmt_frames(frames: int | None, in_transit: int | None = None) -> str:
     """'~240 (~135 in transit)' or '~240'; '—' for None."""
     if frames is None:
@@ -123,7 +129,8 @@ def table_rows(night, site: Site, targets_by_id: dict | None = None) -> list[dic
     block's own ra/dec if it has them, else "—"), mode "Transit" (the type; not a column), alt "52–72°" (low–high), meridian "22:44", exposure "60 s", frames
     "~240 (~135 in transit)", notes (notes then cautions, joined with "; "). Extra keys for the app: alt_x
     "62° (X 1.13)" (at best), start/end (JD), mode_code (V/T/D), kind, status, status_label, locked, set_by_user,
-    fixed, cautions (list), exposure_is_estimate, target_id."""
+    fixed, cautions (list), exposure_is_estimate (never for an exposure by S/N), target_id, verdict ("Detectable",
+    "Marginal", "Out of reach", "Marginal?" or "": the plan card shows it under the exposure)."""
     n = _night(night)
     tz = site.tz
     rows = []
@@ -139,14 +146,15 @@ def table_rows(night, site: Site, targets_by_id: dict | None = None) -> list[dic
             "mode": TYPE_NAMES[block_type_code(b)],  # the target's type (not shown in the table; 1.1.0)
             "alt": _alt_range(b),
             "meridian": _hhmm(b.meridian, tz),
-            "exposure": fmt_exposure(b.exposure_s),
+            "exposure": exposure_text(b),
             "frames": fmt_frames(b.frames, b.frames_in_transit if b.kind == "transit" else None),
             "notes": "; ".join(notes + cautions),
             "alt_x": _alt_best(b),
             "start": b.start, "end": b.end, "mode_code": block_type_code(b), "kind": b.kind, "status": b.status,
             "status_label": STATUS_LABELS.get(b.status, b.status), "locked": b.locked,
             "set_by_user": b.set_by_user, "fixed": b.fixed, "cautions": cautions,
-            "exposure_is_estimate": b.exposure_is_estimate, "target_id": b.target_id,
+            "exposure_is_estimate": b.exposure_is_estimate and b.exposure_how != "precision",
+            "target_id": b.target_id, "verdict": b.verdict or "",
         })
     return rows
 
@@ -610,6 +618,7 @@ td.mer, td.exp { white-space: nowrap; }
 td.mer { font-size: 13pt; font-weight: 700; }
 td.notes { font-size: 10pt; }
 .status { font-size: 9pt; font-weight: 700; }
+.verdict { font-size: 9pt; font-weight: 700; }
 .lists { display: flex; gap: 14pt; flex-wrap: wrap; }
 .list { margin: 2pt 0; font-size: 10pt; flex: 1 1 30%; min-width: 50mm; }
 .list h3 { font-size: 11pt; margin: 4pt 0 1pt; }
@@ -672,6 +681,8 @@ def plan_card_html(nights, site: Site, settings_dict: dict | None = None, weathe
                 status = "" if r["status"] == "planned" else f' <span class="status">[{e(r["status_label"])}]</span>'
                 lock = " (locked)" if r["locked"] else (" (set by you)" if r["set_by_user"] else "")
                 exp = e(r["exposure"]) + (" est." if r["exposure_is_estimate"] and r["exposure"] != "—" else "")
+                if r.get("verdict"):
+                    exp += f'<br><span class="verdict">{e(r["verdict"])}</span>'
                 out.append(
                     "<tr>"
                     f'<td class="time">{e(r["time"])}</td>'
@@ -729,7 +740,8 @@ def plan_card_text(nights, site: Site, settings_dict: dict | None = None, weathe
             est = " est." if r["exposure_is_estimate"] and r["exposure"] != "—" else ""
             lines.append(f"{'':13} {r['radec']} · alt {r['alt']}, best {r['alt_x']} · "
                          f"meridian {r['meridian']}")
-            lines.append(f"{'':13} exposure {r['exposure']}{est} · frames {r['frames']}")
+            verdict = f" · {r['verdict']}" if r.get("verdict") else ""
+            lines.append(f"{'':13} exposure {r['exposure']}{est}{verdict} · frames {r['frames']}")
             if r["notes"]:
                 for part in _wrap(r["notes"], width - 14):
                     lines.append(f"{'':13} {part}")

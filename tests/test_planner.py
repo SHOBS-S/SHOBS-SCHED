@@ -153,7 +153,8 @@ class NightBasics(unittest.TestCase):
         self.assertAlmostEqual((b.meridian - b.start) * 1440, 12, delta=1.5)
         self.assertTrue(b.flip_in_block)
         self.assertIn("Start before the meridian and let it flip (~21:0", " ".join(b.notes))
-        self.assertTrue(any("drop the pre-flip frames" in n for n in b.notes))
+        self.assertTrue(any("Pre-flip frames carry no weight in the night mean." in n for n in b.notes))
+        self.assertFalse(any("drop the pre-flip frames" in n for n in b.notes))     # 1.4.0 wording
 
     def test_never_start_within_an_hour_after_meridian(self):
         # meridian 20:00 (before dark): starting before it is impossible, so the start waits until 21:00
@@ -170,7 +171,8 @@ class NightBasics(unittest.TestCase):
         b = p.blocks_obj()[0]
         self.assertFalse(b.flip_in_block)
         self.assertTrue(any("inside your tracking margin; stop by" in n for n in b.notes), b.notes)
-        self.assertIn("Ingress", b.notes[0])
+        self.assertIn("Ingress", b.notes[1])                     # after the verdict (1.4.0)
+        self.assertTrue(b.notes[0].startswith(("Detectable", "Marginal", "Out of reach")), b.notes[0])
         self.assertIsNotNone(b.frames_in_transit)
         self.assertIsNotNone(b.tc_sigma_min)
 
@@ -255,7 +257,7 @@ class NightBasics(unittest.TestCase):
                              "any_time": False, "event_halfwidth_min": 60, "mag_max": 11, "mag_min": 11.8})
         b = self.build([t]).blocks_obj()[0]
         self.assertTrue(b.fixed)
-        self.assertIn("Minimum at 23:30", b.notes[0])
+        self.assertIn("Minimum at 23:30", " ".join(b.notes))
         self.assertLessEqual(b.start, mer - 30 * MIN)
         self.assertGreaterEqual(b.end, mer + 30 * MIN)
 
@@ -452,7 +454,9 @@ class ReviewFixes(unittest.TestCase):
         t = _transit_at("Close b", ra, 45.0, self.jd(0, 0))
         b = planner.build_night(self.d, self.site, self.optics, [t], {}).blocks_obj()[0]
         self.assertAlmostEqual((b.meridian - b.start) * 1440, 12, delta=1.5)
-        self.assertIn("(after the flip)", b.notes[1])
+        self.assertIn("(after the flip", b.notes[2])            # verdict, ingress, baseline
+        self.assertTrue(any(n == "Start before the meridian and let it flip. Pre-flip frames are kept; SHOBS-P "
+                                 "fits the flip step." for n in b.notes), b.notes)
 
     def test_tracking_margin_with_meridian_in_transit(self):
         site = Site.from_dict(self.site.to_dict())
