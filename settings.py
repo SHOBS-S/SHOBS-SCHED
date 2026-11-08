@@ -19,7 +19,7 @@ from models import Optics, Schedule, Site, Target
 
 APP_NAME = "SHOBS-SCHED"
 APP_TITLE = "Shiloh Hill Observatory – Photometry Scheduler (SHOBS-SCHED)"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 
 def home() -> str:
@@ -103,6 +103,18 @@ DEFAULT_OPTIONS = {
     "fwhm_arcsec": 3.0,                # typical seeing FWHM for the cold-start estimate
     "defocus_fwhm_factor": 1.5,        # a defocused target's stars are this many times wider (peak estimate)
     "list_caps_25": True,              # the 12 → 25 cap migration is done (new installs never migrate)
+    # exposure by S/N (1.4.0, issue #4; instrument.py, snr.py): the SHOBS-FLUX system profile to read ("auto" =
+    # the one matching the telescope and camera, "none", or a profile id) and Setup's own "Photometry noise"
+    # values (None = from FLUX, else a rough estimate)
+    "snr_profile": "auto",
+    "snr_zp": None,                    # zero point of the main band, mag for 1 e⁻/s at airmass 1
+    "snr_k": None,                     # extinction, mag per airmass
+    "snr_sky": None,                   # dark-sky brightness, mag/arcsec²
+    "snr_fwhm": None,                  # seeing FWHM in focus, arcsec
+    "snr_read_noise": None,            # e⁻
+    "snr_dark": None,                  # e⁻ per pixel per second
+    "snr_cy": None,                    # Young's scintillation C_Y
+    "suggest_hide_out_of_reach": False,   # Find suggested transits: leave out those whose S/N verdict is Out of reach
 }
 
 

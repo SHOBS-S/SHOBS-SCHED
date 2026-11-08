@@ -1276,7 +1276,7 @@ def priority_note(p: dict) -> str:
 
 
 def suggest_transits(site, optics, options, nights: list, exclude_names=frozenset(), catalog: list | None = None,
-                     progress=None, refine: bool = False) -> list[Target]:
+                     progress=None, refine: bool = False, stats: dict | None = None) -> list[Target]:
     """Other good transits in the given nights, in John's order (thresholds from options):
       1. FULL transit: ingress − suggest_baseline_min … egress + suggest_baseline_min above every limit (sky.up_mask);
          the transit itself (ingress…egress) inside the planning darkness (site.sun_alt); the baselines may run
@@ -1291,7 +1291,10 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     Each planet once (its best night); at most suggest_max. catalog = load_transit_catalog()'s rows (loaded when
     None). progress(i, n) is called per planet when given. refine=True: the shortlist (2 × suggest_max) is checked
     again with each planet's most precise ephemeris (precise_planet) before the final ranking, so a stale composite
-    ephemeris neither offers a transit that is not there nor hides one that is."""
+    ephemeris neither offers a transit that is not there nor hides one that is.
+    Each suggestion carries the S/N verdict (planner.exposure_plan, Best precision, at that night's airmass and Moon)
+    in suggest_info["verdict"]; with options["suggest_hide_out_of_reach"] those Out of reach are skipped (the next
+    ones fill the list) and stats["hidden_out_of_reach"] counts them (1.4.0)."""
     o = dict(settings.DEFAULT_OPTIONS)
     o.update(options or {})
     if catalog is None:
@@ -1360,7 +1363,7 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
             score = snr * bonus
             k = _key_name(p["name"])
             if k not in best or score > best[k][0]:
-                best[k] = (score, p, ev, night[0], sig, pen, snr)
+                best[k] = (score, p, ev, night[0], sig, pen, snr, x)
             if k not in first or ev["t1"] < first[k][0]:
                 first[k] = (ev["t1"], ev["t4"])           # the soonest good transit: the page lists by it
 
@@ -1406,9 +1409,21 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
                 p = dict(p, period=pl["period"], period_err=pl.get("period_err"), t0=pl["t0"],
                          t0_err=pl.get("t0_err"), reference=pl.get("reference") or "")
             score_planet(p, best)                    # a transit gone with the better ephemeris drops out here
-    ranked = sorted(best.values(), key=lambda b: -b[0])[: int(o["suggest_max"])]
+    # the S/N verdict at that night's airmass and Moon (1.4.0, issue #4); "Hide out of reach" skips those
+    hide = bool(o.get("suggest_hide_out_of_reach"))
+    ranked, hidden = [], 0
+    for entry in sorted(best.values(), key=lambda b: -b[0]):
+        if len(ranked) >= int(o["suggest_max"]):
+            break
+        verdict = _suggest_verdict(entry, site, optics, o)
+        if hide and verdict.get("verdict") == "Out of reach":
+            hidden += 1
+            continue
+        ranked.append(entry + (verdict,))
+    if stats is not None:
+        stats["hidden_out_of_reach"] = hidden
     out = []
-    for score, p, ev, d, sig, pen, snr in ranked:
+    for score, p, ev, d, sig, pen, snr, _x, vd in ranked:
         note = (f"{_night_label(d, site)}: ingress {sky.hhmm(ev['t1'], site.tz)}, egress "
                 f"{sky.hhmm(ev['t4'], site.tz)}, {sky.local_label(site.tz, ev['t1'])}")
         if sig is not None and sig > warn:
@@ -1427,8 +1442,116 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
                           "text": f"{_fmt_day(f1, site)} {sky.hhmm(f1, site.tz)}–{sky.hhmm(f4, site.tz)} (full)"}
         if p.get("priority_short"):
             t.suggest_info["priority"] = p["priority_short"]
+        if vd.get("verdict"):
+            t.suggest_info.update(verdict=vd["verdict"], verdict_reason=vd.get("reason") or "",
+                                  exposure_s=vd.get("exposure_s"))
         out.append(t)
     return out
+
+
+def _suggest_verdict(entry, site, optics, o) -> dict:
+    """exposure_plan's verdict for a suggestion (Best precision at the night's mean airmass and Moon penalty)."""
+    _score, p, _ev, _d, _sig, pen, _snr, x = entry
+    try:
+        import planner
+        t = Target(name=p["name"], kind="transit", mode="T", ra=p["ra"], dec=p["dec"], vmag=p["vmag"],
+                   planet={"name": p["name"], "period": p["period"], "t0": p["t0"], "t14": p["t14"],
+                           "depth": p["depth"]})
+        return planner.exposure_plan(t, optics, o, airmass=x, moon_penalty=pen,
+                                     elevation_m=float(site.elevation_m or 0.0))
+    except Exception as exc:                         # the verdict is extra: a suggestion never fails over it
+        settings.log(f"suggestion verdict for {p.get('name')}: {exc!r}")
+        return {}
+
+
+# ---- comparison stars (the Edit dialog's comp check line, 1.4.0 issue #4) --------------------------------------------
+#
+# SCHED keeps no star catalog of its own, so the comp check asks APASS DR9 (VizieR II/336/apass9: V and B−V for stars
+# of V ~ 7–17) for the stars around the target, only when you press Check comps (off the window's thread, with the
+# busy bar); the answer is kept in the lookup cache, so the line shows again offline. Comps are the field's stars
+# within COMP_DV of the target's V; their colours are compared with the target's own APASS B−V.
+
+APASS_TABLE = '"II/336/apass9"'
+APASS_MAX_AGE_DAYS = 180.0
+COMP_DV = 1.0                 # a comp within this many magnitudes of the target
+COMP_DBV = 0.3                # … and this close in B−V counts as a colour match
+TARGET_MATCH_ARCSEC = 6.0     # the APASS star at the target's place (its own B−V)
+
+
+def comp_radius_arcmin(optics) -> float:
+    """Half the camera's shorter field side (export.fov_arcmin), between 5′ and 30′."""
+    try:
+        import export
+        w, h = export.fov_arcmin(optics)
+        return max(5.0, min(30.0, min(w, h) / 2.0))
+    except Exception:
+        return 12.0
+
+
+def _comp_key(ra: float, dec: float, radius_arcmin: float) -> str:
+    return f"apass:cone:{ra:.4f},{dec:+.4f},{radius_arcmin:.1f}"
+
+
+def _fetch_comps(ra: float, dec: float, radius_arcmin: float, vmax: float):
+    adql = (f'SELECT RAJ2000, DEJ2000, Vmag, "B-V" FROM {APASS_TABLE} WHERE 1=CONTAINS(POINT(\'ICRS\', RAJ2000, '
+            f"DEJ2000), CIRCLE('ICRS', {ra:.6f}, {dec:.6f}, {radius_arcmin / 60.0:.5f})) AND Vmag < {vmax:.2f}")
+    rows = _tap_csv(VIZIER_TAP, adql, nea=False, expect="RAJ2000")
+    out = []
+    for r in rows:
+        v = _f(r.get("Vmag"))
+        a, d = _f(r.get("RAJ2000")), _f(r.get("DEJ2000"))
+        if v is None or a is None or d is None:
+            continue
+        out.append({"ra": a, "dec": d, "v": v, "bv": _f(r.get("B-V"))})
+    return {"rows": out, "radius_arcmin": radius_arcmin}
+
+
+def comp_stars(ra: float, dec: float, radius_arcmin: float, target_v: float | None, refresh: bool = False):
+    """(APASS stars around the target {rows: [{ra, dec, v, bv}], radius_arcmin}, note). LookupError_ when VizieR
+    does not answer and nothing is saved."""
+    vmax = (float(target_v) if target_v is not None else 15.0) + COMP_DV + 1.0
+    key = _comp_key(ra, dec, radius_arcmin)
+    return cached_lookup("VizieR", key, f"APASS stars within {radius_arcmin:.0f}′ of the target", APASS_MAX_AGE_DAYS,
+                         lambda: _fetch_comps(ra, dec, radius_arcmin, vmax), refresh=refresh)
+
+
+def saved_comp_stars(ra, dec, radius_arcmin: float) -> dict | None:
+    """The saved answer of an earlier comp check, or None (never asks the network)."""
+    if ra is None or dec is None:
+        return None
+    data, _age = cache_read("VizieR", _comp_key(float(ra), float(dec), radius_arcmin))
+    return data
+
+
+def comp_check_text(target_v, ra, dec, data: dict | None) -> str:
+    """The comp check line ("Comps: 3 within 1 mag; none within 0.3 in B−V. Expect colour and extinction trends."),
+    or why it could not check."""
+    if target_v is None:
+        return "Comps: not checked (no V magnitude)."
+    if not data:
+        return "Comps: not checked yet. Check comps asks APASS at VizieR (needs the internet)."
+    rows = [r for r in data.get("rows") or [] if r.get("v") is not None]
+    rad = float(data.get("radius_arcmin") or 0)
+    cosd = math.cos(math.radians(float(dec)))
+
+    def sep(r):
+        return math.hypot((r["ra"] - float(ra)) * cosd, r["dec"] - float(dec)) * 3600.0
+    me = [r for r in rows if sep(r) <= TARGET_MATCH_ARCSEC and abs(r["v"] - float(target_v)) < 0.75]
+    own_bv = me[0].get("bv") if me else None
+    others = [r for r in rows if not (me and r is me[0]) and sep(r) > TARGET_MATCH_ARCSEC]
+    near = [r for r in others if abs(r["v"] - float(target_v)) <= COMP_DV]
+    where = f"(APASS, {rad:.0f}′ around the target)"
+    if not near:
+        return (f"Comps: none within {COMP_DV:g} mag of V {float(target_v):.1f} {where}. Fainter or brighter comps "
+                "add noise; expect a noisier ratio.")
+    text = f"Comps: {len(near)} within {COMP_DV:g} mag {where}"
+    if own_bv is None:
+        return text + "; the star's own B−V is not in APASS, so colours are not compared."
+    match = [r for r in near if r.get("bv") is not None and abs(r["bv"] - own_bv) <= COMP_DBV]
+    if match:
+        return text + f"; {len(match)} within {COMP_DBV:g} in B−V (the star's B−V {own_bv:.2f})."
+    return (text + f"; none within {COMP_DBV:g} in B−V (the star's B−V {own_bv:.2f}). Expect colour and extinction "
+            "trends.")
 
 
 # ---- ExoClock and ExoFOP priorities (Find suggested transits, optional; 1.3.0 item 9) -----------------------------

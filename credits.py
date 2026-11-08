@@ -58,6 +58,11 @@ CREDITS = [
          "10.26134/ExoFOP5) website, which is operated by the California Institute of Technology, under contract "
          "with the National Aeronautics and Space Administration under the Exoplanet Exploration Program.\"",
          "https://exofop.ipac.caltech.edu/tess"),
+        ("APASS DR9 (via VizieR)", "The comp check in a target's Edit window (Check comps: stars near the target's "
+         "V and B−V), asked only when you press the button.",
+         "\"This research was made possible through the use of the AAVSO Photometric All-Sky Survey (APASS), funded "
+         "by the Robert Martin Ayers Sciences Fund and NSF AST-1412587.\" Henden, A. A. et al. 2016, VizieR On-line "
+         "Data Catalog II/336.", "https://www.aavso.org/apass"),
         ("Open-Meteo", "Hourly cloud cover, temperature, dew point and wind for each planned night (the weather "
          "strip and the dew onset).",
          "Weather data by Open-Meteo.com, licensed under CC BY 4.0. Zippenfenig, P. 2023, Open-Meteo.com Weather "
@@ -68,10 +73,15 @@ CREDITS = [
          "line by phase, the transit band).",
          "Jensen, E. 2013, \"Tapir: A web interface for transit/eclipse observability\", Astrophysics Source Code "
          "Library, ascl:1306.007 (GPL-3).", "https://github.com/elnjensen/Tapir"),
+        ("SHOBS-FLUX", "The instrument profiles (zero point, extinction, sky, seeing, scintillation, read noise, "
+         "gain, linear limit, overhead) behind the exposure by S/N, read through the shared shobs_profile.py; SCHED "
+         "only reads them and works without them.",
+         "Armbrust, J. W., and Shiloh Hill Observatory, SHOBS-FLUX: Shiloh Hill Observatory instrument "
+         "characterization.", ""),
         ("SHOBS-P", "SCHED's sky arithmetic (Sun, Moon, twilight, altitude, meridian, the most precise ephemeris) "
          "started from SHOBS-P's transit planner; SCHED reads SHOBS-P's settings when SHOBS-P is installed.",
          "Armbrust, J. W., and Shiloh Hill Observatory, SHOBS-P: Shiloh Hill Observatory Photometry, Zenodo, "
-         "doi:10.5281/zenodo.23417064.", "https://github.com/SHOBS-S/SHOBS-P"),
+         "doi:10.5281/zenodo.23417063.", "https://github.com/SHOBS-S/SHOBS-P"),
     ]),
     ("Libraries", [
         ("Python and Tk", "The program and its windows.", "Python Software Foundation.", "https://www.python.org"),
@@ -84,8 +94,14 @@ CREDITS = [
     ("Methods", [
         ("Sun and Moon positions", "Twilight, darkness, Moon rise and set, Moon distance.",
          "The Astronomical Almanac's low-precision formulas (Sun ~0.01°, Moon ~0.3°).", ""),
-        ("Moonlit sky brightness", "The Moon penalty for suggested transits and the exposure estimate.",
+        ("Moonlit sky brightness", "The Moon penalty for suggested transits, the exposure estimate and the S/N.",
          "Krisciunas, K. & Schaefer, B. E. 1991, PASP 103, 1033.", ""),
+        ("Scintillation", "The scintillation part of the noise budget (exposure by S/N).",
+         "Young, A. T. 1967, AJ 72, 747; Osborn, J. et al. 2015, MNRAS 452, 1707 (modified Young approximation, as "
+         "SHOBS-P and SHOBS-FLUX).", ""),
+        ("A Sun-like star's colours", "Carrying a target's V into another band for the S/N (red or blue channel, "
+         "B, R, I, Sloan) when the profile has a zero point there.",
+         "Willmer, C. N. A. 2018, ApJS 236, 47 (the Sun's absolute magnitudes).", ""),
         ("Precession", "J2000 positions to the equator of date for meridian times and the ASIAIR list.",
          "Lieske, J. H. et al. 1977, A&A 58, 1 (IAU 1976 precession).", ""),
         ("Transit timing uncertainty", "The predicted mid-transit uncertainty from the ephemeris errors, and the "

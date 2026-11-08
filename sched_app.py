@@ -1207,6 +1207,7 @@ class SetupPage:
         self.groups.append(self._horizon_group(g))
         self.groups.append(self._weather_group(g))
         self.groups.append(self._suggest_group(g))
+        self.groups.append(self._snr_group(g))
         self._columns = 0
         g.bind("<Configure>", self._layout, add="+")
         self._layout()
@@ -1460,6 +1461,137 @@ class SetupPage:
                            "shoot” lists only the others.")
         return box
 
+    # ---- Photometry noise (exposure by S/N, 1.4.0) ----
+    SNR_AUTO = "Automatic (matches the telescope and camera)"
+    SNR_NONE = "None (use the values below)"
+
+    def _snr_group(self, g):
+        """The SHOBS-FLUX system profile to read and Setup's own noise-model values (instrument.py): a value the
+        profile has measured is shown greyed with "from FLUX" (it wins); an empty field is a rough estimate."""
+        box = self._box(g, "Photometry noise (exposure by S/N)")
+        ttk.Label(box, text="Instrument profile", style="Card.TLabel").grid(row=0, column=0, sticky="w",
+                                                                            pady=px(self.app, 2))
+        self.vars["options.snr_profile"] = tk.StringVar()
+        f = ttk.Frame(box, style="Card.TFrame")
+        f.grid(row=0, column=1, sticky="w", padx=px(self.app, 6), pady=px(self.app, 2))
+        self.snr_box = ttk.Combobox(f, textvariable=self.vars["options.snr_profile"], state="readonly", width=42)
+        self.snr_box.pack(side=tk.LEFT)
+        self.snr_box.bind("<<ComboboxSelected>>", lambda _e: self._snr_show())
+        self.snr_line = ttk.Label(box, text="", style="Card.TLabel", justify=tk.LEFT, wraplength=px(self.app, 420))
+        self.snr_line.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, px(self.app, 4)))
+        ins = mod("instrument")
+        fields = getattr(ins, "SETUP_FIELDS", {}) if ins is not None else {}
+        self.snr_entries: dict = {}
+        self.snr_tags: dict = {}
+        self.snr_flux: set = set()
+        for i, (key, (label, unit, _lo, _hi)) in enumerate(fields.items()):
+            e, _u = self._entry(box, 2 + i, label, f"options.{key}", unit, width=7, tag=False)
+            self.snr_entries[key] = e
+            tag = ttk.Label(e.master, text="", style="Tag.TLabel")
+            tag.pack(side=tk.LEFT, padx=(px(self.app, 6), 0))
+            self.snr_tags[key] = tag
+            self.vars[f"options.{key}"].trace_add("write", lambda *_a, k=key: self._snr_tag(k))
+        self._hint(box, 2 + len(fields), "SHOBS-FLUX measures these from your nights (it never needs SCHED, and SCHED "
+                                         "only reads its profiles). Without a profile, type what you know; empty "
+                                         "fields use rough estimates, and a verdict from an estimated zero point "
+                                         "says at most “Marginal?”.")
+        return box
+
+    def _snr_choice(self) -> str:
+        shown = str(self.vars["options.snr_profile"].get())
+        if shown == self.SNR_NONE:
+            return "none"
+        if shown in ("", self.SNR_AUTO):
+            return "auto"
+        return shown.split("  ", 1)[0]
+
+    def _snr_tag(self, key: str):
+        tag = self.snr_tags.get(key)
+        if tag is None or getattr(self, "_snr_filling", False):
+            return
+        if key in self.snr_flux:
+            text = "from FLUX"
+        elif str(self.vars[f"options.{key}"].get()).strip():
+            text = "set here"
+        else:
+            used = (getattr(self, "_snr_inuse", None) or {}).get(key)
+            text = f"estimate {fmt_num(used, 3)}" if used is not None else "estimate"
+        try:
+            tag.configure(text=text)
+        except tk.TclError:
+            pass
+
+    def _snr_show(self):
+        """Fill the noise fields for the profile chosen now: its measured values greyed (from FLUX), else the
+        values saved here."""
+        ins = mod("instrument")
+        if ins is None:
+            return
+        opts = dict(self.app.options)
+        opts["snr_profile"] = self._snr_choice()
+        optics = self.app.optics
+        saved = self.app.options
+        self._snr_filling = True
+        self.snr_flux = set()
+        try:
+            for key, e in self.snr_entries.items():
+                v, src = ins.setup_value(optics, opts, key)
+                var = self.vars[f"options.{key}"]
+                if src:
+                    self.snr_flux.add(key)
+                    var.set(fmt_num(v, 3))
+                    e.state(["disabled"])
+                else:
+                    e.state(["!disabled"])
+                    mine = settings._num(saved.get(key))
+                    if str(var.get()).strip() == "" or key in getattr(self, "_snr_was_flux", set()):
+                        var.set(fmt_num(mine, 3) if mine is not None else "")
+        finally:
+            self._snr_filling = False
+        self._snr_was_flux = set(self.snr_flux)
+        # the value an empty field stands for (the profile's own estimate, or SCHED's cold-start one)
+        self._snr_inuse = {}
+        try:
+            inp = ins.inputs(optics, dict(opts, **{k: None for k in self.snr_entries}),
+                             float(self.app.site.elevation_m or 0.0))
+        except Exception:
+            inp = None
+        if inp is not None:
+            self._snr_inuse = {"snr_zp": round(inp.zp, 2), "snr_k": inp.k, "snr_sky": inp.sky_mag,
+                               "snr_fwhm": inp.fwhm, "snr_read_noise": inp.read_noise_e, "snr_dark": inp.dark_e_s,
+                               "snr_cy": inp.cy}
+        for key in self.snr_entries:
+            self._snr_tag(key)
+        try:
+            text = ins.resolve_words(optics, opts)
+        except Exception as exc:
+            text = f"⚠ The SHOBS-FLUX profiles could not be read: {exc}"
+        self.snr_line.configure(text=text, style=style.status_style(style.kind_of(text)) if text.startswith(
+            ("✔", "⚠", "✖")) else "Card.TLabel")
+
+    def _snr_load(self, opts: dict):
+        ins = mod("instrument")
+        if ins is None or not hasattr(self, "snr_box"):
+            return
+        try:
+            systems = ins.list_systems()
+        except Exception:
+            systems = []
+        values = [self.SNR_AUTO, self.SNR_NONE] + [f"{pid}  ({label})" for pid, label in systems]
+        choice = str(opts.get("snr_profile") or "auto")
+        shown = {"auto": self.SNR_AUTO, "none": self.SNR_NONE}.get(choice)
+        if shown is None:
+            shown = next((v for v in values if v.split("  ", 1)[0] == choice), choice)
+            if shown not in values:
+                values.append(shown)
+        self.snr_box.configure(values=values)
+        self.vars["options.snr_profile"].set(shown)
+        for key in self.snr_entries:
+            mine = settings._num(opts.get(key))
+            self.vars[f"options.{key}"].set(fmt_num(mine, 3) if mine is not None else "")
+        self._snr_was_flux = set()
+        self._snr_show()
+
     # ---- fill / read ----
     def refresh(self):
         if self.dirty:
@@ -1532,6 +1664,7 @@ class SetupPage:
         hand = opts.get("darks_on_hand") if isinstance(opts.get("darks_on_hand"), list) else []
         v["options.darks_on_hand"].set(", ".join(fmt_num(x) for x in (settings._num(y) for y in hand)
                                                  if x is not None))
+        self._snr_load(opts)
         self._loading = False
         self.fits_pending = {}
         self._units_changed()
@@ -1885,6 +2018,15 @@ class SetupPage:
         if bad:
             errors.append(f"Darks you already have: “{bad[0]}” is not an exposure in seconds (e.g. 60, 120, 180).")
         opts["darks_on_hand"] = sorted(set(on_hand))
+        # Photometry noise (1.4.0): a value shown from the FLUX profile is not the user's: the saved one stays
+        ins = mod("instrument")
+        if ins is not None and hasattr(self, "snr_entries"):
+            opts["snr_profile"] = self._snr_choice()
+            for key, (label, _unit, lo, hi) in ins.SETUP_FIELDS.items():
+                if key in self.snr_flux:
+                    opts[key] = self.app.options.get(key)
+                    continue
+                opts[key] = num(f"options.{key}", label, lo, hi, required=False)
         if errors:
             return None, None, None, errors
         return site, op, opts, []
@@ -2123,15 +2265,16 @@ class TargetsPage:
                 "nights; drag the bar between Transits and Variables to share the room.")
     # (key, heading) per box; Plan always first (John 24 Oct)
     COLS = {
-        "campaign": (("plan", "Plan"), ("name", "Name"), ("vmag", "V"), ("next", "Next useful event"),
-                     ("week", "This week"), ("priority", "Priority"), ("radec", "RA / Dec (J2000)"),
-                     ("source", "Source")),
+        # campaigns show the star's VSX type and period too (kept when a variable becomes a campaign; 1.4.0)
+        "campaign": (("plan", "Plan"), ("name", "Name"), ("vmag", "V"), ("vtype", "Type"), ("period", "Period"),
+                     ("next", "Next useful event"), ("week", "This week"), ("verdict", "Verdict"),
+                     ("priority", "Priority"), ("radec", "RA / Dec (J2000)"), ("source", "Source")),
         "transit": (("plan", "Plan"), ("name", "Name"), ("vmag", "V"), ("period", "Period"), ("night", "Night"),
-                    ("ingress", "Ingress"), ("mid", "Mid"), ("egress", "Egress"), ("priority", "Priority"),
-                    ("radec", "RA / Dec (J2000)"), ("source", "Source")),
+                    ("ingress", "Ingress"), ("mid", "Mid"), ("egress", "Egress"), ("verdict", "Verdict"),
+                    ("priority", "Priority"), ("radec", "RA / Dec (J2000)"), ("source", "Source")),
         "variable": (("plan", "Plan"), ("name", "Name"), ("vmag", "V"), ("vtype", "Type"), ("period", "Period"),
-                     ("night", "Night"), ("event", "Next min / max"), ("priority", "Priority"),
-                     ("radec", "RA / Dec (J2000)"), ("source", "Source")),
+                     ("night", "Night"), ("event", "Next min / max"), ("verdict", "Verdict"),
+                     ("priority", "Priority"), ("radec", "RA / Dec (J2000)"), ("source", "Source")),
     }
     STRETCH = {"campaign": "next", "transit": "source", "variable": "event"}
     FIT = {"name": 260, "next": 420, "source": 320, "event": 300, "night": 260}
@@ -2268,6 +2411,7 @@ class TargetsPage:
 
     def fill(self):
         app = self.app
+        self._verdict_sig = self._verdict_signature()
         when = sky.now_jd()
         today = app.tonight()
         by_group: dict[str, list[Target]] = {k: [] for k, _n in GROUPS}
@@ -2397,14 +2541,53 @@ class TargetsPage:
             pl = t.planet_obj()
             base["period"] = ptext(pl.period) if (ptext and pl) else (f"{pl.period:.5f} d" if pl and pl.period
                                                                       else "—")
-        elif t.kind == "variable":
-            el = t.elements_obj()
-            base["period"] = ptext(el.period) if (ptext and el) else "—"
-            base["vtype"] = (el.vtype if el and el.vtype else "—")
         else:
-            base["week"] = self.progress_text(t, today) if t.goal_per_week else "—"
+            el = t.elements_obj()
+            base["period"] = ptext(el.period) if (ptext and el and el.period) else "—"
+            base["vtype"] = (el.vtype if el and el.vtype else "—")
+            if t.kind == "campaign":
+                base["week"] = self.progress_text(t, today) if t.goal_per_week else "—"
+        base["verdict"] = self.verdict_text(t)
         base.update(cells)
         return tuple(base.get(c, "") for c, _h in self.COLS[group_of(t)])
+
+    def verdict_plan(self, t: Target) -> dict:
+        """planner.exposure_plan for the Verdict column and the details line: a suggestion's own (its night's
+        airmass and Moon), else at the target's best airmass under a dark sky. Cached until the target, Setup or the
+        SHOBS-FLUX profiles change."""
+        info = t.suggest_info if (t.suggested and isinstance(t.suggest_info, dict)) else {}
+        if info.get("verdict") and not t.exposure_s and not t.exposure_mode:
+            return {"verdict": info["verdict"], "reason": info.get("verdict_reason") or "",
+                    "exposure_s": info.get("exposure_s"), "mode": "precision", "night": True}
+        pl = mod("planner")
+        if pl is None or not hasattr(pl, "target_verdict"):
+            return {}
+        app = self.app
+        key = (repr(t.to_dict()), getattr(self, "_verdict_sig", None))
+        cache = self.__dict__.setdefault("_verdict_cache", {})
+        if key not in cache:
+            try:
+                cache[key] = pl.target_verdict(t, app.optics, app.options, app.site)
+            except Exception as exc:
+                settings.log(f"verdict for {t.name}: {exc!r}")
+                cache[key] = {}
+            if len(cache) > 2000:
+                cache.clear()
+        return cache[key]
+
+    def verdict_text(self, t: Target) -> str:
+        return (self.verdict_plan(t) or {}).get("verdict") or "—"
+
+    def _verdict_signature(self):
+        """What a verdict depends on besides the target: Setup's telescope, camera, options, site and the profiles."""
+        s = self.app.settings
+        ins = mod("instrument")
+        try:
+            prof = ins._signature() if ins is not None else ()
+        except Exception:
+            prof = ()
+        return (repr(s.get("optics")), repr(s.get("options")), repr((s.get("site") or {}).get("lat")),
+                repr((s.get("site") or {}).get("elevation_m")), prof)
 
     def detail_text(self, t: Target) -> str:
         """The selected target's extras: transit depth, duration, ephemeris and Tc ±; campaign rules, goal and
@@ -2431,7 +2614,17 @@ class TargetsPage:
             bits.append(rs)
         if t.goal_per_week:
             bits.append(self.progress_text(t, self.app.tonight()))
-        bits.append(f"exposure {fmt_num(t.exposure_s)} s" if t.exposure_s else "exposure: SCHED estimates it")
+        pl_mod = mod("planner")
+        how = pl_mod.exposure_mode(t) if pl_mod is not None and hasattr(pl_mod, "exposure_mode") else ""
+        if t.exposure_s:
+            bits.append(f"exposure {fmt_num(t.exposure_s)} s (yours)")
+        else:
+            bits.append({"precision": "exposure: Best precision (by S/N)",
+                         "safe": "exposure: Longest safe"}.get(how, "exposure: SCHED estimates it"))
+        vp = self.verdict_plan(t)
+        if vp.get("verdict"):
+            when = "on its night" if vp.get("night") else "at its best airmass, dark sky"
+            bits.append(f"{vp['verdict']} ({when}): {vp.get('reason') or ''}".rstrip(": "))
         if t.kind != "transit":
             bits.append(f"block {fmt_num(t.block_min)} min (at least {fmt_num(t.min_block_min)})")
         info = t.suggest_info if (t.suggested and isinstance(t.suggest_info, dict)) else {}
@@ -3008,11 +3201,13 @@ class TargetsPage:
                     catalog, summary, warns = tg.apply_priorities(catalog, opts)
                     prio = (summary, list(warns))
                 kw["catalog"] = catalog
+            stats: dict = {}
             try:
                 found = tg.suggest_transits(site, optics, opts, nights, exclude_names=exclude, progress=progress,
-                                            refine=True, **kw)
+                                            refine=True, stats=stats, **kw)
             except TypeError:
                 found = tg.suggest_transits(site, optics, opts, nights, exclude_names=exclude)
+            self._hidden_out_of_reach = int(stats.get("hidden_out_of_reach") or 0)
             return (found, str(note or ""), prio) if (prio[0] or prio[1]) else (found, str(note or ""))
         app.jobs.run(work, self._found, self.find_ind, "Finding suggested transits", counted=True)
 
@@ -3050,6 +3245,10 @@ class TargetsPage:
         note = str(note or "").strip().rstrip(".")
         # the planet list is refreshed weekly (the timings are not: each suggestion gets the most precise published
         # ephemeris, fetched now); only an Archive that did not answer is a caution (John 24 Oct: "stale?")
+        hidden = int(getattr(self, "_hidden_out_of_reach", 0) or 0)
+        self._hidden_out_of_reach = 0
+        if hidden:
+            text += f" {hidden} out of reach left out (Hide out of reach)."
         summary, warns = prio
         if summary:
             text += f" Used {summary}."
@@ -3165,12 +3364,21 @@ class TransitSearchDialog:
                              "Nights row)", style="Card.TLabel", wraplength=px(app, 380),
                   justify=tk.LEFT).grid(row=2, column=1, sticky="w", padx=px(app, 8), pady=px(app, 3))
         self._priority_rows(body, 3)
+        # the S/N verdict of each suggestion (1.4.0, issue #4): Out of reach ones can be left out
+        self.hide_var = tk.BooleanVar(value=bool(o.get("suggest_hide_out_of_reach")))
+        hf = ttk.Frame(body, style="Card.TFrame")
+        hf.grid(row=6, column=0, columnspan=2, sticky="w", pady=(px(app, 8), 0))
+        ttk.Checkbutton(hf, text="Hide out of reach", variable=self.hide_var, style="Card.TCheckbutton").pack(
+            side=tk.LEFT)
+        ttk.Label(hf, text="(transits whose S/N would be under 5 with your telescope; each suggestion's Verdict "
+                           "shows on the Targets page)", style="Hint.TLabel", wraplength=px(app, 330),
+                  justify=tk.LEFT).pack(side=tk.LEFT, padx=(px(app, 6), 0))
         self.msg_var = tk.StringVar()
         self.msg = ttk.Label(body, textvariable=self.msg_var, style="Card.TLabel", wraplength=px(app, 460),
                              justify=tk.LEFT)
-        self.msg.grid(row=6, column=0, columnspan=2, sticky="w", pady=(px(app, 6), 0))
+        self.msg.grid(row=7, column=0, columnspan=2, sticky="w", pady=(px(app, 6), 0))
         btns = ttk.Frame(body, style="Card.TFrame")
-        btns.grid(row=7, column=0, columnspan=2, sticky="e", pady=(px(app, 10), 0))
+        btns.grid(row=8, column=0, columnspan=2, sticky="e", pady=(px(app, 10), 0))
         ttk.Button(btns, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
         style.green_button(btns, "Search", self.search).pack(side=tk.RIGHT, padx=(0, px(app, 8)))
         _keys(self.win, self.search)
@@ -3190,6 +3398,7 @@ class TransitSearchDialog:
         levels, fmax = self.priority_values()
         self.app.options["suggest_exoclock_levels"] = levels
         self.app.options["suggest_exofop_max"] = fmax
+        self.app.options["suggest_hide_out_of_reach"] = bool(self.hide_var.get())
         if not settings.save_settings(self.app.settings):
             self.app.set_status("⚠ The search settings could not be saved (the settings file is not writable).")
         self.win.destroy()
@@ -3447,8 +3656,9 @@ class EditTargetDialog:
         row("RA (J2000)", "ra", sky.fmt_ra(t.ra, 1) if t.ra is not None else "", "hh:mm:ss", 14)
         row("Dec (J2000)", "dec", sky.fmt_dec(t.dec) if t.dec is not None else "", "±dd:mm:ss", 14)
         row("V magnitude", "vmag", fmt_num(t.vmag, 2), "", 8)
+        head("Exposure")
+        r = self._exposure_section(body, r)
         head("Observing")
-        row("Exposure", "exposure_s", fmt_num(t.exposure_s), "s (empty = SCHED estimates one)", 8)
         row("Seconds between frames\n(full interval, this target)", "cycle_s", fmt_num(t.cycle_s),
             "s (empty = exposure + Setup's per-frame overhead)", 8)
         ttk.Label(body, text="The whole frame-to-frame interval (exposure + download/save) for this target only; it "
@@ -3537,12 +3747,357 @@ class EditTargetDialog:
         _keys(self.win, self._return)
         self.vars["mode"].trace_add("write", self._mode_changed)
         self.vars["kind"].trace_add("write", self._kind_changed)
+        for key in ("vmag", "kind", "depth", "t14"):
+            if key in self.vars:
+                self.vars[key].trace_add("write", lambda *_a: self._readout_later())
+        self.notes.bind("<FocusOut>", lambda _e: self._readout_later(), add="+")
+        self.update_readout()
         self._fit()
         if t.kind != "transit":
             self.lookup_planets()
         first = self.widgets.get("exposure_s")
         if modal and not app.testing:
             _show_modal(app, self.win, first)
+
+    # ---- exposure (1.4.0, GitHub issue #4) ----
+    HOW_CHOICES = (("Best precision", "precision"), ("Longest safe", "safe"), ("My exposure", "own"))
+    PLOT_W, PLOT_H = 400, 150
+    BAR_W = 300
+
+    def _exposure_section(self, body, r: int) -> int:
+        """Exposure: how it is chosen (radio buttons), the band, where the inputs came from, the readout (exposure
+        and peak, precision per 10-min bin, the noise budget, the transit, S/N and the verdict), the precision vs
+        exposure plot (click it to pick an exposure) and the comp check. Returns the next grid row."""
+        app, t = self.app, self.t
+        pl_mod = mod("planner")
+        how = (pl_mod.exposure_mode(t) if pl_mod is not None and hasattr(pl_mod, "exposure_mode")
+               else ("own" if t.exposure_s else ("precision" if t.kind == "transit" else "safe")))
+        self.how_var = tk.StringVar(value=how)
+        f = ttk.Frame(body, style="Card.TFrame")
+        f.grid(row=r, column=0, columnspan=3, sticky="w", pady=px(app, 2))
+        for text, value in self.HOW_CHOICES:
+            ttk.Radiobutton(f, text=text, value=value, variable=self.how_var, style="Card.TRadiobutton").pack(
+                side=tk.LEFT, padx=(0, px(app, 8)))
+        self.vars["exposure_s"] = var = tk.StringVar(value=fmt_num(t.exposure_s))
+        self.loaded["exposure_s"] = var.get().strip()
+        self.widgets["exposure_s"] = ttk.Entry(f, textvariable=var, width=7)
+        self.widgets["exposure_s"].pack(side=tk.LEFT)
+        ttk.Label(f, text="s", style="Hint.TLabel").pack(side=tk.LEFT, padx=(px(app, 4), 0))
+        r += 1
+        ttk.Label(body, text="Best precision: the shortest exposure within 2 % of the best 10-minute precision "
+                             "whose peak stays under your linear-limit aim (the default for transits). Longest "
+                             "safe: 1.3.0's rule, the longest standard exposure under the aim. My exposure: yours.",
+                  style="Hint.TLabel", justify=tk.LEFT, wraplength=px(app, 460)).grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(0, px(app, 4)))
+        r += 1
+        # the band, from what is measured, and where the numbers came from
+        bf = ttk.Frame(body, style="Card.TFrame")
+        bf.grid(row=r, column=0, columnspan=3, sticky="w", pady=px(app, 2))
+        ttk.Label(bf, text="Band", style="Card.TLabel").pack(side=tk.LEFT)
+        ins = mod("instrument")
+        self._bands = list(ins.bands(app.optics, app.options)) if ins is not None else ["TG"]
+        words = [self._band_label(b) for b in self._bands]
+        want = t.snr_band if t.snr_band in self._bands else (ins.main_band(app.optics) if ins else self._bands[0])
+        self.band_var = tk.StringVar(value=self._band_label(want))
+        ttk.Combobox(bf, textvariable=self.band_var, values=words, state="readonly", width=24).pack(
+            side=tk.LEFT, padx=px(app, 6))
+        self.src_tag = ttk.Label(bf, text="", style="Tag.TLabel")
+        self.src_tag.pack(side=tk.LEFT, padx=(px(app, 4), 0))
+        r += 1
+        self.cat_var = tk.StringVar()
+        ttk.Label(body, textvariable=self.cat_var, style="Hint.TLabel", justify=tk.LEFT,
+                  wraplength=px(app, 460)).grid(row=r, column=0, columnspan=3, sticky="w")
+        r += 1
+        # the readout
+        ro = ttk.Frame(body, style="Card.TFrame")
+        ro.grid(row=r, column=0, columnspan=3, sticky="w", pady=(px(app, 4), 0))
+        self.ro_vars = {k: tk.StringVar() for k in ("exposure", "precision", "budget", "event", "where")}
+        ttk.Label(ro, textvariable=self.ro_vars["exposure"], style="Card.TLabel").pack(anchor="w")
+        ttk.Label(ro, textvariable=self.ro_vars["precision"], style="Card.TLabel").pack(anchor="w")
+        self.bar = tk.Canvas(ro, width=px(app, self.BAR_W), height=px(app, 14), background=style.CARD,
+                             highlightthickness=0)
+        self.bar.pack(anchor="w", pady=(px(app, 2), 0))
+        ttk.Label(ro, textvariable=self.ro_vars["budget"], style="Hint.TLabel").pack(anchor="w")
+        ttk.Label(ro, textvariable=self.ro_vars["event"], style="Card.TLabel").pack(anchor="w")
+        vf = ttk.Frame(ro, style="Card.TFrame")
+        vf.pack(anchor="w", pady=(px(app, 2), 0))
+        self.verdict_lbl = ttk.Label(vf, text="", style="VerdictPlain.TLabel")
+        self.verdict_lbl.pack(side=tk.LEFT)
+        self.reason_var = tk.StringVar()
+        ttk.Label(vf, textvariable=self.reason_var, style="Card.TLabel", justify=tk.LEFT,
+                  wraplength=px(app, 360)).pack(side=tk.LEFT, padx=(px(app, 6), 0))
+        ttk.Label(ro, textvariable=self.ro_vars["where"], style="Hint.TLabel", justify=tk.LEFT,
+                  wraplength=px(app, 460)).pack(anchor="w")
+        r += 1
+        self.plot = tk.Canvas(body, width=px(app, self.PLOT_W), height=px(app, self.PLOT_H), background="#ffffff",
+                              highlightthickness=1, highlightbackground=style.LINE, cursor="hand2")
+        self.plot.grid(row=r, column=0, columnspan=3, sticky="w", pady=(px(app, 4), px(app, 2)))
+        self.plot.bind("<Button-1>", self._plot_click)
+        self._plot_pts: list = []
+        r += 1
+        cf = ttk.Frame(body, style="Card.TFrame")
+        cf.grid(row=r, column=0, columnspan=3, sticky="w", pady=px(app, 2))
+        self.comp_var = tk.StringVar()
+        ttk.Label(cf, textvariable=self.comp_var, style="Card.TLabel", justify=tk.LEFT,
+                  wraplength=px(app, 360)).pack(side=tk.LEFT)
+        ttk.Button(cf, text="Check comps", command=self.check_comps).pack(side=tk.LEFT, padx=(px(app, 8), 0))
+        r += 1
+        self.comp_ind = JobIndicator(body)
+        self.comp_ind.grid(row=r, column=0, columnspan=3, sticky="w")
+        r += 1
+        self._show_saved_comps()
+        self.how_var.trace_add("write", lambda *_a: self._readout_later())
+        self.band_var.trace_add("write", lambda *_a: self._readout_later())
+        var.trace_add("write", self._exposure_typed)
+        return r
+
+    def _band_label(self, band: str) -> str:
+        ins = mod("instrument")
+        w = ins.band_words(band) if ins is not None else band
+        return (w[5:] if w.startswith("your ") else w)[:1].upper() + (w[5:] if w.startswith("your ") else w)[1:]
+
+    def band_code(self) -> str:
+        shown = self.band_var.get()
+        for b in self._bands:
+            if self._band_label(b) == shown:
+                return b
+        return self._bands[0] if self._bands else "TG"
+
+    def _exposure_typed(self, *_a):
+        """Typing an exposure chooses My exposure."""
+        if self.vars["exposure_s"].get().strip() and self.how_var.get() != "own":
+            self.how_var.set("own")
+        self._readout_later()
+
+    def _readout_later(self):
+        if getattr(self, "_ro_pending", False):
+            return
+        self._ro_pending = True
+        try:
+            self.win.after_idle(self.update_readout)
+        except tk.TclError:
+            self._ro_pending = False
+
+    def preview_target(self) -> Target:
+        """The target as the form stands (unsaved), for the readout; the opened target when the form does not
+        parse yet."""
+        try:
+            t, err = self.build()
+        except Exception:
+            t, err = None, "?"
+        return t if t is not None and not err else self.t
+
+    def update_readout(self):
+        """Work the exposure plan out again for the form as it stands and show it."""
+        self._ro_pending = False
+        pl_mod = mod("planner")
+        if pl_mod is None or not hasattr(pl_mod, "exposure_plan"):
+            self.ro_vars["exposure"].set(missing("planner"))
+            return
+        app = self.app
+        t = self.preview_target()
+        how = self.how_var.get()
+        own = None
+        if how == "own":
+            try:
+                own = float(self.vars["exposure_s"].get().replace(",", ".")) or None
+            except ValueError:
+                own = None
+        site = app.site
+        x = pl_mod.best_airmass(t, site)
+        try:
+            plan = pl_mod.exposure_plan(t, app.optics, app.options, airmass=x, moon_penalty=0.0,
+                                        elevation_m=float(site.elevation_m or 0.0), band=self.band_code(),
+                                        mode="own" if (how == "own" and own) else (how if how != "own" else None),
+                                        exposure_s=own)
+        except Exception as exc:
+            settings.log(f"exposure readout: {exc!r}\n{traceback.format_exc()}")
+            self.ro_vars["exposure"].set(f"✖ The readout could not be worked out: {exc}")
+            return
+        self.plan = plan
+        self.show_plan(plan, x)
+
+    def show_plan(self, plan: dict, airmass: float):
+        snr_mod = mod("snr")
+        ppt = snr_mod.ppt if snr_mod is not None else (lambda v: f"{v * 1000:.1f} ppt")
+        tag = str(plan.get("tag") or "")
+        self.src_tag.configure(text=tag)
+        self.cat_var.set(str(plan.get("catalog_line") or ""))
+        e = plan.get("exposure_s")
+        mode_word = {"precision": "Best precision", "safe": "Longest safe", "own": "My exposure"}.get(
+            plan.get("mode"), "")
+        line = f"Exposure {fmt_num(e)} s ({mode_word})" if e else "Exposure —"
+        if plan.get("peak_frac") is not None:
+            pk = plan.get("model_peak_adu") or 0
+            line += f" · predicted peak ~{plan['peak_frac'] * 100:.0f} % of the linear limit ({pk:,.0f} ADU)"
+        self.ro_vars["exposure"].set(line)
+        if plan.get("sigma") is not None:
+            self.ro_vars["precision"].set(f"Precision {ppt(plan['sigma'])} per 10-minute bin "
+                                          f"(~{plan.get('frames_per_bin') or 0:.0f} frames a bin; the target star "
+                                          "alone)")
+        else:
+            self.ro_vars["precision"].set("Precision: —")
+        self.draw_budget(plan.get("parts") or {})
+        depth, dur = plan.get("depth"), plan.get("duration_days")
+        if dur and depth:
+            self.ro_vars["event"].set(f"Transit {depth * 100:.2f} % deep, {dur * 24:.1f} h long: "
+                                      f"{plan.get('bins') or 0:.0f} ten-minute bins in transit")
+        elif depth:
+            self.ro_vars["event"].set(f"Range {depth / 0.921:.2f} mag (VSX), against one 10-minute bin")
+        else:
+            self.ro_vars["event"].set("")
+        word = str(plan.get("verdict") or "")
+        snr_v = plan.get("snr")
+        text = (f"S/N {snr_v:.1f}" if snr_v is not None and snr_v < 10 else
+                (f"S/N {snr_v:.0f}" if snr_v is not None else ""))
+        self.verdict_lbl.configure(text=(f"{text}  {word}" if text and word else (word or text or "No verdict")),
+                                   style=style.verdict_style(word))
+        reason = str(plan.get("reason") or "")
+        if word and reason.startswith(("S/N", "over")):
+            reason = reason.split(": ", 1)[1] if ": " in reason and reason.startswith("S/N") else reason
+        self.reason_var.set(reason)
+        rough = " Rough estimate (no measured zero point): the verdict says at most “Marginal?”." if plan.get(
+            "rough") and word else ""
+        self.ro_vars["where"].set(f"Worked out at airmass {airmass:.2f} (its highest from your site) under a dark "
+                                  f"sky; the Schedule uses each night's own airmass and Moon.{rough}")
+        self.draw_plot(plan)
+
+    def draw_budget(self, parts: dict):
+        """The noise budget as a small stacked bar (shares of the variance), words below."""
+        c = self.bar
+        c.delete("all")
+        w, h = px(self.app, self.BAR_W), px(self.app, 14)
+        order = (("photon", "photon"), ("sky", "sky"), ("scint", "scintillation"), ("read", "read + dark"))
+        if not parts:
+            c.create_rectangle(0, 0, w - 1, h - 1, outline=style.LINE)
+            self.ro_vars["budget"].set("Noise budget: —")
+            return
+        x = 0.0
+        for key, _word in order:
+            share = max(0.0, float(parts.get(key) or 0.0))
+            dx = share * (w - 1)
+            if dx > 0.5:
+                c.create_rectangle(x, 0, x + dx, h - 1, fill=style.NOISE_COLORS[key], outline="")
+            x += dx
+        c.create_rectangle(0, 0, w - 1, h - 1, outline=style.LINE)
+        self.ro_vars["budget"].set("Noise budget: " + " · ".join(
+            f"{word} {100 * float(parts.get(key) or 0):.0f} %" for key, word in order))
+
+    def _plot_xy(self, t: float, sigma: float, lo: float, hi: float, ymax: float) -> tuple[float, float]:
+        app = self.app
+        w, h = px(app, self.PLOT_W), px(app, self.PLOT_H)
+        left, right, top, bottom = px(app, 44), px(app, 10), px(app, 10), px(app, 26)
+        fx = (math.log10(t) - math.log10(lo)) / max(1e-9, math.log10(hi) - math.log10(lo))
+        fy = min(1.0, sigma / ymax) if ymax > 0 else 0.0
+        return left + fx * (w - left - right), h - bottom - fy * (h - top - bottom)
+
+    def draw_plot(self, plan: dict):
+        """Precision per 10-min bin against exposure (log), the over-linear and saturated ranges shaded, the chosen
+        exposure marked. Click to pick an exposure."""
+        c = self.plot
+        c.delete("all")
+        app = self.app
+        w, h = px(app, self.PLOT_W), px(app, self.PLOT_H)
+        pts = [p for p in plan.get("curve") or [] if math.isfinite(p.get("sigma") or math.inf)]
+        self._plot_pts = pts
+        if not pts:
+            c.create_text(w / 2, h / 2, text="No curve: " + (plan.get("reason") or "nothing to work from"),
+                          fill=style.HINT, font=style.font(9), width=w - 20)
+            return
+        lo, hi = pts[0]["t"], pts[-1]["t"]
+        ymax = max(p["sigma"] for p in pts) * 1.1
+        left, bottom, top = px(app, 44), h - px(app, 26), px(app, 10)
+        # shaded: over the linear limit, saturated (the peak grows in step with the exposure)
+        p0 = pts[0]
+        per_s = p0["peak"] / p0["t"] if p0["t"] else 0
+        lin, sat = plan.get("linear_adu"), plan.get("sat_adu")
+        for limit, fill, word in ((lin, style.WARN_BG, "over linear"), (sat, "#f3d6d6", "saturated")):
+            if not limit or per_s <= 0:
+                continue
+            t_at = limit / per_s
+            if t_at >= hi:
+                continue
+            x0 = self._plot_xy(max(lo, t_at), 0, lo, hi, ymax)[0]
+            c.create_rectangle(x0, top, w - px(app, 10), bottom, fill=fill, outline="")
+            c.create_text(w - px(app, 12), top + px(app, 2) + (px(app, 12) if word == "saturated" else 0),
+                          text=word, anchor="ne", fill=style.HINT, font=style.font(8))
+        c.create_line(left, top, left, bottom, w - px(app, 10), bottom, fill=style.LINE)
+        for tick in (1, 10, 100):
+            if lo <= tick <= hi:
+                x = self._plot_xy(tick, 0, lo, hi, ymax)[0]
+                c.create_line(x, bottom, x, bottom + 3, fill=style.HINT)
+                c.create_text(x, bottom + 4, text=f"{tick} s", anchor="n", fill=style.HINT, font=style.font(8))
+        for frac in (0.5, 1.0):
+            y = self._plot_xy(lo, ymax / 1.1 * frac, lo, hi, ymax)[1]
+            c.create_text(left - 3, y, text=f"{ymax / 1.1 * frac * 1000:.2g}", anchor="e", fill=style.HINT,
+                          font=style.font(8))
+        c.create_text(left + 4, top, text="precision, ppt per 10 min", anchor="nw", fill=style.HINT,
+                      font=style.font(8))
+        xy = [v for p in pts for v in self._plot_xy(p["t"], p["sigma"], lo, hi, ymax)]
+        if len(xy) >= 4:
+            c.create_line(*xy, fill=style.OK, width=2)
+        for p in pts:
+            x, y = self._plot_xy(p["t"], p["sigma"], lo, hi, ymax)
+            c.create_oval(x - 2, y - 2, x + 2, y + 2, fill=style.OK, outline="")
+        e = plan.get("exposure_s")
+        if e and plan.get("sigma") is not None and lo <= e <= hi * 1.0001:
+            x, y = self._plot_xy(e, plan["sigma"], lo, hi, ymax)
+            c.create_line(x, top, x, bottom, fill=style.GREEN, dash=(3, 2))
+            c.create_oval(x - 5, y - 5, x + 5, y + 5, outline=style.GREEN, width=2)
+            c.create_text(x + 7, y - 7, text=f"{fmt_num(e)} s", anchor="sw", fill=style.GREEN,
+                          font=style.font(8, "bold"))
+
+    def _plot_click(self, event):
+        """Click the curve: the nearest standard exposure becomes My exposure."""
+        pts = self._plot_pts
+        if not pts:
+            return None
+        lo, hi = pts[0]["t"], pts[-1]["t"]
+        ymax = max(p["sigma"] for p in pts) * 1.1
+        best = min(pts, key=lambda p: abs(self._plot_xy(p["t"], p["sigma"], lo, hi, ymax)[0] - event.x))
+        self.vars["exposure_s"].set(fmt_num(best["t"]))
+        self.how_var.set("own")
+        self.update_readout()
+        return best["t"]
+
+    # ---- comparison stars ----
+    def _comp_radius(self) -> float:
+        tg = mod("targets")
+        return tg.comp_radius_arcmin(self.app.optics) if tg is not None else 12.0
+
+    def _show_saved_comps(self):
+        tg = mod("targets")
+        if tg is None or not hasattr(tg, "comp_check_text"):
+            self.comp_var.set("Comps: not checked (targets.py missing).")
+            return
+        t = self.t
+        data = tg.saved_comp_stars(t.ra, t.dec, self._comp_radius()) if t.ra is not None else None
+        self.comp_var.set(tg.comp_check_text(t.vmag, t.ra, t.dec, data))
+
+    def check_comps(self):
+        """Ask APASS at VizieR for the field's stars (in the background, with the dialog's busy bar)."""
+        tg = mod("targets")
+        t = self.preview_target()
+        if tg is None:
+            self.comp_ind.finish(missing("targets"))
+            return
+        if t.ra is None or t.dec is None:
+            self.comp_ind.finish("✖ The target has no position yet (RA and Dec under Target).")
+            return
+        rad = self._comp_radius()
+
+        def done(res, exc):
+            if not self._alive():
+                return
+            if exc is not None:
+                self.comp_ind.finish(f"✖ Comps not checked: {exc}", linger_ms=0)
+                return
+            data, note = res
+            self.comp_var.set(tg.comp_check_text(t.vmag, t.ra, t.dec, data))
+            self.comp_ind.finish(f"⚠ {note[:1].upper() + note[1:]}." if note else "✔ Checked with APASS.",
+                                 linger_ms=0 if note else 6000)
+        self.app.jobs.run(lambda: tg.comp_stars(t.ra, t.dec, rad, t.vmag, refresh=True), done, self.comp_ind,
+                          "Asking APASS (VizieR) for comparison stars")
 
     # ---- size ----
     def _fit(self):
@@ -3908,7 +4463,24 @@ class EditTargetDialog:
                 if not (0 <= t.ra < 360 and -90 <= t.dec <= 90):
                     raise ValueError("RA must be 0–24 h and Dec −90 to +90°.")
             t.vmag = num("vmag", "V magnitude", -2, 25)
-            t.exposure_s = num("exposure_s", "Exposure", 0.001, 3600)
+            how = self.how_var.get() if self.how_var.get() in ("precision", "safe", "own") else "precision"
+            if how == "own":
+                t.exposure_s = num("exposure_s", "My exposure", 0.001, 3600)
+                if t.exposure_s is None:
+                    raise ValueError("My exposure is empty: type your exposure in seconds, or choose Best "
+                                     "precision or Longest safe.")
+                t.exposure_mode = "own"
+            else:
+                t.exposure_s = None
+                pl_mod = mod("planner")
+                by_type = "precision" if new_kind == "transit" else "safe"
+                # the type's own default stays "" (it then follows the type if the target moves group)
+                t.exposure_mode = "" if (how == by_type and not self.t.exposure_mode) else how
+                if pl_mod is None:
+                    t.exposure_mode = how
+            band = self.band_code()
+            ins = mod("instrument")
+            t.snr_band = "" if (ins is None or band == ins.main_band(self.app.optics)) else band
             t.cycle_s = num("cycle_s", "Seconds between frames", 0.001, 7200)
             if t.cycle_s is not None and t.exposure_s and t.cycle_s < t.exposure_s:
                 raise ValueError("Seconds between frames cannot be shorter than the exposure.")
@@ -4834,7 +5406,8 @@ class NightTab:
                 # the card's rows carry no (flip) / (est.) marks: put them back (fix list 15)
                 if b.flip_in_block and b.meridian and "(flip)" not in mine["meridian"]:
                     mine["meridian"] += " (flip)"
-                if b.exposure_s and b.exposure_is_estimate and "(est.)" not in mine["exposure"]:
+                if (b.exposure_s and b.exposure_is_estimate and "(est.)" not in mine["exposure"]
+                        and "(S/N)" not in mine["exposure"]):
                     mine["exposure"] += " (est.)"
             out.append((i, b, mine))
         return out
@@ -5334,7 +5907,11 @@ def own_row(b: Block, site, targets_by_id: dict) -> dict:
         mer += " (flip)"
     if b.exposure_s:
         e = b.exposure_s
-        exp = (f"{e:g} s" if e < 10 else f"{e:.0f} s") + (" (est.)" if b.exposure_is_estimate else "")
+        exp = f"{e:g} s" if e < 10 else f"{e:.0f} s"
+        if getattr(b, "exposure_how", "") == "precision":
+            exp += " (S/N)"                             # chosen by S/N (1.4.0)
+        elif b.exposure_is_estimate:
+            exp += " (est.)"
     else:
         exp = "—"
     frames = f"~{b.frames}" if b.frames else "—"
@@ -5754,7 +6331,19 @@ class ExportPage:
             cell(i, 2, "\n".join(str(r.get("radec", "—")).split(" ", 1)))
             cell(i, 3, f"{r.get('alt', '—')}\n{r.get('alt_x', '—')}")
             cell(i, 4, r.get("meridian", "—"), style.font(11, "bold"))
-            cell(i, 5, exp)
+            verdict = str(r.get("verdict") or "")
+            if verdict:                                  # the verdict word under the exposure, with its colour
+                vbg, vfg = {"VerdictGood.TLabel": (style.VERDICT_GOOD_BG, style.VERDICT_GOOD),
+                            "VerdictMarginal.TLabel": (style.WARN_BG, style.WARN_FG)}.get(
+                    style.verdict_style(verdict), ("#ffffff", style.TEXT))
+                ec = tk.Frame(grid, background="#ffffff")
+                ec.grid(row=i, column=5, sticky="nsew", padx=(1, 0), pady=(1, 1 if i == len(rows) else 0))
+                tk.Label(ec, text=exp, font=style.font(10), background="#ffffff", foreground=style.TEXT, anchor="nw",
+                         justify=tk.LEFT, padx=pad[0], pady=pad[1]).pack(anchor="nw")
+                tk.Label(ec, text=verdict, font=style.font(9, "bold"), background=vbg, foreground=vfg,
+                         padx=pad[0], pady=0).pack(anchor="nw", padx=pad[0], pady=(0, pad[1]))
+            else:
+                cell(i, 5, exp)
             cell(i, 6, r.get("frames", "—"), wrap=ch * 14)
             notes.append(cell(i, 7, r.get("notes", ""), wrap=ch * 46))
 

@@ -7,6 +7,8 @@ Sections:
   2 sky and events against the Oct 19–24 2026 plan (dark times, meridians, transit times)
   3 planner: the five golden nights
   4 weather and export (recorded forecast; CSV; plan card)
+  4b exposure by S/N (1.4.0): the shared shobs_profile.py, an example SHOBS-FLUX profile, the noise model and its
+    verdict, the flip notes, the SHOBS-P DOI
   5 the window (all four pages, a build, the CSV) — needs a display
   6 live services (NASA Exoplanet Archive, SIMBAD and its IDIA mirror, VizieR and its IDIA mirror, AAVSO VSX,
     Open-Meteo, and the ExoClock and ExoFOP priority lists): reported, never a failure
@@ -27,6 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TMP = tempfile.mkdtemp(prefix="shobs_sched_selftest_")
 os.environ["SHOBS_SCHED_HOME"] = TMP
 os.environ["SHOBS_P_SETTINGS"] = os.path.join(TMP, "no_shobs_p.json")
+os.environ["SHOBS_DATA_HOME"] = os.path.join(TMP, "shobs")      # never the computer's own SHOBS-FLUX profiles
 sys.path.insert(0, HERE)
 
 OUT = io.StringIO()
@@ -183,6 +186,45 @@ def s4_weather_export():
     check("plan card HTML", "K2-29 b" in html and "HD 219134" in html)
 
 
+def s4b_snr():
+    import credits
+    import instrument
+    import planner
+    import shobs_profile as sp
+    import snr
+    from models import Optics, Target
+    g = golden()
+    optics = Optics.from_dict(dict(g["optics"], telescope="14in RC"))
+    check(f"shared shobs_profile.py {sp.SHOBS_PROFILE_VERSION}", sp.SHOBS_PROFILE_VERSION == instrument.BUILT_AGAINST
+          and not sp.self_check(), f"built against {instrument.BUILT_AGAINST}")
+    home = os.environ["SHOBS_DATA_HOME"]
+    check("no SHOBS-FLUX profile: rough estimate", instrument.resolve(optics, {}) is None
+          and instrument.inputs(optics, {}, 280).rough and not os.path.exists(home))
+    # the cold-start zero point predicts 1.3.0's peak
+    inp = instrument.inputs(optics, {}, 280)
+    old, new = planner.predict_peak_adu(11.4, 60, optics, {}, 1.2), snr.peak_adu(inp, 11.4, 60, 1.2)
+    check(f"cold start matches 1.3.0's peak ({new:,.0f} vs {old:,.0f} ADU)", abs(new / old - 1) < 0.01)
+    shutil.copytree(os.path.join(HERE, "tests", "fixtures", "shobs_data"), home, dirs_exist_ok=True)
+    instrument._CACHE.clear()
+    res = instrument.resolve(optics, {})
+    check("example SHOBS-FLUX profile found for the 14in RC", bool(res) and res["id"].startswith("14in-rc-2900mm"),
+          res["id"] if res else "none")
+    t = Target.from_dict([x for x in g["targets"] if x["name"] == "TOI-2046 b"][0])
+    t.exposure_s = None
+    p = planner.exposure_plan(t, optics, {}, airmass=1.3, moon_penalty=0.0, elevation_m=280)
+    check(f"TOI-2046 b by S/N: {p['exposure_s']:g} s, {snr.ppt(p['sigma'])} per 10 min, {p['verdict']}",
+          p["mode"] == "precision" and p["verdict"] == "Marginal?" and p["snr"] and p["snr"] > 10, p["reason"])
+    safe = planner.exposure_plan(t, optics, {}, 1.3, 0.0, 280, mode="safe")
+    check("Longest safe is 1.3.0's rule", safe["exposure_s"] == planner.estimate_exposure(t, optics, {}, 1.3)[
+        "exposure_s"])
+    check("flip notes by type", planner.flip_start_note("transit", "22:40").endswith("SHOBS-P fits the flip step.")
+          and "no weight in the night mean" in planner.flip_start_note("variable", "22:40"))
+    check("SHOBS-P cited by its concept DOI", "zenodo.23417063" in credits.credits_text()
+          and "23417064" not in credits.credits_text())
+    shutil.rmtree(home, ignore_errors=True)
+    instrument._CACHE.clear()
+
+
 def s5_window():
     try:
         import tkinter
@@ -259,6 +301,7 @@ def main() -> int:
     section("2. Sky and events vs the Oct 19-24 plan", s2_sky)
     section("3. Planner: the five golden nights", s3_planner)
     section("4. Weather and export", s4_weather_export)
+    section("4b. Exposure by S/N", s4b_snr)
     section("5. Window", s5_window)
     section("6. Live services (information only)", s6_live)
     say("")

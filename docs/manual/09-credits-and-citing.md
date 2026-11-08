@@ -95,7 +95,7 @@ For a reference list in BibTeX, for example:
 
 SHOBS-SCHED has no ASCL entry yet.
 
-SHOBS-P, the sister program, is archived on Zenodo: doi:10.5281/zenodo.23417064.
+SHOBS-P, the sister program, is archived on Zenodo: doi:10.5281/zenodo.23417063.
 
 ## License
 

@@ -48,6 +48,9 @@ BAD = "#b00020"           # ✖
 WARN_FG = "#8a5a00"       # ⚠ (dark amber text on pale yellow: yellow text on white is unreadable)
 WARN_BG = "#fff3c4"
 OK = "#1f5f99"            # ✔ normal: blue text on white
+VERDICT_GOOD = "#1b5e20"   # "Detectable": dark green text on pale green (1.4.0)
+VERDICT_GOOD_BG = "#e3f3e4"
+NOISE_COLORS = {"photon": "#1f5f99", "sky": "#7a8b95", "scint": "#e09a2d", "read": "#8e5aa8"}   # noise budget bar
 BUSY_GREEN = "#4caf50"    # house rule 1 Nov 2026: same green as SHOBS-P's busy bar on the navy status strip
 ICON = {"bad": "✖", "warn": "⚠", "ok": "✔"}
 
@@ -149,6 +152,13 @@ def setup(root) -> ttk.Style:
     st.configure("Bad.TLabel", background=CARD, foreground=BAD)
     st.configure("Warn.TLabel", background=WARN_BG, foreground=WARN_FG)
     st.configure("Ok.TLabel", background=CARD, foreground=OK)
+    # the S/N verdict word (1.4.0): always the word with its colour; Out of reach is plain (not a ⚠)
+    st.configure("VerdictGood.TLabel", background=VERDICT_GOOD_BG, foreground=VERDICT_GOOD, font=font(10, "bold"),
+                 padding=(s(6), s(1)))
+    st.configure("VerdictMarginal.TLabel", background=WARN_BG, foreground=WARN_FG, font=font(10, "bold"),
+                 padding=(s(6), s(1)))
+    st.configure("VerdictPlain.TLabel", background=CARD, foreground=TEXT, font=font(10, "bold"),
+                 padding=(s(6), s(1)))
     # sidebar
     st.configure("Side.TFrame", background=SIDE)
     st.configure("Side.TLabel", background=SIDE, foreground=SIDE_TEXT)
@@ -229,6 +239,17 @@ def _restore(btn):
 
 def status_style(kind: str) -> str:
     return {"bad": "Bad.TLabel", "warn": "Warn.TLabel", "ok": "Ok.TLabel"}.get(kind, "Card.TLabel")
+
+
+def verdict_style(word: str) -> str:
+    """The label style of an S/N verdict word: green for Detectable, yellow for Marginal (and Marginal?), plain
+    otherwise."""
+    w = str(word or "")
+    if w == "Detectable":
+        return "VerdictGood.TLabel"
+    if w.startswith("Marginal"):
+        return "VerdictMarginal.TLabel"
+    return "VerdictPlain.TLabel"
 
 
 def kind_of(text: str) -> str:

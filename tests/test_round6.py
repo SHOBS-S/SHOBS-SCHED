@@ -38,7 +38,7 @@ def ra_on_meridian(site, jd):
 
 class TestVersionAndDoi(unittest.TestCase):
     def test_version_and_user_agents(self):
-        self.assertEqual(settings.APP_VERSION, "1.3.0")
+        self.assertEqual(settings.APP_VERSION, "1.4.0")
         self.assertEqual(T.USER_AGENT, f"SHOBS-SCHED/{settings.APP_VERSION}")
         self.assertEqual(weather.USER_AGENT, f"SHOBS-SCHED/{settings.APP_VERSION}")
         with open(os.path.join(HERE, "selftest.py"), encoding="utf-8") as fh:
@@ -53,7 +53,7 @@ class TestVersionAndDoi(unittest.TestCase):
                                "Photometry Scheduler, version 1.3.0, Zenodo, doi:10.5281/zenodo.23674791")
         with open(os.path.join(HERE, "CITATION.cff"), encoding="utf-8") as fh:
             cff = fh.read()
-        for s in ('title: "SHOBS-SCHED: Shiloh Hill Observatory Photometry Scheduler"', "version: 1.3.0",
+        for s in ('title: "SHOBS-SCHED: Shiloh Hill Observatory Photometry Scheduler"', "version: 1.4.0",
                   "doi: 10.5281/zenodo.23674791", "family-names: Armbrust", "given-names: John William"):
             self.assertIn(s, cff)
         with open(os.path.join(HERE, "README.md"), encoding="utf-8") as fh:
