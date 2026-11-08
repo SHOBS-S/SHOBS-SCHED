@@ -1292,7 +1292,8 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
     None). progress(i, n) is called per planet when given. refine=True: the shortlist (2 × suggest_max) is checked
     again with each planet's most precise ephemeris (precise_planet) before the final ranking, so a stale composite
     ephemeris neither offers a transit that is not there nor hides one that is.
-    Each suggestion carries the S/N verdict (planner.exposure_plan, Best precision, at that night's airmass and Moon)
+    Each suggestion carries the S/N verdict (planner.exposure_plan in the default mode — Best precision once the
+    zero point is measured or typed, else Longest safe — at that night's airmass and Moon)
     in suggest_info["verdict"]; with options["suggest_hide_out_of_reach"] those Out of reach are skipped (the next
     ones fill the list) and stats["hidden_out_of_reach"] counts them; a rough estimate's "Out of reach?" is kept and
     counted in stats["rough_kept"] (1.4.0)."""
@@ -1450,13 +1451,15 @@ def suggest_transits(site, optics, options, nights: list, exclude_names=frozense
             t.suggest_info["priority"] = p["priority_short"]
         if vd.get("verdict"):
             t.suggest_info.update(verdict=vd["verdict"], verdict_reason=vd.get("reason") or "",
-                                  exposure_s=vd.get("exposure_s"))
+                                  exposure_s=vd.get("exposure_s"), exposure_mode=vd.get("mode") or "")
         out.append(t)
     return out
 
 
 def _suggest_verdict(entry, site, optics, o) -> dict:
-    """exposure_plan's verdict for a suggestion (Best precision at the night's mean airmass and Moon penalty)."""
+    """exposure_plan's verdict for a suggestion, in the default mode (planner.default_mode: Best precision once the
+    zero point is measured by SHOBS-FLUX or typed in Setup, else Longest safe), at the night's mean airmass and Moon
+    penalty."""
     _score, p, _ev, _d, _sig, pen, _snr, x = entry
     try:
         import planner

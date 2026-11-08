@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -327,8 +328,11 @@ class ExposurePlan(unittest.TestCase):
             t = Target(name="x", kind="variable", vmag=v, ra=10, dec=40)
             old = planner.estimate_exposure(t, op, {}, 1.3, 0.5)
             new = planner.exposure_plan(t, op, {}, 1.3, 0.5, 280, mode="safe")
-            self.assertEqual((new["exposure_s"], new["peak_adu"], new["note"], new["is_estimate"]),
-                             (old["exposure_s"], old["peak_adu"], old["note"], old["is_estimate"]))
+            # 1.3.0's choice and note; the peak shown is the noise model's (one number with the readout)
+            self.assertEqual((new["exposure_s"], re.sub(r"peak ~[\d,]+(?: ADU|k)", "peak ~N", new["note"]), new["is_estimate"]),
+                             (old["exposure_s"], re.sub(r"peak ~[\d,]+(?: ADU|k)", "peak ~N", old["note"]), old["is_estimate"]))
+            self.assertAlmostEqual(new["peak_adu"], new["model_peak_adu"], delta=1e-6)
+            self.assertAlmostEqual(new["peak_adu"] / old["peak_adu"], 1.0, delta=0.03)   # sky, dark: a little
 
     def test_best_precision_transit(self):
         d = planner.exposure_plan(transit(depth=0.01, t14_h=2.5, v=11.5), optics(), {}, 1.2, 0.0, 280)
@@ -369,14 +373,14 @@ class ExposurePlan(unittest.TestCase):
         t = transit(exposure_s=60)
         p = planner.exposure_plan(t, optics(), {}, 1.2, 0.0, 280)
         self.assertEqual((p["mode"], p["exposure_s"], p["is_estimate"]), ("own", 60.0, False))
-        self.assertEqual(p["note"], planner.estimate_exposure(t, optics(), {}, 1.2)["note"])
+        self.assertEqual(re.sub(r"peak ~[\d,]+(?: ADU|k)", "peak ~N", p["note"]), re.sub(r"peak ~[\d,]+(?: ADU|k)", "peak ~N", planner.estimate_exposure(t, optics(), {}, 1.2)["note"]))
         q = planner.exposure_plan(transit(), optics(), {}, 1.2, 0.0, 280, mode="own", exposure_s=20)
         self.assertEqual(q["exposure_s"], 20.0)
 
     def test_too_bright_saturates_with_the_reason(self):
         p = planner.exposure_plan(transit(v=3.0, exposure_mode="precision"), optics(), {}, 1.2, 0.0, 280)
         self.assertEqual(p["verdict"], "Saturates?")                    # the peak is from the guessed zero point
-        self.assertIn("of your linear limit at 0.75 s (defocus)", p["reason"])
+        self.assertIn("of your linear limit at 0.75 s (defocus", p["reason"])
         self.assertTrue(p["note"].startswith("⚠ estimate: even 0.75 s may saturate"))
 
     def test_no_v_or_no_depth(self):

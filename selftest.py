@@ -204,6 +204,11 @@ def s4b_snr():
     inp = instrument.inputs(optics, {}, 280)
     old, new = planner.predict_peak_adu(11.4, 60, optics, {}, 1.2), snr.peak_adu(inp, 11.4, 60, 1.2)
     check(f"cold start matches 1.3.0's peak ({new:,.0f} vs {old:,.0f} ADU)", abs(new / old - 1) < 0.01)
+    t0 = Target.from_dict([x for x in g["targets"] if x["name"] == "TOI-2046 b"][0])
+    t0.exposure_s = None
+    cs = planner.exposure_plan(t0, optics, {}, 1.3, 0.0, 280, mode="safe")
+    check("cold start: Longest safe is 1.3.0's rule", cs["exposure_s"] == planner.estimate_exposure(
+        t0, optics, {}, 1.3)["exposure_s"])
     shutil.copytree(os.path.join(HERE, "tests", "fixtures", "shobs_data"), home, dirs_exist_ok=True)
     instrument._CACHE.clear()
     res = instrument.resolve(optics, {})
@@ -222,8 +227,8 @@ def s4b_snr():
     m = snr.rebase_moon_penalty(3.0, 21.5, 18.84)
     check(f"the Moon on a measured 18.84 sky adds {m:.2f} mag (not 3)", 0.5 < m < 1.0)
     safe = planner.exposure_plan(t, optics, {}, 1.3, 0.0, 280, mode="safe")
-    check("Longest safe on rough numbers is 1.3.0's rule", safe["exposure_s"] == planner.estimate_exposure(
-        t, optics, {}, 1.3)["exposure_s"])
+    check(f"with a profile, Longest safe ({safe['exposure_s']:g} s) never says Saturates",
+          not safe.get("saturated") and not str(safe["verdict"]).startswith("Saturates"), safe["reason"])
     t.exposure_mode = ""
     typed = planner.exposure_plan(t, optics, {"snr_zp": 21.0}, 1.3, 0.0, 280)
     tsafe = planner.exposure_plan(t, optics, {"snr_zp": 21.0}, 1.3, 0.0, 280, mode="safe")

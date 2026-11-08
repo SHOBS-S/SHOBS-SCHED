@@ -9,6 +9,7 @@ import copy
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -145,7 +146,7 @@ class Verdicts(unittest.TestCase):
         own = planner.exposure_plan(transit(v=8.0), optics(), {}, 1.2, 0.0, 280, mode="own", exposure_s=60)
         self.assertGreater(own["peak_frac"], 1.0)
         self.assertEqual(own["verdict"], "Saturates?")               # cold start: the peak itself is a guess
-        self.assertRegex(own["reason"], r"^peak ~\d+ % of your linear limit at 60 s \(shorten it or defocus\)")
+        self.assertRegex(own["reason"], r"^peak ~\d+ % of your linear limit at 60 s \(shorten it or defocus[;)]")
         self.assertTrue(planner.verdict_note(own).startswith("Saturates? (rough estimate): peak ~"))
         h = Home(self)
         h.measure()
@@ -416,6 +417,11 @@ class AimClamp(unittest.TestCase):
         self.assertNotIn("Saturates", p["verdict"])
 
 
+def _no_peak(note: str) -> str:
+    """A note with its peak number taken out (the number is the noise model's since the writer's finding B)."""
+    return re.sub(r"peak ~[\d,]+(?: ADU|k)", "peak ~N", note)
+
+
 class OnePeakModel(unittest.TestCase):
     """Manual review: with a measured or typed zero point, Longest safe and My exposure's warnings use the noise
     model's peak (the one Saturates uses); on rough numbers they stay 1.3.0's exactly."""
@@ -426,10 +432,12 @@ class OnePeakModel(unittest.TestCase):
             t = Target(name="x", kind="variable", vmag=v, ra=10, dec=40)
             old = planner.estimate_exposure(t, optics(), {}, 1.3, 0.5)
             new = planner.exposure_plan(t, optics(), {}, 1.3, 0.5, 280, mode="safe")
-            self.assertEqual((new["exposure_s"], new["note"]), (old["exposure_s"], old["note"]))
+            # 1.3.0's exposure and note; the peak number in it is the noise model's, as the readout shows it
+            # (the writer's review, finding B)
+            self.assertEqual((new["exposure_s"], _no_peak(new["note"])), (old["exposure_s"], _no_peak(old["note"])))
             own = Target(name="x", kind="variable", vmag=v, ra=10, dec=40, exposure_s=60)
-            self.assertEqual(planner.exposure_plan(own, optics(), {}, 1.3, 0.5, 280)["note"],
-                             planner.estimate_exposure(own, optics(), {}, 1.3, 0.5)["note"])
+            self.assertEqual(_no_peak(planner.exposure_plan(own, optics(), {}, 1.3, 0.5, 280)["note"]),
+                             _no_peak(planner.estimate_exposure(own, optics(), {}, 1.3, 0.5)["note"]))
 
     def test_model_agrees_with_the_verdict(self):
         h = Home(self)

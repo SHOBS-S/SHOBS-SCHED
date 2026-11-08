@@ -2563,7 +2563,9 @@ class TargetsPage:
         if (info.get("verdict") and not t.exposure_s and not t.exposure_mode
                 and info.get("verdict_sig") == getattr(self, "_verdict_sig_text", None)):
             return {"verdict": info["verdict"], "reason": info.get("verdict_reason") or "",
-                    "exposure_s": info.get("exposure_s"), "mode": "precision", "night": True}
+                    "exposure_s": info.get("exposure_s"), "night": True,
+                    # the mode the search worked it out in (the default then; older suggestions: unknown)
+                    "mode": info.get("exposure_mode") or ""}
         pl = mod("planner")
         if pl is None or not hasattr(pl, "target_verdict"):
             return {}
@@ -3979,7 +3981,8 @@ class EditTargetDialog:
         self.exp_lbl.configure(style="Warn.TLabel" if (plan.get("peak_frac") or 0) > 1.0 else "Card.TLabel")
         if plan.get("sigma") is not None:
             self.ro_vars["precision"].set(f"Precision {ppt(plan['sigma'])} per 10-minute bin "
-                                          f"(~{plan.get('frames_per_bin') or 0:.0f} frames a bin; the target star "
+                                          f"(~{plan.get('frames_per_bin') or 0:.0f} "
+                                          f"{'frame' if round(plan.get('frames_per_bin') or 0) == 1 else 'frames'} a bin; the target star "
                                           "alone)")
         else:
             self.ro_vars["precision"].set("Precision: —")

@@ -45,6 +45,7 @@ Times: JD (UTC) inside; the site's zone (site.tz) for every clock time in a note
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
@@ -315,9 +316,10 @@ def frame_cycle_s(target: Target, exposure_s, optics=None) -> tuple[float, str]:
 #                Setup; until then Longest safe — John, 8 Nov 2026): snr.best_exposure over STANDARD_EXPOSURES with the noise
 #                model's own peak (a FLUX profile's zero point, seeing and linear limit when there is one).
 #   "safe"       Longest safe (default for the others, and for transits on rough numbers): the longest standard
-#                exposure whose predicted peak stays under the aim. With a measured or typed zero point the peak is the
-#                noise model's (the same one "Saturates" uses); on rough numbers it is estimate_exposure above,
-#                exactly as in 1.3.0. My exposure's peak warnings follow the same rule.
+#                exposure whose predicted peak stays under the aim. With a SHOBS-FLUX profile or typed values in
+#                use the peak is the noise model's (the same one "Saturates" uses); on the bare cold start the choice
+#                is estimate_exposure above, exactly as in 1.3.0 (guarded against Saturates), with the noise model's
+#                peak shown. My exposure's peak warnings follow the same rule (cold_inputs).
 #   "own"        My exposure: Target.exposure_s (an exposure_s in an older file is this).
 # Whatever chose it, the noise model then gives that exposure's 10-minute precision, the S/N and the verdict
 # (snr.py; the inputs and their sources from instrument.py).
@@ -335,6 +337,19 @@ def measured(optics, options=None) -> bool:
     except Exception:
         return False
     return bool(inp is not None and inp.sources.get("zp") in ("from FLUX", "set here"))
+
+
+def cold_inputs(inp) -> bool:
+    """Are the noise-model inputs SCHED's bare cold start (no SHOBS-FLUX profile in use, nothing typed in Setup's
+    Photometry noise box)? Only then does Longest safe keep 1.3.0's own peak model (estimate_exposure) to choose the
+    exposure; with a profile (even one whose zero point is only FLUX's estimate) or typed values, Longest safe, My
+    exposure's warnings and the Saturates check all use the noise model's peak (review 8 Nov 2026)."""
+    if inp is None:
+        return True
+    src = inp.sources or {}
+    if src.get("profile"):
+        return False
+    return not any(str(v).startswith("set here") for k, v in src.items() if k not in ("all", "profile"))
 
 
 def default_mode(t: Target, is_measured: bool) -> str:
@@ -419,7 +434,9 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     aim = min(float(o.get("target_peak_frac") or 0.8), 0.99)
     pts = S.curve(inp, mag, STANDARD_EXPOSURES, airmass, pen_snr, overhead) if (inp and mag is not None) else []
     out["curve"] = pts
-    model = bool(pts) and not inp.rough             # a measured or typed zero point: one peak model everywhere
+    # one peak model everywhere once a profile or typed values are in use (cold_inputs); on the bare cold start
+    # Longest safe still chooses by 1.3.0's peak, but the peak shown is the noise model's (see below)
+    model = bool(pts) and not cold_inputs(inp)
     lim = inp.linear_adu if inp else None
     dword = f" defocused (stars ~{_defocus_factor(o):g}× wider)" if dfc else ""
     if mode == "own" and model:
@@ -469,6 +486,15 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
             out["mode"] = "safe"                        # nothing to work the S/N from: 1.3.0's rule
         ex = estimate_exposure(Target.from_dict(dict(t.to_dict(), exposure_s=None)), optics, o, airmass,
                                moon_penalty)
+        e = ex["exposure_s"]
+        if pts and not ex["note"].startswith("⚠"):
+            # the guard: 1.3.0's peak and the noise model's differ a little (the sky through the airmass, dark
+            # current); never hand on an exposure the Saturates check flags while a shorter one is under the aim
+            by_t = {p["t"]: p for p in pts}
+            if e in by_t and by_t[e]["peak_frac"] > 1.0:
+                shorter = [x for x in STANDARD_EXPOSURES if x < e and by_t[x]["peak_frac"] <= aim]
+                if shorter:
+                    ex = dict(ex, exposure_s=float(max(shorter)))
         out.update(exposure_s=ex["exposure_s"], peak_adu=ex["peak_adu"], is_estimate=True, note=ex["note"])
     if not inp:
         out["reason"] = ("telescope and camera not set up (aperture, focal length, pixel size)"
@@ -484,6 +510,12 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     pk = S.peak_adu(use, mag, e, airmass, pen_snr)
     out.update(sigma=bp["sigma"], parts=bp["parts"], frames_per_bin=bp["frames"], peak_frac=pk / inp.linear_adu,
                model_peak_adu=pk)
+    if not model:
+        # the bare cold start: the exposure was chosen as 1.3.0 did, but the peak shown everywhere (the note, the
+        # Schedule's cautions, the readout) is the noise model's, so they never disagree
+        out["peak_adu"] = pk
+        note = re.sub(r"peak ~[\d,]+ ADU", f"peak ~{pk:,.0f} ADU", str(out.get("note") or ""))
+        out["note"] = re.sub(r"peak ~\d+k,", f"peak ~{_k(pk)},", note)
     rough = inp.rough
     if t.kind == "transit":
         pl = t.planet_obj()
@@ -501,9 +533,9 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
         missing_why = "no amplitude to judge (VSX range)" if not amp else ""
     out["snr"] = val
     word = S.verdict(val, rough)
-    # in every mode: a saturating exposure is never "Detectable". (Deliberate: on rough numbers Longest safe is 1.3.0's
-    # predict_peak_adu, which dims the sky with the airmass, while snr.sky_rate takes the sky as measured; at an
-    # extreme airmass or Moon a rough Longest-safe pick can therefore read "Saturates?" — rough stays 1.3.0's.)
+    # in every mode: a saturating exposure is never "Detectable". (On the bare cold start Longest safe chooses by
+    # 1.3.0's predict_peak_adu, which dims the sky with the airmass, while snr.sky_rate takes the sky as measured; the
+    # guard above steps such a pick down rather than hand on a "Saturates?", and the peak shown is this one.)
     saturated = pk > inp.linear_adu
     out["saturated"] = saturated
     if saturated:
@@ -516,7 +548,8 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     if not word:
         out["reason"] = missing_why
     elif saturated:
-        out["reason"] = what + est
+        # one bracket: "(shorten it or defocus; rough estimate)"
+        out["reason"] = (what[:-1] + "; rough estimate)") if (rough and what.endswith(")")) else what + est
     elif word.startswith("Out of reach"):
         out["reason"] = (f"S/N ~{val:.1f} (needs {S.MARGINAL_SNR:g}; rough estimate, no measured zero point): {what}"
                          if rough else f"S/N {val:.1f} (needs {S.MARGINAL_SNR:g}): {what}")
@@ -529,8 +562,8 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
 
 
 def verdict_note(plan: dict) -> str:
-    """The Notes column's first line for a block: "Detectable (S/N 27): a 1.00 % dip against 1.1 ppt per 10-min
-    bin, 9 bins in transit" (0.01 / (0.0011 / √9) = 27), "Detectable? (S/N ~62, rough estimate): …", "Out of reach (S/N 3.1, needs 5): …",
+    """The Notes column's first line for a block: "Detectable (S/N 18): a 1.00 % dip against 1.7 ppt per 10-min
+    bin, 9 bins in transit" (0.01 / (0.0017 / √9) ≈ 18), "Detectable? (S/N ~62, rough estimate): …", "Out of reach (S/N 3.1, needs 5): …",
     "Saturates: peak ~1070 % of your linear limit at 60 s (…)"."""
     word = plan.get("verdict") or ""
     if not word:
