@@ -275,7 +275,7 @@ period and Tc; if it has transiting planets, the dialog suggests adding the plan
 This part chooses the target's exposure and shows what that exposure buys you: the precision, the S/N and the
 verdict. Everything in it updates as you change it (or the V magnitude above), before you save.
 
-![The Exposure section of WASP-12 b's Edit dialog, with no SHOBS-FLUX profile: Longest safe chosen; Band "Green channel (TG)" with "estimate (no FLUX profile)"; the readout "Exposure 180 s (Longest safe) · predicted peak ~48 % of the linear limit", "Precision 1.1 ppt per 10-minute bin", the noise budget bar, "Transit 1.37 % deep, 3.0 h long: 18 ten-minute bins in transit", the green "S/N 54  Detectable?" with its reason, and the grey line; the precision vs exposure plot with 180 s circled; the Comps line and Check comps](img/05-edit-exposure.png)
+![The Exposure section of WASP-12 b's Edit dialog, with no SHOBS-FLUX profile: Longest safe chosen; Band "Green channel (TG)" with "estimate (no FLUX profile)"; the readout "Exposure 180 s (Longest safe) · predicted peak ~48 % of the linear limit", "Precision 1.1 ppt per 10-minute bin", the noise budget bar, "Transit 1.37 % deep, 3.0 h long: 18 ten-minute bins in transit", the green "S/N ~54  Detectable?" with its reason, and the grey line; the precision vs exposure plot with 180 s circled; the Comps line and Check comps](img/05-edit-exposure.png)
 
 **How the exposure is chosen.** Three buttons:
 
@@ -291,12 +291,13 @@ What a target gets when you have not chosen:
 
 - **A transit**: **Best precision** once the zero point is known (measured by a SHOBS-FLUX profile, or typed in
   Setup's **Photometry noise** box, chapter 4). Until then, **Longest safe**: rough numbers do not pick exposures.
-  The grey line under the readout then ends *Longest safe until SHOBS-FLUX measures this system (then Best precision
-  is the default; your own choice above always wins).*
+  The grey line under the readout then ends *Longest safe until SHOBS-FLUX measures this system or you type its zero
+  point in Setup (then Best precision is the default; a choice you click above always wins).*
 - **A variable or a campaign**: **Longest safe**.
 
-Your own choice always wins. Click one of the three buttons and save, and that choice is the target's own: it stays,
-even when a SHOBS-FLUX profile later changes the default. A target you never set follows the default.
+Your own choice always wins. Click one of the three buttons (even the one already shown) and save, and that choice
+is the target's own: it stays, even when a SHOBS-FLUX profile later changes the default. The grey hint under the
+buttons says so: *The one you click is kept.* A target you never set follows the default.
 
 **Band.** The drop-down lists the bands SHOBS-SCHED has a zero point for: the bands a SHOBS-FLUX profile measured,
 and always Setup's main band (**Green channel (TG)** on a color camera, **Clear band (CV)** on a mono one). The tag
@@ -316,8 +317,9 @@ SCHED knows only V, a redder or bluer star differs)*).
   scintillation 22 % · read + dark 0 %*. It shows where the noise comes from (see "How the S/N works" below).
 - What there is to measure: *Transit 1.37 % deep, 3.0 h long: 18 ten-minute bins in transit*, or for a variable
   *Range 0.56 mag (VSX; 40 % in flux), against one 10-minute bin*.
-- **The S/N and the verdict**: *S/N 54  Detectable?*, green for Detectable, yellow for Marginal, plain for Out of
-  reach and Saturates, with the reason beside it (*a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in
+- **The S/N and the verdict**: *S/N ~54  Detectable?* (the *~* because the numbers are rough; *S/N 3.1 (needs 5)
+  Out of reach* for one that falls short), green for Detectable, yellow for Marginal, plain for Out of reach and
+  Saturates, with the reason beside it (*a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in
   transit*). When the peak is over your linear limit, the word is **Saturates** (or **Saturates?**) whatever the
   S/N, and the reason says by how much: *peak ~162 % of your linear limit at 600 s (shorten it or defocus)*.
 - The grey line: *Worked out at airmass 1.02 (its highest from your site) under a dark sky; the Schedule uses each
@@ -634,7 +636,7 @@ profile**. WASP-12 b: V 11.57, a 1.37 % deep transit, 3.0 hours long. From latit
 reaches 80° altitude, airmass 1.02.
 
 1. **The inputs** are all rough estimates. The zero point of the green channel comes out at 19.76; the rest are the
-   cold-start values above. Setup's Photometry noise box shows them greyed out as *estimate 19.76*, *estimate 0.2*
+   cold-start values above. Setup's Photometry noise box shows them in its tags: *estimate 19.76*, *estimate 0.2*
    and so on.
 2. **The exposure.** No profile, so the transit is on **Longest safe**: 180 s, the longest standard exposure whose
    predicted peak (~48 % of the linear limit, 15,505 ADU) stays under the 80 % aim. At 300 s the peak would be 81 %.
@@ -647,7 +649,7 @@ reaches 80° altitude, airmass 1.02.
 6. **S/N** = 0.0137 ÷ (0.00108 ÷ √18) ≈ **54**. That is over 10: **Detectable**, and from rough numbers,
    **Detectable?**.
 
-The Edit dialog shows *S/N 54  Detectable?*; the Targets page's details line *Detectable? (at its best airmass, dark
+The Edit dialog shows *S/N ~54  Detectable?*; the Targets page's details line *Detectable? (at its best airmass, dark
 sky): S/N ~54 (rough estimate, no measured zero point): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in
 transit*; and the plan's notes *Detectable? (S/N ~54, rough estimate): a 1.37 % dip against 1.1 ppt per 10-min bin,
 18 bins in transit*.

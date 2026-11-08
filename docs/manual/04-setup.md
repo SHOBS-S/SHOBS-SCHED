@@ -393,8 +393,8 @@ Each field has a tag beside it:
 
 The grey hint under the box says it in short: *SHOBS-FLUX measures these from your nights (it never needs SCHED, and
 SCHED only reads its profiles). Without a profile, type what you know; empty fields use rough estimates, and a
-verdict from an estimated zero point gets a “?” (Detectable?, Marginal?, Out of reach?), and transits stay on
-Longest safe until a profile measures the system.*
+verdict from an estimated zero point gets a “?” (Detectable?, Marginal?, Out of reach?, Saturates?), and transits
+stay on Longest safe until a profile measures the zero point or you type it here.*
 
 What a typed zero point does: it counts like a measured one. The verdicts lose their **?**, and transits whose
 exposure you have not chosen move to **Best precision** (chapter 5). So type one only if you have really measured it
