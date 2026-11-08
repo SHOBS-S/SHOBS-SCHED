@@ -415,7 +415,8 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     pen_snr = (S.rebase_moon_penalty(moon_penalty, float(o.get("dark_sky_v", sky.DARK_SKY_V)), inp.sky_mag)
                if inp else 0.0)
     out["moon_penalty_snr"] = pen_snr
-    aim = float(o.get("target_peak_frac") or 0.8)
+    # the aim as a fraction of the linear limit, never at or over it (a hand-edited settings file)
+    aim = min(float(o.get("target_peak_frac") or 0.8), 0.99)
     pts = S.curve(inp, mag, STANDARD_EXPOSURES, airmass, pen_snr, overhead) if (inp and mag is not None) else []
     out["curve"] = pts
     model = bool(pts) and not inp.rough             # a measured or typed zero point: one peak model everywhere
@@ -500,7 +501,10 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
         missing_why = "no amplitude to judge (VSX range)" if not amp else ""
     out["snr"] = val
     word = S.verdict(val, rough)
-    saturated = pk > inp.linear_adu                   # in every mode: a saturating exposure is never "Detectable"
+    # in every mode: a saturating exposure is never "Detectable". (Deliberate: on rough numbers Longest safe is 1.3.0's
+    # predict_peak_adu, which dims the sky with the airmass, while snr.sky_rate takes the sky as measured; at an
+    # extreme airmass or Moon a rough Longest-safe pick can therefore read "Saturates?" — rough stays 1.3.0's.)
+    saturated = pk > inp.linear_adu
     out["saturated"] = saturated
     if saturated:
         word = S.saturates(rough)

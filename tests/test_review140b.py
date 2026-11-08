@@ -328,6 +328,33 @@ class Window(Base):
         dlg.save()
         self.assertEqual(out[-1].exposure_mode, "safe")        # pinned
 
+    def test_group_change_shows_the_new_default(self):
+        self.golden_home()
+        app = self.open()
+        app.options["snr_zp"] = 21.0                           # a typed zero point: transits default to precision
+        t = next(x for x in app.targets if x.name == "K2-29 b")
+        t.exposure_s = None
+        out = []
+        dlg = self.sa.EditTargetDialog(app, t, on_save=out.append, modal=False)
+        self.assertEqual(dlg.how_var.get(), "precision")
+        dlg.vars["kind"].set("Campaign")                       # untouched: the campaign default shows
+        app.update()
+        self.assertEqual(dlg.how_var.get(), "safe")
+        self.assertFalse(dlg._how_touched, "following the default is not the user's choice")
+        dlg.vars["kind"].set("Transit")
+        app.update()
+        self.assertEqual(dlg.how_var.get(), "precision")
+        dlg.vars["kind"].set("Variable")
+        app.update()
+        dlg.save()
+        self.assertEqual((out[-1].kind, out[-1].exposure_mode), ("variable", ""))
+        # a touched choice stays put through a Group change
+        dlg = self.sa.EditTargetDialog(app, t, on_save=out.append, modal=False)
+        dlg.how_buttons["precision"].invoke()
+        dlg.vars["kind"].set("Campaign")
+        app.update()
+        self.assertEqual(dlg.how_var.get(), "precision")
+
     def test_needs_5_stays_in_the_reason(self):
         self.golden_home()
         app = self.open()
@@ -377,7 +404,16 @@ class ManualTool(unittest.TestCase):
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
         self.assertEqual(m.VERSION, settings.APP_VERSION)
-        self.assertEqual(m.EDITION, "Fourth edition")
+        self.assertEqual(m.EDITION, "Fourth edition")          # read from docs/manual/README.md
+
+
+class AimClamp(unittest.TestCase):
+    def test_hand_edited_aim_never_reaches_the_limit(self):
+        Home(self, copy_fixture=False)
+        p = planner.exposure_plan(transit(exposure_mode="precision"), optics(), {"target_peak_frac": 1.5,
+                                                                                 "snr_zp": 21.0}, 1.2, 0.0, 280)
+        self.assertLessEqual(p["peak_frac"], 0.99 + 1e-9)
+        self.assertNotIn("Saturates", p["verdict"])
 
 
 class OnePeakModel(unittest.TestCase):

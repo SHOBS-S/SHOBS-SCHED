@@ -3814,7 +3814,8 @@ class EditTargetDialog:
         ttk.Label(body, text="Best precision: the shortest exposure within 2 % of the best 10-minute precision "
                              "whose peak stays under your linear-limit aim (the default for transits once a zero "
                              "point is measured by SHOBS-FLUX or typed in Setup). Longest "
-                             "safe: 1.3.0's rule, the longest standard exposure under the aim. My exposure: yours.",
+                             "safe: the longest standard exposure whose predicted peak stays under the aim (1.3.0's "
+                             "rule on rough numbers). My exposure: yours.",
                   style="Hint.TLabel", justify=tk.LEFT, wraplength=px(app, 460)).grid(
             row=r, column=0, columnspan=3, sticky="w", pady=(0, px(app, 4)))
         r += 1
@@ -3894,6 +3895,8 @@ class EditTargetDialog:
         return self._bands[0] if self._bands else "TG"
 
     def _how_clicked(self, redraw: bool = True):
+        if getattr(self, "_syncing_how", False):
+            return                                   # the dialog following the default, not the user
         self._how_touched = True
         if redraw:
             self._readout_later()
@@ -4417,6 +4420,24 @@ class EditTargetDialog:
             self._syncing = False
         self._group_shown()
 
+    def _follow_default(self):
+        """After a Group change, an untouched exposure choice shows the new group's default (what Save will then
+        follow), not the old one."""
+        if getattr(self, "_how_touched", False) or self.how_var.get() == "own" or self.t.exposure_mode in (
+                "precision", "safe", "own") or self.t.exposure_s:
+            return
+        pl_mod = mod("planner")
+        if pl_mod is None or not hasattr(pl_mod, "default_mode"):
+            return
+        _mode, kind = self._group()
+        want = pl_mod.default_mode(Target(kind=kind or self.t.kind), getattr(self, "_measured", False))
+        if self.how_var.get() != want:
+            self._syncing_how = True
+            try:
+                self.how_var.set(want)
+            finally:
+                self._syncing_how = False
+
     def _kind_changed(self, *_a):
         if self._syncing:
             return
@@ -4436,7 +4457,10 @@ class EditTargetDialog:
         return [p["name"] for p in (self.host_info or {}).get("planets") or [] if p.get("usable")]
 
     def _group_shown(self):
-        """The ephemeris rows while the group is Transit, and a word on what moving the target does."""
+        """The ephemeris rows while the group is Transit, and a word on what moving the target does; the exposure
+        choice follows the group's default when untouched."""
+        if hasattr(self, "how_var"):
+            self._follow_default()
         _mode, kind = self._group()
         transit = kind == "transit"
         for w in self.eph_widgets:
@@ -4526,7 +4550,10 @@ class EditTargetDialog:
                 pl_mod = mod("planner")
                 # a button the user touched pins that mode; untouched, the target keeps what it had ("" = follow the
                 # default: Best precision for a transit once a zero point is measured or typed, else Longest safe)
-                t.exposure_mode = how if getattr(self, "_how_touched", False) else (self.t.exposure_mode or "")
+                if getattr(self, "_how_touched", False):
+                    t.exposure_mode = how
+                else:
+                    t.exposure_mode = self.t.exposure_mode if self.t.exposure_mode in ("precision", "safe") else ""
                 if pl_mod is None:
                     t.exposure_mode = how
             band = self.band_code()

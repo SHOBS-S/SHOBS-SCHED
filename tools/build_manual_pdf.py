@@ -18,7 +18,9 @@ MAN = ROOT / "docs" / "manual"
 # 1.4.0: the version comes from the app (settings.APP_VERSION; it was typed here and went stale, as in SHOBS-P)
 VERSION = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', (ROOT / "settings.py").read_text(encoding="utf-8"),
                     re.M).group(1)
-EDITION = "Fourth edition"
+# the edition from the manual's contents page ("> Fourth edition, November 2026. …"), not typed twice
+_ed = re.search(r"^>\s*([A-Z][a-z]+ edition)\b", (MAN / "README.md").read_text(encoding="utf-8"), re.M)
+EDITION = _ed.group(1) if _ed else "Edition for version %s" % VERSION
 TITLE = "SHOBS-SCHED User's Manual"
 
 CSS = """

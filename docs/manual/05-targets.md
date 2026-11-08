@@ -296,8 +296,8 @@ exposure is chosen, and shows what that exposure buys you: the precision, the S/
 
 The gray line under the buttons says the same in short: *Best precision: the shortest exposure within 2 % of the best
 10-minute precision whose peak stays under your linear-limit aim (the default for transits once a zero point is
-measured by SHOBS-FLUX or typed in Setup). Longest safe: 1.3.0's rule, the longest standard exposure under the aim.
-My exposure: yours.*
+measured by SHOBS-FLUX or typed in Setup). Longest safe: the longest standard exposure whose predicted peak stays
+under the aim (1.3.0's rule on rough numbers). My exposure: yours.*
 
 **The default.** When you have not chosen, a target gets:
 
@@ -310,7 +310,8 @@ My exposure: yours.*
 
 Your own choice always wins. Click a button and **Save**, and the target keeps that way whatever Setup says later —
 even a click on the button that is already chosen pins it (so you can keep a transit on **Longest safe** for good).
-If you do not touch the buttons, the target keeps following the default: a transit on Longest safe today moves to
+If you do not touch the buttons, the target keeps following the default (change its **Group** and the buttons show
+the new group's default at once): a transit on Longest safe today moves to
 Best precision by itself once its zero point is measured or typed.
 
 **Band.** The band the S/N is worked out for. The drop-down lists only bands SHOBS-SCHED has a zero point for: the
