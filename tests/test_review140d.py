@@ -1,6 +1,6 @@
 """SHOBS-SCHED 1.4.0, John's first look (8 Nov 2026): the Edit dialog's precision plot shaded 'over linear' and
 'saturated' from peak/t at the shortest exposure, which folded the camera's bias into the slope (TOI-6130 b: 502 ADU
-bias, 'saturated' drawn from ~83 s against a true ~440 s). The shading now reads the crossing off the curve's own raw
+bias, 'saturated' drawn from ~83 s against a true ~546 s). The shading now reads the crossing off the curve's own raw
 peaks."""
 from __future__ import annotations
 
@@ -52,3 +52,43 @@ class ExposureAtPeak(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- the window: Save refreshes the Photometry noise box's estimate tags --------------------------------------------
+
+import tempfile  # noqa: E402
+
+import instrument  # noqa: E402
+
+from tests.test_app import HAVE_TK, Base  # noqa: E402
+
+
+@unittest.skipUnless(HAVE_TK, "needs Tk")
+class SaveRefreshesEstimates(Base):
+    """1.4.0 first-start reshoot: after typing the telescope and camera on a fresh Setup and pressing Save, the
+    estimate tags kept saying a bare 'estimate' until the page was reloaded; they now show the values in use."""
+    use_fakes = False
+
+    def test_tags_show_values_after_save(self):
+        d = tempfile.mkdtemp(prefix="sched_r140d_shobs_")     # an empty SHOBS data folder: no FLUX profile
+        old = os.environ.get("SHOBS_DATA_HOME")
+        os.environ["SHOBS_DATA_HOME"] = d
+        self.addCleanup(lambda: os.environ.__setitem__("SHOBS_DATA_HOME", old) if old is not None
+                        else os.environ.pop("SHOBS_DATA_HOME", None))
+        instrument._CACHE.clear()
+        app = self.open()
+        setup = app.pages[0]
+        app.update()
+        for key, val in (("site.name", "Example Observatory"), ("site.lat", "40"), ("site.lon", "-100"),
+                         ("site.elevation_m", "750"), ("optics.telescope", "Example 10in"),
+                         ("optics.aperture_mm", "250"), ("optics.focal_mm", "1600"), ("optics.pixel_um", "3.76"),
+                         ("optics.camera", "ZWO ASI533MC Pro"), ("optics.gain", "100"), ("optics.e_per_adu", "1"),
+                         ("optics.full_well_e", "50000"), ("optics.linear_limit_adu", "50000")):
+            setup.vars[key].set(val)
+        app.update()
+        self.assertTrue(setup.save())
+        app.update()
+        zp = setup.snr_tags["snr_zp"].cget("text")
+        self.assertRegex(zp, r"^estimate \d")
+        for key in setup.snr_entries:
+            self.assertTrue(setup.snr_tags[key].cget("text").startswith("estimate"), key)

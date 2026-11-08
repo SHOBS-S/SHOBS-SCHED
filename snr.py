@@ -185,10 +185,10 @@ def curve(inp: Inputs, mag: float, exposures, airmass: float = 1.0, moon_penalty
 
 
 def exposure_at_peak(points: list[dict], limit_adu: float) -> float | None:
-    """The exposure (s) at which the curve's raw peak reaches limit_adu, read off the curve's own peaks (raw ADU with
+    """points as curve() returns them. The exposure (s) at which the curve's raw peak reaches limit_adu, read off the curve's own peaks (raw ADU with
     the bias, the same units as the limits; the peak is a straight line in t, so linear interpolation is exact).
     The shortest exposure when even that is at or over the limit; None when the curve never reaches it."""
-    pts = sorted((p for p in points if math.isfinite(p.get("peak") or math.nan)), key=lambda p: p["t"])
+    pts = sorted((p for p in points if p.get("peak") is not None and math.isfinite(p["peak"])), key=lambda p: p["t"])
     if not pts or not limit_adu or limit_adu <= 0:
         return None
     if pts[0]["peak"] >= limit_adu:

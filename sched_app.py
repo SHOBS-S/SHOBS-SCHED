@@ -2109,6 +2109,8 @@ class SetupPage:
             set_msg(self.fits_var, self.fits_msg, "\n".join(lines))
         if changed:
             self.app.settings_changed()
+        if hasattr(self, "snr_box"):
+            self._snr_show()                      # the estimate tags follow the telescope and camera just saved
         self._snapshot = self.form_state()
         set_msg(self.msg_var, self.msg, "✔ Saved.")
         self.app.set_status("✔ Setup saved.")

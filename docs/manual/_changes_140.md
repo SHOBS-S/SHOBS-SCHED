@@ -96,3 +96,5 @@ Exact new wording in *italics*.
   like the limits) reaches each limit (`snr.exposure_at_peak`). It used peak/t at the shortest exposure, which put the
   whole bias into the slope: TOI-6130 b (502 ADU bias) showed "saturated" from ~83 s against a true ~546 s. Test:
   tests/test_review140d.py.
+- Setup → Save now refreshes the Photometry noise box: its *estimate …* tags show the values in use for the telescope and
+  camera just saved (they said a bare *estimate* until the page was reloaded). Test: tests/test_review140d.py.
