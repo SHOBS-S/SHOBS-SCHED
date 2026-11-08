@@ -12,7 +12,8 @@ and the camera's linear limit, defocus, and campaign goals. It is not meant for 
 integration per filter on a nebula or galaxy); general imaging planners do that job better.
 
 It works on its own. If [SHOBS-P](https://github.com/SHOBS-S/SHOBS-P) is installed on the same computer,
-SHOBS-SCHED reads its site and equipment settings so you type them once (it never changes SHOBS-P's files).
+SHOBS-SCHED reads its site and equipment settings so you type them once (it never changes SHOBS-P's files). A
+SHOBS-FLUX instrument profile, if there is one, makes the exposure-by-S/N verdict a measured one (it is read only).
 
 ## What it does
 
@@ -53,6 +54,29 @@ All times are shown on your **site's clock**, whatever time zone the computer is
 Setup can also **read your camera from a FITS frame** (camera, gain, e⁻/ADU, pixel size, focal length, binning,
 camera angle), and every Setup value is tagged with where it came from: *from SHOBS-P*, *from FITS* or *set here*.
 
+## New in 1.4.0
+
+* **Exposure by S/N, with a verdict** (GitHub issue #4). A target's **Edit…** window has an **Exposure** section:
+  *Best precision* (the default for transits: the shortest standard exposure within 2 % of the best 10-minute
+  precision whose peak stays under your linear-limit aim), *Longest safe* (1.3.0's rule, unchanged) or *My
+  exposure*. It shows the band, which magnitude was used and how, where the numbers came from (*from FLUX*, *set
+  here* or *estimate*), the predicted peak, the precision per 10-minute bin, the noise budget (photon, sky,
+  scintillation, read) as a small bar, the transit's bins and the S/N with a verdict word: **Detectable** (S/N 10 or
+  more, green), **Marginal** (5–10, yellow) or **Out of reach** (plain, with the reason). A small plot of precision
+  against exposure (the over-linear and saturated ranges shaded) picks another exposure with a click, and **Check
+  comps** asks APASS for comparison stars near the target's V and colour.
+* The verdict shows on the **Targets** lists (a Verdict column), in **Find suggested transits** (with **Hide out of
+  reach**), on the **Schedule** (Exposure "120 s (S/N)", Notes lead with the verdict) and on the **OBSPlan** card.
+* **Works without SHOBS-FLUX.** With a SHOBS-FLUX instrument profile for your telescope and camera (found by name,
+  camera and focal length within 3 %, or chosen in Setup), its measured zero point, extinction, sky, seeing,
+  scintillation, read noise, gain, linear limit and overhead are used; otherwise the values you type in Setup's
+  new **Photometry noise** box; otherwise rough estimates, and then the verdict says at most "Marginal?".
+  SCHED reads the profiles through `shobs_profile.py`, the file the SHOBS apps share, and never writes them.
+* Flip notes by type: a variable's or campaign's says *Pre-flip frames carry no weight in the night mean*, a
+  transit's *Pre-flip frames are kept; SHOBS-P fits the flip step*.
+* The **Campaigns** box shows the star's VSX **Type** and **Period** (kept when a variable becomes a campaign).
+* SHOBS-P is cited by its concept DOI, 10.5281/zenodo.23417063.
+
 ## Install (Windows)
 
 1. Unzip anywhere (for example `C:\Astro\shobs_sched`).
@@ -88,8 +112,9 @@ troubleshooting and a glossary. A PDF of the whole manual can be built with `pyt
 ## Data sources
 
 NASA Exoplanet Archive (ephemerides), AAVSO VSX and VizieR B/vsx (variable stars), SIMBAD (names and positions),
-Open-Meteo (weather). Sky brightness from the Moon: Krisciunas & Schaefer (1991, PASP 103, 1033). Sun and Moon
-positions from the Astronomical Almanac's low-precision formulas.
+Open-Meteo (weather), APASS DR9 at VizieR (the comp check, when you ask). Sky brightness from the Moon: Krisciunas &
+Schaefer (1991, PASP 103, 1033). Scintillation: Osborn et al. (2015, MNRAS 452, 1707). Sun and Moon positions from
+the Astronomical Almanac's low-precision formulas.
 
 ## Credits
 

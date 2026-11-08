@@ -145,8 +145,18 @@ API:
   target_peak_frac × linear_limit_adu; always labelled "estimate" unless target.exposure_s is set by the user (then
   it predicts the peak for that exposure and cautions ⚠ when over the linear limit). Sanity anchor (John's data):
   V 11.4, 60 s, 14" f/8, ASI2600MC gain 100 (0.243 e/ADU), good seeing → raw peak 10–17k ADU.
+* 1.4.0 (GitHub issue #4): `exposure_plan(target, optics, options, airmass, moon_penalty, elevation_m, band, mode,
+  exposure_s) -> dict` chooses the exposure three ways (Target.exposure_mode: "precision" = Best precision, the
+  default for transits; "safe" = Longest safe, exactly estimate_exposure above; "own" = My exposure, any
+  exposure_s) and gives that exposure's precision per 10-minute bin, noise budget, S/N and verdict (Detectable
+  S/N ≥ 10, Marginal 5–10, Out of reach under 5; capped at "Marginal?" when the zero point is only the cold-start
+  guess). The noise model is snr.py (pure functions, its formulas in the module text); its inputs come from
+  instrument.py: a SHOBS-FLUX system profile (read through the shared shobs_profile.py, never written), else
+  Setup's "Photometry noise" values (set here), else cold-start constants (estimate). The block carries
+  exposure_how, snr, verdict, precision_bin; its Notes lead with the verdict; the table shows "120 s (S/N)".
 * Block notes text in the plan-doc style (see the golden fixture's plan doc): "Ingress 21:32, mid 22:44, egress
-  23:56 (±1 min)", "Start before the meridian and let it flip (~22:40); drop the pre-flip frames",
+  23:56 (±1 min)", "Start before the meridian and let it flip (~22:40). Pre-flip frames carry no weight in the night mean." (a
+  transit's: "Start before the meridian and let it flip. Pre-flip frames are kept; SHOBS-P fits the flip step."; 1.4.0),
   "About 1.3 cycles (P ≈ 1.75 h)", "stop by 03:38 at the latest", "No HD 219134 after 04:00 (planet c transit)".
 
 Rules (Requirements doc, decisions of 20 Oct):
@@ -171,8 +181,9 @@ Rules (Requirements doc, decisions of 20 Oct):
    once per night.
 4. **Flip rule (GEM, 20 Oct):** never START a block just after its target's meridian (the mount gets confused).
    If a block would start within ~60 min after the meridian, move its start to `flip_lead_min` (10–15) before the
-   meridian and let the mount flip; note "Start before the meridian and let it flip (~HH:MM); drop the pre-flip
-   frames"; the usable time loses `flip_settle_min`. Blocks starting more than about an hour past the meridian are
+   meridian and let the mount flip; note "Start before the meridian and let it flip (~HH:MM). Pre-flip frames carry
+   no weight in the night mean." (transits, 1.4.0: "Start before the meridian and let it flip. Pre-flip frames are
+   kept; SHOBS-P fits the flip step."); the usable time loses `flip_settle_min`. Blocks starting more than about an hour past the meridian are
    left as they are. A block that starts before the meridian and runs past it flips at the meridian (note it).
    The mount tracks at most `site.past_meridian_min` past the meridian without flipping: a block ending within
    that margin after the meridian needs no flip ("ends 3 min past its meridian, inside your tracking margin; stop
