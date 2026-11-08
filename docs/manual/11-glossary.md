@@ -109,8 +109,8 @@ light. A star whose brightest pixel goes past it is measured too faint. Set it i
 star peaks under it, and a predicted peak over it makes the **verdict** **Saturates**.
 
 **Longest safe** — One of the three ways to choose a target's exposure (Edit dialog, Exposure): the longest standard
-exposure whose predicted peak stays under 80 % of the **linear limit** — 1.3.0's rule (the **exposure estimate**) on
-rough numbers, the noise model's peak once the **zero point** is measured or typed. The default for variables and
+exposure whose predicted peak stays under 80 % of the **linear limit** — 1.3.0's rule (the **exposure estimate**) with
+no SHOBS-FLUX profile and nothing typed in Setup, otherwise the noise model's peak. The default for variables and
 campaigns, and for transits until the **zero point** is measured by **SHOBS-FLUX** or typed in Setup.
 
 **Meridian** — The north–south line through the zenith. A star is highest (lowest **airmass**) when it crosses the

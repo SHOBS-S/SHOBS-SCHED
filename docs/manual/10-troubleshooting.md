@@ -33,8 +33,8 @@ The sections:
 - **4b. Exposure by S/N** (new in 1.4.0): the shared `shobs_profile.py` file is the version SHOBS-SCHED was built
   with; with no SHOBS-FLUX profile the numbers are a rough estimate, and the cold start predicts the same peak as
   1.3.0; the example SHOBS-FLUX profile is found; rough numbers keep a transit on Longest safe; TOI-2046 b by S/N
-  gives *Detectable?*; a saturating exposure says *Saturates?*; the Moon on a measured sky; Longest safe on rough
-  numbers is 1.3.0's rule; a zero point typed in Setup gives Best precision and one peak model; the flip notes by
+  gives *Detectable?*; a saturating exposure says *Saturates?*; the Moon on a measured sky; on the cold start
+  Longest safe is 1.3.0's rule; with a profile, Longest safe never says Saturates; a zero point typed in Setup gives Best precision and one peak model; the flip notes by
   type; SHOBS-P's DOI.
 - **5. Window**: the app opened on a temporary folder with the network switched off: every page, a build, and the
   ASIAIR list copied. Without a screen it says `SKIP`.

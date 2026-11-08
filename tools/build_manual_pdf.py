@@ -162,4 +162,4 @@ def build(pdf_out):
 
 
 if __name__ == "__main__":
-    build(sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "SHOBS-SCHED Users Manual %s.pdf" % VERSION))
+    build(sys.argv[1] if len(sys.argv) > 1 else str(ROOT / ("SHOBS-SCHED Users Manual %s.pdf" % VERSION)))

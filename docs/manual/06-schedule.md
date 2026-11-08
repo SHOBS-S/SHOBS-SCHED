@@ -186,7 +186,7 @@ One row per block, in time order, tinted by the target's type:
 | **RA / Dec (J2000)** | The target's position. |
 | **Alt** | The highest altitude in the block and its airmass, e.g. *62° (X 1.13)*. |
 | **Meridian** | When the target crosses the meridian; *(flip)* when the mount flips during the block, e.g. *22:44 (flip)* (the flip's time is in the notes). |
-| **Exposure** | The exposure, e.g. *40 s*. *120 s (S/N)* means it was chosen by S/N (**Best precision**, chapter 5). *40 s (est.)* means SHOBS-SCHED estimated it (**Longest safe**: the 1.3.0 way on rough numbers, the noise model's peak once a zero point is measured or typed), and also marks a Best precision exposure that could not keep the peak under the aim (the star is too bright even at the shortest exposure). Your own exposure has no mark. The OBSPlan page and the plan card write *est.* and put the verdict under the exposure (chapter 7). |
+| **Exposure** | The exposure, e.g. *40 s*. *120 s (S/N)* means it was chosen by S/N (**Best precision**, chapter 5). *40 s (est.)* means SHOBS-SCHED estimated it (**Longest safe**: the 1.3.0 way with no SHOBS-FLUX profile and nothing typed in Setup, otherwise by the noise model's peak), and also marks a Best precision exposure that could not keep the peak under the aim (the star is too bright even at the shortest exposure). Your own exposure has no mark. The OBSPlan page and the plan card write *est.* and put the verdict under the exposure (chapter 7). |
 | **Frames** | About how many frames fit (*~240*); for a transit also how many fall in the transit (*~240 (~135 in transit)*). |
 | **Notes** | The verdict first (new in 1.4.0), then what to know about this block (below), then its cautions. |
 

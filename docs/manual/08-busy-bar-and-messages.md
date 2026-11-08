@@ -77,7 +77,7 @@ The status strip runs along the bottom of the window:
 1. **Its first line** holds the latest news from anywhere in the program, colored like a result line, for example
    *✔ Setup saved.* or *✔ Built 7 nights: 11 blocks.*
 2. **Its second line** is a short credits line: *© Shiloh Hill Observatory*, *Data: NASA Exoplanet Archive, AAVSO
-   VSX, CDS (VizieR, SIMBAD), Open-Meteo*, *Night plot after TAPIR* and *Full list: Credits and sources*.
+   VSX, CDS (VizieR, SIMBAD), Open-Meteo, ExoClock, ExoFOP, APASS*, *Night plot after TAPIR* and *Full list: Credits and sources*.
 3. **The busy bar** appears at the left end of the first line, before the news, while the program works.
 
 If something unexpected goes wrong inside the window, the status strip says *✖ Something went wrong: … Details are in

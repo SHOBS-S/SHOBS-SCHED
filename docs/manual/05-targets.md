@@ -288,8 +288,8 @@ exposure is chosen, and shows what that exposure buys you: the precision, the S/
   whose predicted peak stays under your linear-limit aim (80 % of the linear limit), SHOBS-SCHED takes the shortest
   one that is within 2 % of the best precision per 10-minute bin. Longer frames would gain almost nothing, and
   shorter frames time ingress and egress better.
-- **Longest safe**: the longest standard exposure whose predicted peak stays under the aim. With only rough numbers
-  this is 1.3.0's rule, unchanged; once the zero point is measured by SHOBS-FLUX or typed in Setup, the peak is the
+- **Longest safe**: the longest standard exposure whose predicted peak stays under the aim. With no SHOBS-FLUX profile
+  and nothing typed in Setup's Photometry noise box this is 1.3.0's rule, unchanged; otherwise the peak is the
   noise model's (the same one the verdict **Saturates** uses), so Longest safe never picks an exposure the verdict
   calls Saturates. The warnings on **My exposure** follow the same rule.
 - **My exposure**: your own, in seconds, in the box beside it. Typing in the box chooses **My exposure** for you.
@@ -297,7 +297,8 @@ exposure is chosen, and shows what that exposure buys you: the precision, the S/
 The gray line under the buttons says the same in short: *Best precision: the shortest exposure within 2 % of the best
 10-minute precision whose peak stays under your linear-limit aim (the default for transits once a zero point is
 measured by SHOBS-FLUX or typed in Setup). Longest safe: the longest standard exposure whose predicted peak stays
-under the aim (1.3.0's rule on rough numbers). My exposure: yours.*
+under the aim
+(1.3.0's rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours.*
 
 **The default.** When you have not chosen, a target gets:
 
@@ -338,7 +339,8 @@ Under it, a gray line says which magnitude was used. SHOBS-SCHED knows only the 
 | Gray line | *Worked out at airmass 1.02 (its highest from your site) under a dark sky; the Schedule uses each night's own airmass and Moon.* | Where and when the readout applies. With rough numbers it adds *Rough estimate (no measured zero point): the verdict word carries a “?”.* |
 
 Beside the verdict is the reason, for example *a 1.47 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*. A
-star that saturates says what to do: *peak ~1070 % of your linear limit at 60 s (shorten it or defocus)*. When there is
+star that saturates says what to do: *peak ~1070 % of your linear limit at 60 s (shorten it or defocus)* (from rough numbers: *…(shorten it or defocus;
+rough estimate)*). When there is
 nothing to judge, the word is **No verdict**, with the reason (*no V magnitude*, *no transit depth or duration to
 judge*, *no amplitude to judge (VSX range)*).
 
