@@ -32,7 +32,9 @@ tagged *from SHOBS-P*; check them and go on.
    darks** box (for example `60, 120, 180`). The night's **Darks to shoot** then lists only the others. The other
    fields in that box filter **Find suggested transits…** and **Find suggested variables…**; their starting values
    will do for now.
-7. Press the green **Save** button at the bottom. It says **✔ Saved.**
+7. Leave the **Photometry noise (exposure by S/N)** box as it is. Empty, it uses rough estimates; if you have
+   SHOBS-FLUX, its measured profile is found by itself (chapter 4).
+8. Press the green **Save** button at the bottom. It says **✔ Saved.**
 
 ![The Setup page filled in for Example Observatory (40.0, −100.0, America/Chicago, 250 mm aperture), with "✔ Saved." beside the Save button](img/03-setup-saved.png)
 
@@ -47,11 +49,14 @@ tagged *from SHOBS-P*; check them and go on.
    lands in the **Variables** box, also ticked.
 
 Each row shows the target's next event in the planned nights: for a transit, the night and its ingress, mid and egress
-times; for a variable, its next timed minimum or maximum, or *any time* for a star with no event worth timing. A
+times; for a variable, its next timed minimum or maximum, or *any time* for a star with no event worth timing. The
+**Verdict** column says whether your telescope can measure it: *Detectable*, *Marginal*, *Out of reach* or
+*Saturates*. With Setup's Photometry noise box empty the word ends in "?" (*Detectable?*): a rough estimate
+(chapter 5). A
 transit marked *(partial)* is only partly in the dark; if a transit shows *none in the next 7 nights*, no part of any
 transit is in the dark this week. Pick another planet, or try **Find suggested transits…** (chapter 5).
 
-![The Targets page with WASP-12 b in Transits (next transit Mon 02 Nov, ✔ NEA (most precise)) and DY Peg in Variables (any time), both ticked, and "✔ Added DY Peg (VSX)." beside Add](img/03-targets-two.png)
+![The Targets page with WASP-12 b in Transits (next transit Mon 02 Nov, its Verdict, ✔ NEA (most precise)) and DY Peg in Variables (any time, its Verdict), both ticked, and "✔ Added DY Peg (VSX)." beside Add](img/03-targets-two.png)
 
 ## Step 3: Build the schedule
 
@@ -78,10 +83,13 @@ or no dark time. A target that didn't fit, or a cloudy forecast, is listed on th
      exposure, frames and notes;
    - under it, **Flats and darks to shoot**, **Didn't fit, and why**, and **Free time**.
 
-Click a row (or a block on the plot) to pick it out. Read the notes: they say, for example, *Ingress 23:50, mid
-01:20, egress 02:50 (±1 min)* and *Start before the meridian and let it flip (~21:01); drop the pre-flip frames*.
+Click a row (or a block on the plot) to pick it out. Read the notes. Each block's notes start with its verdict, for
+example *Detectable? (S/N ~58, rough estimate): a 1.47 % dip against 1.1 ppt per 10-min bin, 18 bins in transit* for
+WASP-12 b, then its times: *Ingress 23:50, mid 01:20, egress 02:50 (±1 min)*. DY Peg's block starts just before
+its meridian, so its notes say *Start before the meridian and let it flip (~21:01). Pre-flip frames carry no weight
+in the night mean.*
 
-![The Mon 02 Nov tab: the night's line (Moon 35 %, down at dusk, rises 01:12) and a dew line, the night plot with the DY Peg block (20:48–22:48) and the WASP-12 b transit block, and the nightly table under it](img/03-night-tab.png)
+![The Mon 02 Nov tab: the night's line (Moon 35 %, down at dusk, rises 01:12) and a dew line, the night plot with the DY Peg block (20:48–22:48) and the WASP-12 b transit block, and the nightly table under it, its notes led by each block's verdict](img/03-night-tab.png)
 
 ## Step 4: Print the plan card
 

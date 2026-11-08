@@ -15,7 +15,7 @@ This chapter covers:
 - **Export to NINA**,
 - the camera angle in both lists.
 
-![The OBSPlan page: the night ticks with their block counts, Print plan card and Include night plots, the position-angle line, the ASIAIR export folder, and the on-screen card for Sat 31 Oct to Mon 02 Nov, each night with its Export to ASIAIR, Export to NINA and Copy ASIAIR list buttons and its Moon facts ("down at dusk, rises 23:40"); under Sat 31 Oct, an ASIAIR result line with Open folder, Open in Notepad and Show file contents, and Darks "To shoot" leaving out the darks already on hand](img/07-obsplan-page.png)
+![The OBSPlan page: the night ticks with their block counts, Print plan card and Include night plots, the position-angle line, the ASIAIR export folder, and the on-screen card for Sat 31 Oct to Mon 02 Nov, each night with its Export to ASIAIR, Export to NINA and Copy ASIAIR list buttons and its Moon facts ("down at dusk, rises 23:40"); under Sat 31 Oct, an ASIAIR result line with Open folder, Open in Notepad and Show file contents, and Darks "To shoot" leaving out the darks already on hand; in each table the Exposure cell with its verdict word under it (Detectable? on green, Marginal? on yellow)](img/07-obsplan-page.png)
 
 ## Choose the nights
 
@@ -42,8 +42,11 @@ For each night:
 - **The nightly table**: **Time**, **Target**, **RA / Dec (J2000)**, **Alt**, **Meridian**, **Exposure**, **Frames**
   and **Notes**. The times are big and bold, so you can read them at the telescope. On screen each target's name sits on
   its type's color (the printed card is plain black on white). Locked blocks say *(locked)*, blocks you timed say *(set by you)*, and marked blocks show their mark
-  in brackets (*[Done]*). Estimated exposures say *est.* (the Schedule page's table writes *(est.)*). The **Meridian**
-  column gives the time only; a flip during the block is in the notes.
+  in brackets (*[Done]*). Estimated exposures say *est.* (the Schedule page's table writes *(est.)*); an exposure
+  chosen by S/N says *(S/N)* (*120 s (S/N)*) and never *est.* Under the exposure is the block's **verdict** word
+  (new in 1.4.0; chapter 5): on screen on a green tint for *Detectable* and a yellow one for *Marginal*, on the
+  printed card in bold. The verdict and its S/N also lead the block's notes. The **Meridian** column gives the time
+  only; a flip during the block is in the notes.
 - **Flats**, **Darks** and **Free time**, as lists under the table. Under **Darks**, *To shoot: …* lists the
   exposures not covered by Setup's **Darks you already have**, or *All on hand (…)* when they all are.
 
@@ -72,7 +75,7 @@ pages if it fits on one.
 The card is saved as `plan_card.html` in SHOBS-SCHED's cache folder (chapter 2), replaced each time you print. If the
 browser does not open, the result line gives the file's full path so you can open it yourself.
 
-![The plan card open in a browser: the title "Photometry plan, Sat 31 Oct to Fri 06 Nov 2026", the site line, Sat 31 Oct's facts and weather, its night plot in print colors, the nightly table, and the Flats, Darks and Free time lists](img/07-plan-card-print.png)
+![The plan card open in a browser: the title "Photometry plan, Sat 31 Oct to Fri 06 Nov 2026", the site line, Sat 31 Oct's facts and weather, its night plot in print colors, the nightly table (its Exposure cells with the verdict in bold under them), and the Flats, Darks and Free time lists](img/07-plan-card-print.png)
 
 > **Tip:** Untick past nights before printing: the card is easier to use at the telescope with only the nights to
 > come.

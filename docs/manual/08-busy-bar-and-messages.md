@@ -25,6 +25,7 @@ You see it while SHOBS-SCHED is:
 | Building the schedule | *Building 7 nights…*, *Re-reviewing 7 nights…*, *Working out twilight and Moon times…*, *Rebuilding Mon 02 Nov…* |
 | Checking transit ephemerides (at startup, and when you tick or keep a transit) | *Checking transit ephemerides at the NASA Exoplanet Archive…* |
 | Drawing the night plots for the printed card | *Drawing the night plots for the plan card… 3 of 7* |
+| Checking comparison stars (Edit dialog, **Check comps**) | *Asking APASS (VizieR) for comparison stars…* (in the dialog's own busy bar) |
 
 Some things to know:
 
@@ -40,8 +41,8 @@ Some things to know:
 ![The green busy bar with "Finding suggested transits: the best with their most precise ephemeris… 10 of 37": the second pass of the search](img/08-busy-bar-find.png)
 
 - **Dialogs have their own busy bar.** The Edit dialog's planet lookup, for example, shows its busy bar at the
-  **dialog's** lower left (*Looking up HD 219134's planets at the NASA Exoplanet Archive…*), so the main window stays
-  free.
+  **dialog's** lower left (*Looking up HD 219134's planets at the NASA Exoplanet Archive…*, or *Asking APASS
+  (VizieR) for comparison stars…* after **Check comps**), so the main window stays free.
 - **You can keep working.** Lookups, searches and builds run in the background; the window stays responsive. The only
   thing that waits is the schedule itself: while a build runs, **Build schedule** and **Re-review schedule** are grayed
   out, and changes to a night's blocks say *⚠ Wait for the build to finish.*

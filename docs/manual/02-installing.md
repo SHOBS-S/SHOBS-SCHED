@@ -64,9 +64,9 @@ If you ever move the SHOBS-SCHED folder, run **Create shortcuts.bat** again so t
 3. The last result line should read `ALL PASSED`.
 
 The test changes none of your settings, targets or schedule: it works in a temporary folder that it deletes at the
-end. It checks, in six sections: your Python and its packages (Matplotlib and time zones included); the sky
+end. It checks, in seven sections: your Python and its packages (Matplotlib and time zones included); the sky
 arithmetic (dark times, meridian times, transit times) against a known week of plans; the planner; the weather
-reader and the exports; the window itself (every page, a build and the ASIAIR list, with the network switched off);
+reader and the exports; the exposure by S/N (new in 1.4.0); the window itself (every page, a build and the ASIAIR list, with the network switched off);
 and, for information only, whether the online services and the SIMBAD and VizieR mirrors answer.
 
 Each check is marked `PASS` or `FAIL`. In the last section a service that does not answer is marked `NOTE`, not a

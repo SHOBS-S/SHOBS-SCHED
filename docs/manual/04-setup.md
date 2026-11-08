@@ -4,6 +4,10 @@ The Setup page holds your site and equipment. You fill it in once; after that yo
 changes (a new camera, a new horizon survey). Every plan, every time and every exposure estimate depends on it, so
 it is worth getting right.
 
+New in 1.4.0: the **Photometry noise (exposure by S/N)** box. It holds what SHOBS-SCHED needs to work out how
+precisely you can measure a star (the S/N, chapter 5). You can leave it empty: SHOBS-SCHED then uses rough
+estimates, and says so.
+
 The page subtitle says it plainly: *Your site and equipment, entered once. Every time SHOBS-SCHED shows is on the
 site's clock (its time zone below), whatever this computer's clock says.*
 
@@ -16,13 +20,15 @@ This chapter covers:
 - the Horizon profile box,
 - the Weather box (forecast source and dew),
 - the Suggestions and darks box (the filter for the Find buttons, and the darks you already have),
+- the Photometry noise box (a SHOBS-FLUX instrument profile, or your own noise values, for the S/N),
 - saving, and leaving the page with unsaved changes,
 - the planner settings that are not on the page.
 
-![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values) and Weather on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
+![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values), Weather and the new Photometry noise box on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
 
-The boxes sit in two columns when the window is wide enough: **Site**, **Mount and limits** and **Weather** on the
-left; **Telescope and camera**, **Horizon profile** and **Suggestions and darks** on the right. In a narrow window
+The boxes sit in two columns when the window is wide enough: **Site**, **Mount and limits**, **Weather** and
+**Photometry noise (exposure by S/N)** on the left; **Telescope and camera**, **Horizon profile** and **Suggestions
+and darks** on the right. In a narrow window
 they sit in one column, in the order this chapter follows. The page scrolls when it does not fit.
 
 ## Where the values came from
@@ -46,6 +52,9 @@ Beside many fields, a small gray **tag** says where that one value came from:
 | *from FITS* | Read from a FITS frame with **Read from a FITS frame…**. SHOBS-P's value no longer replaces it. |
 | *set here* | You typed it on this page. It is yours, and SHOBS-P never overwrites it. |
 | (no tag) | The default, or nothing entered yet. |
+
+The **Photometry noise** box has tags of its own: *from FLUX* (measured by SHOBS-FLUX), *set here* (typed by you)
+and *estimate* (a rough value SHOBS-SCHED uses because nothing better is known). See "Photometry noise" below.
 
 The tag changes as soon as you type: a value you change shows *set here* at once. If you type a field back to exactly
 SHOBS-P's value and save, it follows SHOBS-P again.
@@ -99,8 +108,9 @@ sheet** and **Linear limit is from the spec sheet**. A ticked one shows **⚠ es
 
 Why the linear limit matters for photometry: above a certain level, a camera's pixels stop responding in proportion
 to the light, long before they saturate. A star whose peak goes past that level is measured too faint. SHOBS-SCHED
-picks each target's exposure so that the predicted peak stays at about 80 % of your linear limit, and warns you when
-your own exposure may go over. Your own measured value (from a linearity test in SHOBS-P, for example) is better than
+picks each target's exposure so that the predicted peak stays under about 80 % of your linear limit (both **Longest
+safe** and **Best precision** do, chapter 5), and warns you when your own exposure may go over. A target whose
+predicted peak is over the linear limit gets the verdict **Saturates**. Your own measured value (from a linearity test in SHOBS-P, for example) is better than
 the spec sheet's.
 
 Three more fields:
@@ -174,7 +184,9 @@ For every block:
   latest*.
 - **A block that must cross the meridian flips at the start.** It starts about 12 minutes *before* the meridian, so
   the mount flips right at the start, while you are there, and the rest of the run is on one side of the pier. The
-  note says *Start before the meridian and let it flip (~22:40); drop the pre-flip frames*.
+  note says *Start before the meridian and let it flip (~22:40). Pre-flip frames carry no weight in the night
+  mean.* for a variable or campaign, and *Start before the meridian and let it flip. Pre-flip frames are kept;
+  SHOBS-P fits the flip step.* for a transit.
 - **The flip costs time.** The frame count of a block with a flip allows for a few minutes of lost time.
 
 For a **fixed-time block**, a flip in the middle is noted (*Meridian flip at ~01:10; drop the frames during the
@@ -245,7 +257,7 @@ Moon limit on each target by hand.
 - **Fixed** uses the one distance in **Fixed** every night, whatever the phase.
 - **Off** sets no default; only the targets with their own Moon limit have one.
 
-Coming from 1.2.0? The first time 1.3.0 opens your settings it says so once in the status line: *New in 1.3.0: a
+Coming from 1.2.0? The first time 1.3.0 (or later) opens your settings it says so once in the status line: *New in 1.3.0: a
 site-wide Moon distance (by Moon phase) now applies to every target without its own “Moon at least”. Setup → Mount
 and limits; Off works as before.* Choose **Off** if you want 1.2.0's plans back exactly.
 
@@ -289,7 +301,7 @@ magnetic declination, east positive) so the profile is turned to true north.
 
 | Field | What it does |
 |---|---|
-| **Forecast source** | Where the forecast comes from. In 1.3.0 the only source is **Open-Meteo** (free, no account). |
+| **Forecast source** | Where the forecast comes from. In 1.4.0 the only source is **Open-Meteo** (free, no account). |
 | **Dew when temp − dew point under** | The dew threshold: dew is expected from the first moment in the dark when the air temperature is less than this many degrees above the dew point. 2.5 °C by default. |
 | **End dew-sensitive runs at the predicted dew onset** | When ticked (the default), flexible blocks (campaigns and any-time variables) end when dew is expected. Fixed-time blocks are not cut; they get a ⚠ instead. |
 
@@ -334,6 +346,106 @@ Some details:
 Why the Moon limit matters for photometry: moonlight raises the sky background, and the sky's noise rises with it.
 A 1 % transit on a V 12 star that is easy on a dark night can be lost in the noise when the Moon is near and bright.
 
+## Photometry noise (exposure by S/N)
+
+New in 1.4.0. SHOBS-SCHED can now work out, for each target, how precisely your telescope and camera can measure it,
+and whether its transit or its light changes will show: the **S/N** and a **verdict** word (**Detectable**,
+**Marginal**, **Out of reach** or **Saturates**; chapter 5). For that it needs a few facts about your system that the
+other boxes do not hold, such as how many electrons a star of a given magnitude gives each second. This box is where
+they come from.
+
+![The Photometry noise (exposure by S/N) box: the Instrument profile drop-down on Automatic, the line "No SHOBS-FLUX profile matches the telescope and camera above (SCHED works without one): …", the seven fields, empty, each with its estimate tag (estimate 19.76, estimate 0.2, estimate 21.5 …), and the gray hint](img/04-photometry-noise.png)
+
+**You do not have to fill it in.** With the box empty, SHOBS-SCHED uses rough estimates for everything, the same
+model 1.3.0 used for its exposures. You still get an S/N and a verdict, but the verdict word then carries a **?**
+(*Detectable?*, *Marginal?*, *Out of reach?*, *Saturates?*) to say it is a guess, not a measurement.
+
+### Where the numbers come from
+
+Each number is taken from the first of these that has it:
+
+1. **A SHOBS-FLUX instrument profile** (tag *from FLUX*). SHOBS-FLUX is the SHOBS program that measures your
+   telescope and camera, on the bench and from your nights under the sky. It keeps what it measured in profiles in the
+   `.shobs` folder in your user folder. SHOBS-SCHED only reads them: it never writes them, and it works fully without
+   them. A value from the profile is shown grayed, and you cannot type over it: what was measured wins.
+2. **What you type in this box** (tag *set here*).
+3. **A rough estimate** (tag *estimate*, with the value used, for example *estimate 21.5*). This is either the
+   profile's own first guess, or SHOBS-SCHED's.
+
+### Instrument profile
+
+The **Instrument profile** drop-down chooses the SHOBS-FLUX profile to read:
+
+- **Automatic (matches the telescope and camera)**, the default: the profile whose camera is the one in Setup's
+  **Camera** field (at your **Gain setting** and **Binning**, when the profile names them), whose telescope has the
+  name in Setup's **Telescope** field (when you typed one), and whose focal length is within 3 % of Setup's. (ASIAIR's
+  plate-solved focal length moves a few millimeters from night to night, so the match is not exact.) When several
+  match, the nearest focal length wins.
+- **None (use the values below)**: no profile; your typed values, or rough estimates.
+- Each SHOBS-FLUX profile on this computer, by its name, with its telescope and camera in brackets. Choose one when
+  Automatic does not find yours.
+
+The line under the drop-down says what is used:
+
+- *✔ SHOBS-FLUX profile … (matches the telescope and camera above; revision 3, 2026-11-06). Its values are shown greyed
+  below (from FLUX); empty fields use rough estimates. SCHED only reads it.* (With a profile you chose, it says
+  *chosen here* instead of *matches the telescope and camera above*.)
+- *No SHOBS-FLUX profile matches the telescope and camera above (SCHED works without one): the values below, or rough
+  estimates, are used.*
+- *No SHOBS-FLUX profile (you chose none): the values below, or rough estimates, are used.*
+- *⚠ The chosen profile … is not in … any more: choose another, or Automatic. Until then the values below, or rough
+  estimates, are used.* The profile you chose was deleted or renamed in SHOBS-FLUX.
+
+Two more ⚠ lines can appear while the drop-down is on **Automatic**:
+
+- **Several profiles fit.** SHOBS-FLUX keeps one camera profile per gain. If Setup has no **Gain setting**,
+  Automatic picks the profile whose e⁻ per ADU is closest to Setup's **e⁻ per ADU**. If even that cannot tell them
+  apart, the line says *⚠ Several SHOBS-FLUX camera profiles fit (…) and Setup has no gain setting to tell them
+  apart: choose the profile above (or type the gain setting under Telescope and camera). Until then the values below,
+  or rough estimates, are used.* Do either, and **Save**.
+- **A newer SHOBS-FLUX.** If a newer SHOBS-FLUX wrote profiles that this SHOBS-SCHED cannot read yet, the line says
+  *⚠ A newer SHOBS-FLUX wrote 2 profiles here (…): update SHOBS-SCHED to read them. Until then the values below, or
+  rough estimates, are used.* Install the newest SHOBS-SCHED (chapter 2).
+
+### The fields
+
+| Field | Unit | What it is | Estimate when empty |
+|---|---|---|---|
+| **Zero point** | mag for 1 e⁻/s (main band) | The magnitude of a star that gives one electron a second in your camera, through your telescope, with the star overhead (airmass 1). A bigger number means a more sensitive system. It is the most important number here. | Worked out from your aperture and camera, as 1.3.0's exposure estimate did. |
+| **Extinction** | mag per airmass | How much the air dims a star for each extra airmass. | 0.20 (for V) |
+| **Dark-sky brightness** | mag/arcsec² | Your sky with no Moon. A bigger number is a darker sky. | 21.5 |
+| **Seeing (FWHM, in focus)** | arcsec | How wide a star is in focus. The photometry aperture is 1.5 × this wide in radius. | 3 (or the planner's `fwhm_arcsec`) |
+| **Read noise** | e⁻ | The camera's read noise at your gain. | 2 |
+| **Dark current** | e⁻/px/s | The camera's dark current at its working temperature. | 0.01 |
+| **Scintillation C_Y** | (Young; 1.5 typical) | How strongly your site twinkles. 1.5 is a typical site. | 1.5 |
+
+The "main band" is the band SHOBS-SCHED measures in when nothing else is said: the **green channel (TG)** of a color
+camera, or the **clear band (CV)** of a mono camera. The gain, the linear limit and the per-frame overhead come from
+the profile when it has them, otherwise from the **Telescope and camera** box (they have no field here).
+
+The gray hint under the box sums it up: *SHOBS-FLUX measures these from your nights (it never needs SCHED, and SCHED
+only reads its profiles). Without a profile, type what you know; empty fields use rough estimates, and a verdict from
+an estimated zero point gets a “?” (Detectable?, Marginal?, Out of reach?), and transits stay on Longest safe until a
+profile measures the system.*
+
+Some details:
+
+- **Only a measured zero point removes the "?".** The verdict is a guess while the zero point is. Typing your own
+  zero point here (*set here*) counts as known, so its verdicts lose the "?" too.
+- **Transits and Best precision.** A transit's exposure is chosen for the best precision only when a SHOBS-FLUX
+  profile has measured the zero point. Until then transits stay on **Longest safe**, 1.3.0's rule, even when you typed
+  a zero point here. You can always choose **Best precision** for a target yourself (chapter 5).
+- **Empty fields.** Leave a field empty for its estimate; the tag shows the value used (*estimate 0.2*).
+- **The limits.** Zero point 10 to 30, extinction 0 to 1.5, dark sky 15 to 23, seeing 0.3 to 20, read noise 0 to 50,
+  dark current 0 to 10, C_Y 0.1 to 10. A wrong value gives, for example, *✖ Not saved: Scintillation C_Y must be
+  between 0.1 and 10.*
+- **A value from FLUX is not saved here.** When the profile has a value, your own typed value for that field stays
+  saved underneath, unused, and comes back if you choose **None**.
+
+Why this matters for photometry: with these numbers SHOBS-SCHED can tell you, before the night, whether a transit
+is deep enough to see with your telescope, and which exposure gives the best light curve. How it works it out is in
+chapter 5, "How SHOBS-SCHED works out the S/N".
+
 ## Saving
 
 Press the green **Save** button at the bottom. It says **✔ Saved.**, and the status strip says **✔ Setup saved.**
@@ -372,8 +484,13 @@ The suggestion filter (`suggest_vmin`, `suggest_vmax`, `suggest_min_depth`, `sug
 `suggest_moon_penalty_max`) and `darks_on_hand` are kept in the same `options` section, but you set them in the
 **Suggestions and darks** box (above). So are the Moon distance (`moon_sep_mode`, `moon_sep_fixed`,
 `moon_sep_crescent`, `moon_sep_quarter`, `moon_sep_gibbous`, `moon_sep_full`), set in **Mount and limits**, and the
-Priority choices of **Find suggested transits…** (`suggest_exoclock_levels`, `suggest_exofop_max`), set in its
-window (chapter 5).
+Priority choices and the **Hide out of reach** tick of **Find suggested transits…** (`suggest_exoclock_levels`,
+`suggest_exofop_max`, `suggest_hide_out_of_reach`), set in its window (chapter 5). The **Photometry noise** box keeps
+its values there too: `snr_profile` (`auto`, `none` or a profile's name), `snr_zp`, `snr_k`, `snr_sky`, `snr_fwhm`,
+`snr_read_noise`, `snr_dark` and `snr_cy`.
+
+`fwhm_arcsec` and `target_peak_frac` (in the table above) are used by the S/N too: the first is the seeing when the
+Photometry noise box has none, the second the "aim" that **Best precision** and **Longest safe** keep the peak under.
 
 ---
 

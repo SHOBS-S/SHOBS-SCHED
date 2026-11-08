@@ -24,20 +24,25 @@ temporary folder and deletes it at the end.
 
 The sections:
 
-1. **Environment**: your Python, NumPy, Matplotlib (with its Tk part, for the night plot), Tk, the time zones, and the
-   time-zone guess.
-2. **Sky and events**: dark times, transit times, a no-transit window and a meridian time, against a known week of
-   hand-made plans (each within a few minutes).
-3. **Planner**: those five nights built again (every target placed, no overlaps), and a seven-night build.
-4. **Weather and export**: a recorded forecast, the nightly table, the ASIAIR list and the plan card.
-5. **Window**: the app opened on a temporary folder with the network switched off: every page, a build, and the
-   ASIAIR list copied. Without a screen it says `SKIP`.
-6. **Live services (information only)**: whether the NASA Exoplanet Archive, SIMBAD, VizieR (VSX copy), SIMBAD
-   mirror (IDIA), VizieR mirror (IDIA), AAVSO VSX and Open-Meteo answer. Each is `OK` or `NOTE`; never a failure.
-   A `NOTE` says `did not answer (…); SCHED falls back to its saved copies`. Then the two Priority lists of **Find
-   suggested transits…**: `OK    ExoClock planet list answered: … planets` and `OK    ExoFOP TOI table answered:
-   … TOIs (not FP/FA)`, or a `NOTE` ending `Find suggested transits searches without it`. (The ExoFOP table is large;
-   this check can take a minute.)
+- **1. Environment**: your Python, NumPy, Matplotlib (with its Tk part, for the night plot), Tk, the time zones, and the
+  time-zone guess.
+- **2. Sky and events**: dark times, transit times, a no-transit window and a meridian time, against a known week of
+  hand-made plans (each within a few minutes).
+- **3. Planner**: those five nights built again (every target placed, no overlaps), and a seven-night build.
+- **4. Weather and export**: a recorded forecast, the nightly table, the ASIAIR list and the plan card.
+- **4b. Exposure by S/N** (new in 1.4.0): the shared `shobs_profile.py` file is the version SHOBS-SCHED was built
+  with; with no SHOBS-FLUX profile the numbers are a rough estimate, and the cold start predicts the same peak as
+  1.3.0; the example SHOBS-FLUX profile is found; rough numbers keep a transit on Longest safe; TOI-2046 b by S/N
+  gives *Detectable?*; a saturating exposure says *Saturates?*; the Moon on a measured sky; Longest safe is 1.3.0's
+  rule; the flip notes by type; SHOBS-P's DOI.
+- **5. Window**: the app opened on a temporary folder with the network switched off: every page, a build, and the
+  ASIAIR list copied. Without a screen it says `SKIP`.
+- **6. Live services (information only)**: whether the NASA Exoplanet Archive, SIMBAD, VizieR (VSX copy), SIMBAD
+  mirror (IDIA), VizieR mirror (IDIA), AAVSO VSX and Open-Meteo answer. Each is `OK` or `NOTE`; never a failure.
+  A `NOTE` says `did not answer (…); SCHED falls back to its saved copies`. Then the two Priority lists of **Find
+  suggested transits…**: `OK    ExoClock planet list answered: … planets` and `OK    ExoFOP TOI table answered:
+  … TOIs (not FP/FA)`, or a `NOTE` ending `Find suggested transits searches without it`. (The ExoFOP table is large;
+  this check can take a minute.)
 
 Each check is `PASS` or `FAIL`. If the end says `FAILED: N check(s): …`, the lines marked `FAIL` say which.
 
@@ -158,15 +163,20 @@ The latest printed card, `plan_card.html`, is kept in the same folder.
 | A transit you expected says *none in the next 7 nights*. | Not all of it is in the dark and above your limits on those nights. | Look at more nights, lower **Minimum altitude** if your sky allows, or check the horizon profile. |
 | A target never gets a block. | Read its line under **Didn't fit, and why** on the night's tab. | The reason says what to change (limits, Moon distance, its own window, priority). |
 | *✖ No dark time tonight: the Sun gets no lower than …* in summer. | The Sun never reaches −18°. | If the line goes on *nautical darkness (Sun below −12°) is possible if you allow it in Setup*, choose **Nautical (Sun −12°)** in Setup. |
-| Exposures look much too short or too long. | Missing or wrong telescope or camera values, or the linear limit. | Check Setup; or type your own exposure in the target's Edit dialog. |
+| Exposures look much too short or too long. | Missing or wrong telescope or camera values, or the linear limit. | Check Setup; or choose **My exposure** in the target's Edit dialog and type your own. |
+| Every verdict ends in "?" (*Detectable?*, *Out of reach?*). | No measured zero point: no SHOBS-FLUX profile was found, or it has not measured one yet. | That is expected without SHOBS-FLUX. Check Setup's **Photometry noise** line; choose your profile there if Automatic does not find it. Typing a zero point you trust also removes the "?". |
+| Transits are on **Longest safe**, not **Best precision**. | Best precision is a transit's default only once SHOBS-FLUX has measured the zero point. | Choose **Best precision** for the target in its Edit dialog if you want it anyway. |
+| Setup says *⚠ Several SHOBS-FLUX camera profiles fit …* | SHOBS-FLUX has a camera profile for more than one gain, and Setup has no **Gain setting**. | Choose the profile in **Instrument profile**, or type the **Gain setting**, and **Save**. |
+| Setup says *⚠ A newer SHOBS-FLUX wrote … profiles here* | SHOBS-FLUX is newer than this SHOBS-SCHED. | Install the newest SHOBS-SCHED. |
+| A target is **Out of reach** but you have measured it before. | A rough zero point, or a wrong seeing or sky value, can make the S/N too low; or the transit's depth or the star's VSX range is wrong. | Check the Edit dialog's readout and Setup's Photometry noise values. The verdict is advice; you can still plan the target. |
 | The window does not open from the icon. | Python or a package problem. | Start **run_windows.bat** and read the console. |
 | Setup changes "did not stick". | They were saved, but the schedule was built before. | Press **Build schedule** (the ⚠ line says so). |
-| **Find suggested transits…** finds few planets, or none. | The filters in Setup's **Suggestions and darks** box (host V range, depth, baseline, Moon-brightened sky) are tight for your nights. The Find suggested transits pop-up shows the values it uses. | Widen them in Setup and **Save**, then Find again. |
+| **Find suggested transits…** finds few planets, or none. | The filters in Setup's **Suggestions and darks** box (host V range, depth, baseline, Moon-brightened sky) are tight for your nights, or **Hide out of reach** is ticked. The Find suggested transits pop-up shows the values it uses. | Widen them in Setup and **Save**, or untick **Hide out of reach**, then Find again. |
 | **Darks to shoot** lists exposures you already have. | **Darks you already have** in Setup's **Suggestions and darks** box is empty or missing them. | Type them there (for example `60, 120, 180`) and **Save**, then **Build schedule**. |
 | On untick, **Remove**, **Build schedule** or **Re-review schedule**, a question *Blocks set by hand* comes up. | A target that is no longer planned still has blocks you locked or set by hand; a rebuild keeps those. | **Remove** takes the blocks out too; **Cancel** keeps them in the schedule, with a note (*⚠ This target is not ticked to plan* or *⚠ This target is no longer in your list*) that does not mark the night's tab. |
 | A target often says *Moon too close* in **Didn't fit**, even with the Moon well away from where you would worry. | Setup's **Moon distance at least** (by phase) is stricter than you need, or the target's own **Moon at least** is. The brackets name the limit used. | Lower the by-phase values (or choose **Fixed** or **Off**) in Setup, or give the target its own **Moon at least**, which wins. |
 | **Find suggested transits…** finds fewer planets than in 1.2.0. | 1.3.0 also keeps suggestions clear of the Moon by Setup's **Moon distance at least**; or a Priority is chosen, so only listed planets are searched. | Check the window's text (it names the Moon distance) and the Priority rows. |
-| Every equatorial block suddenly flips at its start. | **Tracks past the meridian** was saved as 0 by an older version (an empty field once saved 0). | Type your mount's real value (5 by default) and **Save**. In 1.3.0 an empty field keeps the saved value. |
+| Every equatorial block suddenly flips at its start. | **Tracks past the meridian** was saved as 0 by an older version (an empty field once saved 0). | Type your mount's real value (5 by default) and **Save**. Since 1.3.0 an empty field keeps the saved value. |
 | SHOBS-P's site does not appear. | The fields were typed in SHOBS-SCHED (tagged *set here*), which win. | Type SHOBS-P's value back into the field and **Save**: it follows SHOBS-P again. |
 
 ## Starting afresh

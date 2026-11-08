@@ -19,8 +19,12 @@ and the program is built around it:
 - **Some events happen at a set time.** An eclipsing binary's minimum or an RR Lyrae star's maximum happens when it
   happens. SHOBS-SCHED places these *fixed-time* targets first and fits everything else around them.
 - **Exposures must stay linear.** A star whose brightest pixel goes past the camera's linear limit gives bad
-  photometry. SHOBS-SCHED estimates an exposure for each target that keeps the peak under your linear limit, and
-  warns you when one of your own exposures may saturate.
+  photometry. SHOBS-SCHED chooses an exposure for each target that keeps the peak under your linear limit, and
+  warns you when one of your own exposures may saturate (the verdict then says **Saturates**).
+- **Know before you go.** For each target SHOBS-SCHED works out the precision your telescope and camera can reach,
+  and the S/N of the transit or of the star's light changes, with a one-word verdict: **Detectable**, **Marginal** or
+  **Out of reach**. With a SHOBS-FLUX profile of your system the numbers are measured; without one they are rough
+  estimates, and the word carries a "?".
 - **Meridian flips matter.** A flip in the middle of a transit costs frames and changes the star's place on the
   sensor. On a German equatorial mount the planner times flips so that, where it can, the flip happens before the
   run starts. A flexible block (a campaign or an any-time variable) that fits wholly before its meridian runs
@@ -44,7 +48,7 @@ What it does **not** do:
 SHOBS-SCHED has one main window. The blue sidebar on the left reads **Shiloh Hill / Observatory / Photometry /
 Scheduler**, with **(SHOBS-SCHED)** under it and the line *Plans each night's photometry: transits, variable stars
 and campaigns*. Below that are the four steps, and at the bottom **Credits and sources** and the version number
-(**Version 1.3.0**).
+(**Version 1.4.0**).
 
 ![The SHOBS-SCHED window: sidebar with the four steps, the white page area with its title, and the status strip along the bottom](img/01-window-parts.png)
 
