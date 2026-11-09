@@ -120,8 +120,8 @@ campaign, its rules, goal and progress; and for every target, how its exposure i
 (by S/N)*, *exposure: Longest safe*, or *exposure 60 s (yours)*), its verdict with the reason, its block length and
 notes. A suggestion also shows its score.
 
-The verdict part reads, for example, *Detectable? (at its best airmass, dark sky): S/N ~58 (rough estimate, no
-measured zero point): a 1.47 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*. A suggestion's says *(on its
+The verdict part reads, for example, *Detectable? (at its best airmass, dark sky): S/N ~54 (rough estimate, no
+measured zero point): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*. A suggestion's says *(on its
 night)* instead.
 
 ## The Nights row
@@ -264,7 +264,7 @@ others.
 **Exposure** (new in 1.4.0), **Observing**, **Ephemeris** (transits only), **No data while a planet transits** and
 **Notes**. The dialog sizes itself to its contents and scrolls if it is taller than the screen.
 
-![The Edit dialog for the HD 219134 campaign: Target, the Exposure section (Longest safe chosen, its readout and verdict), Observing (block length 120, shortest useful block 45, goal 0), No data while a planet transits with planets b and c ticked and d, f, g, h grayed, and Notes](img/05-edit-dialog.png)
+![The Edit dialog for the HD 219134 campaign: Target; the Exposure section (Longest safe chosen, its readout, No verdict with "no amplitude to judge (not a VSX variable)", the precision vs exposure plot, the Comps line); and the start of Observing. The dialog scrolls to the rest: block length, goal, No data while a planet transits (planets b and c ticked, d, f, g, h grayed) and Notes](img/05-edit-dialog.png)
 
 ### Target
 
@@ -280,7 +280,7 @@ period and Tc; if it has transiting planets, the dialog suggests adding the plan
 New in 1.4.0 (it replaces the single **Exposure** field of 1.3.0's Observing part). It sets how this target's
 exposure is chosen, and shows what that exposure buys you: the precision, the S/N and the verdict.
 
-![The Exposure section of the Edit dialog for WASP-12 b: Best precision, Longest safe (chosen) and My exposure; Band Green channel (TG) with its tag "estimate (no FLUX profile)"; the magnitude line; the readout (Exposure 180 s (Longest safe), predicted peak ~48 % of the linear limit; Precision 1.1 ppt per 10-minute bin); the noise budget bar; the transit line with 18 ten-minute bins; "S/N 58  Detectable?" in green; the gray airmass line; the precision vs exposure plot; and the Comps line with Check comps](img/05-edit-exposure.png)
+![The Exposure section of the Edit dialog for WASP-12 b: Best precision, Longest safe (chosen) and My exposure; Band Green channel (TG) with its tag "estimate (no FLUX profile)"; the magnitude line; the readout (Exposure 90 s (Longest safe), predicted peak ~62 % of the linear limit; Precision 1.1 ppt per 10-minute bin); the noise budget bar; the transit line with 18 ten-minute bins; "S/N 54  Detectable?" in green; the gray airmass line; the precision vs exposure plot; and the Comps line with Check comps and "✔ Checked with APASS." under it](img/05-edit-exposure.png)
 
 **How the exposure is chosen.** Three buttons:
 
@@ -330,15 +330,15 @@ Under it, a gray line says which magnitude was used. SHOBS-SCHED knows only the 
 
 | Line | Example | What it says |
 |---|---|---|
-| Exposure | *Exposure 180 s (Longest safe) · predicted peak ~48 % of the linear limit (15,505 ADU)* | The exposure, how it was chosen, and the predicted peak of the star's brightest pixel. Over the linear limit the line turns yellow. |
+| Exposure | *Exposure 90 s (Longest safe) · predicted peak ~62 % of the linear limit (31,009 ADU)* | The exposure, how it was chosen, and the predicted peak of the star's brightest pixel. Over the linear limit the line turns yellow. |
 | Precision | *Precision 1.1 ppt per 10-minute bin (~3 frames a bin; the target star alone)* | The scatter you can expect in 10 minutes of data (see "How SHOBS-SCHED works out the S/N"). |
 | Noise budget bar | a small bar in four colors | Where the noise comes from: **photon** (blue), **sky** (gray), **scintillation** (orange) and **read + dark** (purple). |
 | Noise budget words | *Noise budget: photon 77 % · sky 1 % · scintillation 22 % · read + dark 0 %* | The same in numbers (shares of the noise). |
-| The event | *Transit 1.47 % deep, 3.0 h long: 18 ten-minute bins in transit*, or for a variable *Range 0.56 mag (VSX; 40 % in flux), against one 10-minute bin* | What the S/N is measured against. |
-| S/N and verdict | ***S/N 58  Detectable?*** with the reason beside it | The S/N, and the verdict word in its color (see "The Verdict column" above). |
+| The event | *Transit 1.37 % deep, 3.0 h long: 18 ten-minute bins in transit*, or for a variable *Range 0.56 mag (VSX; 40 % in flux), against one 10-minute bin* | What the S/N is measured against. |
+| S/N and verdict | ***S/N 54  Detectable?*** with the reason beside it | The S/N, and the verdict word in its color (see "The Verdict column" above). |
 | Gray line | *Worked out at airmass 1.02 (its highest from your site) under a dark sky; the Schedule uses each night's own airmass and Moon.* | Where and when the readout applies. With rough numbers it adds *Rough estimate (no measured zero point): the verdict word carries a “?”.* |
 
-Beside the verdict is the reason, for example *a 1.47 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*. A
+Beside the verdict is the reason, for example *a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*. A
 star that saturates says what to do: *peak ~1070 % of your linear limit at 60 s (shorten it or defocus)* (from rough numbers: *…(shorten it or defocus;
 rough estimate)*). When there is
 nothing to judge, the word is **No verdict**, with the reason (*no V magnitude*, *no transit depth or duration to

@@ -84,7 +84,7 @@ or no dark time. A target that didn't fit, or a cloudy forecast, is listed on th
    - under it, **Flats and darks to shoot**, **Didn't fit, and why**, and **Free time**.
 
 Click a row (or a block on the plot) to pick it out. Read the notes. Each block's notes start with its verdict, for
-example *Detectable? (S/N ~58, rough estimate): a 1.47 % dip against 1.1 ppt per 10-min bin, 18 bins in transit* for
+example *Detectable? (S/N ~54, rough estimate): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit* for
 WASP-12 b, then its times: *Ingress 23:50, mid 01:20, egress 02:50 (±1 min)*. DY Peg's block starts just before
 its meridian, so its notes say *Start before the meridian and let it flip (~21:01). Pre-flip frames carry no weight
 in the night mean.*
