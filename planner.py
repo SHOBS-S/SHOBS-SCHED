@@ -539,7 +539,8 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
         out.update(depth=S.flux_fraction(amp) if amp else None, amplitude_mag=amp)
         val = S.amplitude_snr(amp, bp["sigma"]) if amp else None
         what = f"a {amp:.2f} mag range against {S.ppt(bp['sigma'])} per 10-min bin" if amp else ""
-        missing_why = "no amplitude to judge (VSX range)" if not amp else ""
+        missing_why = ("" if amp else "no amplitude to judge (VSX gives no range)" if t.elements_obj()
+                       else "no amplitude to judge (not a VSX variable)")
     out["snr"] = val
     word = S.verdict(val, rough)
     # in every mode: a saturating exposure is never "Detectable". (On the bare cold start Longest safe chooses by

@@ -132,6 +132,9 @@ class TestCompCheck(unittest.TestCase):
         def down(*_a, **_k):
             raise T.FetchError("no network connection")
         T._tap_csv = down
+        real_get = T.http_get
+        T.http_get = down                                                        # ASU fallback offline too
+        self.addCleanup(setattr, T, "http_get", real_get)
         data2, note2 = T.comp_stars(100.0, 40.0, 12.0, 11.4, refresh=True)     # the saved copy, with its age
         self.assertEqual(data2, data)
         self.assertIn("did not answer", note2)

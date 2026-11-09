@@ -798,21 +798,25 @@ VIZIER_ASU = ("https://vizier.cds.unistra.fr/viz-bin/asu-tsv?", "https://vizier.
               "https://vizier.idia.ac.za/viz-bin/asu-tsv?")
 
 
-def parse_asu_tsv(text: str) -> list[dict]:
-    """VizieR ASU TSV → rows keyed by column name (comment lines, the units line and the dashes line skipped)."""
+def parse_asu_tsv(text: str, key: str = "Name", numeric: bool = False) -> list[dict]:
+    """VizieR ASU TSV → rows keyed by column name (comment lines, the units line and the dashes line skipped). key =
+    the column every data row has; numeric = that column is a number (then the units line, e.g. "deg", is skipped
+    too: only rows whose key parses as a number are kept)."""
     lines = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
     if not lines or "\t" not in lines[0]:
         raise FetchError("an unexpected reply came back instead of data")
     head = [h.strip() for h in lines[0].split("\t")]
-    if "Name" not in head:
+    if key not in head:
         raise FetchError("an unexpected reply came back instead of data")
-    k = head.index("Name")
+    k = head.index(key)
     rows = []
     for ln in lines[1:]:
         cells = ln.split("\t")
         name = cells[k].strip() if k < len(cells) else ""
         if not name or set(name) <= {"-"}:
             continue                          # the units line and the dashes line
+        if numeric and _f(name) is None:
+            continue                          # the units line ("deg")
         rows.append({h: (cells[i] if i < len(cells) else "") for i, h in enumerate(head)})
     return rows
 
@@ -1504,7 +1508,13 @@ def _comp_key(ra: float, dec: float, radius_arcmin: float) -> str:
 def _fetch_comps(ra: float, dec: float, radius_arcmin: float, vmax: float):
     adql = (f'SELECT RAJ2000, DEJ2000, Vmag, "B-V" FROM {APASS_TABLE} WHERE 1=CONTAINS(POINT(\'ICRS\', RAJ2000, '
             f"DEJ2000), CIRCLE('ICRS', {ra:.6f}, {dec:.6f}, {radius_arcmin / 60.0:.5f})) AND Vmag < {vmax:.2f}")
-    rows = _tap_csv(VIZIER_TAP, adql, nea=False, expect="RAJ2000")
+    try:
+        rows = _tap_csv(VIZIER_TAP, adql, nea=False, expect="RAJ2000")
+    except FetchError as exc:
+        # VizieR's TAP service can be down while its plain (ASU) interface answers (8 Nov 2026: TAP timed out on
+        # every query for an evening; the variable search got through on ASU, the comp check had no way round)
+        settings.log(f"VizieR TAP did not answer ({exc.reason}); trying VizieR ASU for the APASS comp check")
+        rows = _comps_asu(ra, dec, radius_arcmin, vmax)
     out = []
     for r in rows:
         v = _f(r.get("Vmag"))
@@ -1513,6 +1523,19 @@ def _fetch_comps(ra: float, dec: float, radius_arcmin: float, vmax: float):
             continue
         out.append({"ra": a, "dec": d, "v": v, "bv": _f(r.get("B-V"))})
     return {"rows": out, "radius_arcmin": radius_arcmin}
+
+
+def _comps_asu(ra: float, dec: float, radius_arcmin: float, vmax: float) -> list[dict]:
+    """The same APASS cone from VizieR ASU (CDS, then the CfA and IDIA mirrors). FetchError only when all fail."""
+    q = {"-source": "II/336/apass9", "-c": f"{ra:.6f} {dec:+.6f}", "-c.rm": f"{radius_arcmin:.2f}",
+         "-out": "RAJ2000,DEJ2000,Vmag,B-V", "-oc.form": "d", "-out.max": "5000", "Vmag": f"<{vmax:.2f}"}
+    last = None
+    for base in VIZIER_ASU:
+        try:
+            return parse_asu_tsv(_get_text(base + urllib.parse.urlencode(q)), key="RAJ2000", numeric=True)
+        except FetchError as exc:
+            last = exc
+    raise last if last else FetchError("no answer")
 
 
 def comp_stars(ra: float, dec: float, radius_arcmin: float, target_v: float | None, refresh: bool = False):

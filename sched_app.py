@@ -405,7 +405,10 @@ class Jobs:
                 res = work(progress) if counted else (work(step) if steps else work())
                 self.q.put(("done", (done, indicator, label, bar, tok), (res, None)))
             except Exception as exc:
-                settings.log(f"{label} failed: {exc!r}\n{traceback.format_exc()}")
+                if _expected_failure(exc):
+                    settings.log(f"{label} failed: {exc}")      # a service that did not answer: no traceback
+                else:
+                    settings.log(f"{label} failed: {exc!r}\n{traceback.format_exc()}")
                 self.q.put(("done", (done, indicator, label, bar, tok), (None, exc)))
 
         threading.Thread(target=target, daemon=True).start()
@@ -455,6 +458,12 @@ class Jobs:
             time.sleep(0.02)
         self.root.update()
         return self.active == 0
+
+
+def _expected_failure(exc) -> bool:
+    """A lookup that failed the expected way (a service did not answer, nothing saved; or a name it does not know):
+    targets.LookupError_ / NotFound / FetchError. Logged in one line, not with a traceback."""
+    return any(c.__name__ in ("LookupError_", "NotFound", "FetchError") for c in type(exc).__mro__)
 
 
 class JobIndicator(ttk.Frame):
@@ -3877,6 +3886,8 @@ class EditTargetDialog:
         ttk.Button(cf, text="Check comps", command=self.check_comps).pack(side=tk.LEFT, padx=(px(app, 8), 0))
         r += 1
         self.comp_ind = JobIndicator(body)
+        # wrapped like the other lines, so a long "✖ Comps not checked: …" cannot widen (and clip) the dialog
+        self.comp_ind.label.configure(wraplength=px(app, 460), justify=tk.LEFT)
         self.comp_ind.grid(row=r, column=0, columnspan=3, sticky="w")
         r += 1
         self._show_saved_comps()

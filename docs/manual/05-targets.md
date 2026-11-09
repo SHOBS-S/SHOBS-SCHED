@@ -342,7 +342,8 @@ Beside the verdict is the reason, for example *a 1.47 % dip against 1.1 ppt per 
 star that saturates says what to do: *peak ~1070 % of your linear limit at 60 s (shorten it or defocus)* (from rough numbers: *…(shorten it or defocus;
 rough estimate)*). When there is
 nothing to judge, the word is **No verdict**, with the reason (*no V magnitude*, *no transit depth or duration to
-judge*, *no amplitude to judge (VSX range)*).
+judge*, *no amplitude to judge (VSX gives no range)* for a VSX star without a range, *no amplitude to judge (not a
+VSX variable)* for any other star, such as a planet host kept as a campaign).
 
 **The precision vs exposure plot.** Under the readout, a small plot shows the precision per 10-minute bin (up) for each
 standard exposure (across, on a log scale: 1 s, 10 s, 100 s). Lower is better. Where the peak would be over the linear

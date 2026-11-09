@@ -98,3 +98,20 @@ Exact new wording in *italics*.
   tests/test_review140d.py.
 - Setup → Save now refreshes the Photometry noise box: its *estimate …* tags show the values in use for the telescope and
   camera just saved (they said a bare *estimate* until the page was reloaded). Test: tests/test_review140d.py.
+
+## After the reshoot evening (8 Nov 2026)
+
+- **Check comps gets round a VizieR TAP outage.** On 8 Nov the main VizieR site (CDS) was down (a security issue);
+  its TAP service timed out on every query. The variable search got through on its ASU fallback, but the comp check
+  (II/336/apass9 by TAP only) could never answer. It now falls back to VizieR ASU at CDS, then the CfA and IDIA
+  mirrors, as the VSX lookups do (`targets._comps_asu`; `parse_asu_tsv` takes a key column and skips the units line
+  of a numeric key). Same cache, same result line.
+- **An expected lookup failure is one log line.** A job that fails with `LookupError_` / `NotFound` / `FetchError`
+  (a service did not answer, nothing saved) no longer writes a traceback to sched.log; anything else still does.
+- **The comp result line wraps** (460 px, like the other lines), so a long *✖ Comps not checked: …* no longer widens
+  the Edit dialog and clips its right side.
+- **No verdict says why in its own words:** *no amplitude to judge (VSX gives no range)* for a VSX star without a
+  range, *no amplitude to judge (not a VSX variable)* for any other star (e.g. HD 219134 as a campaign; was
+  *(VSX range)* for both). Manual ch 5 updated.
+- Tests: tests/test_review140e.py (ASU fallback, mirrors in turn, all down, TAP first, units line, the two
+  wordings, expected failures); test_review140's offline check now takes the ASU route offline too.
