@@ -462,7 +462,8 @@ class Jobs:
 
 def _expected_failure(exc) -> bool:
     """A lookup that failed the expected way (a service did not answer, nothing saved; or a name it does not know):
-    targets.LookupError_ / NotFound / FetchError. Logged in one line, not with a traceback."""
+    targets.LookupError_ / NotFound / FetchError. Logged in one line, not with a traceback. By class name, because
+    targets is loaded lazily (mod("targets")) and may be missing."""
     return any(c.__name__ in ("LookupError_", "NotFound", "FetchError") for c in type(exc).__mro__)
 
 

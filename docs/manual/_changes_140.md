@@ -115,3 +115,11 @@ Exact new wording in *italics*.
   *(VSX range)* for both). Manual ch 5 updated.
 - Tests: tests/test_review140e.py (ASU fallback, mirrors in turn, all down, TAP first, units line, the two
   wordings, expected failures); test_review140's offline check now takes the ASU route offline too.
+- Fable review of e40fd1b..5e98337: M1 the new comp tests wrote fake APASS rows into the real lookup cache (Home sets
+  only SHOBS_DATA_HOME) → the test sets SHOBS_SCHED_HOME to a temp folder. S1 an empty ASU reply was "VizieR did
+  not answer" (and the CfA's II/336 copy answers every query empty) → `parse_asu_tsv(empty_ok=True)` returns [] for a
+  comments-only reply whose header describes the key column; `_comps_asu` goes on to the next mirror after an empty
+  answer and returns [] only when no mirror had rows (a bright star with nothing near its V → "none within 1 mag").
+  S2 `-out.max=unlimited` (was 5000, could cut a dense field). Nit: `_expected_failure` docstring says why it matches
+  by class name. Measured by the reviewer on 8 Nov: TAP reset ~16 s, CDS ASU ~15 s, CfA empty 0.6 s, IDIA 56 rows
+  1.5 s → ~33 s to an answer, the same as the VSX fallback; left as is.

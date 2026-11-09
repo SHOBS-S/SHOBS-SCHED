@@ -798,11 +798,14 @@ VIZIER_ASU = ("https://vizier.cds.unistra.fr/viz-bin/asu-tsv?", "https://vizier.
               "https://vizier.idia.ac.za/viz-bin/asu-tsv?")
 
 
-def parse_asu_tsv(text: str, key: str = "Name", numeric: bool = False) -> list[dict]:
+def parse_asu_tsv(text: str, key: str = "Name", numeric: bool = False, empty_ok: bool = False) -> list[dict]:
     """VizieR ASU TSV → rows keyed by column name (comment lines, the units line and the dashes line skipped). key =
     the column every data row has; numeric = that column is a number (then the units line, e.g. "deg", is skipped
-    too: only rows whose key parses as a number are kept)."""
+    too: only rows whose key parses as a number are kept). empty_ok: a comments-only reply whose header describes the
+    key column (the query ran and matched nothing) is [] rather than FetchError."""
     lines = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
+    if not lines and empty_ok and re.search(rf"^#Column\t{re.escape(key)}\t", text, re.M):
+        return []
     if not lines or "\t" not in lines[0]:
         raise FetchError("an unexpected reply came back instead of data")
     head = [h.strip() for h in lines[0].split("\t")]
@@ -1526,15 +1529,25 @@ def _fetch_comps(ra: float, dec: float, radius_arcmin: float, vmax: float):
 
 
 def _comps_asu(ra: float, dec: float, radius_arcmin: float, vmax: float) -> list[dict]:
-    """The same APASS cone from VizieR ASU (CDS, then the CfA and IDIA mirrors). FetchError only when all fail."""
+    """The same APASS cone from VizieR ASU (CDS, then the CfA and IDIA mirrors). The first mirror with rows wins; an
+    empty answer goes on to the next mirror (8 Nov 2026: the CfA's II/336 copy answered every query empty while
+    IDIA's had the stars), and [] comes back only when no mirror had rows but one answered empty (a bright target
+    with nothing near its V: "none within 1 mag", as from TAP). FetchError only when none answered."""
     q = {"-source": "II/336/apass9", "-c": f"{ra:.6f} {dec:+.6f}", "-c.rm": f"{radius_arcmin:.2f}",
-         "-out": "RAJ2000,DEJ2000,Vmag,B-V", "-oc.form": "d", "-out.max": "5000", "Vmag": f"<{vmax:.2f}"}
-    last = None
+         "-out": "RAJ2000,DEJ2000,Vmag,B-V", "-oc.form": "d", "-out.max": "unlimited", "Vmag": f"<{vmax:.2f}"}
+    last, empty = None, False
     for base in VIZIER_ASU:
         try:
-            return parse_asu_tsv(_get_text(base + urllib.parse.urlencode(q)), key="RAJ2000", numeric=True)
+            rows = parse_asu_tsv(_get_text(base + urllib.parse.urlencode(q)), key="RAJ2000", numeric=True,
+                                 empty_ok=True)
         except FetchError as exc:
             last = exc
+            continue
+        if rows:
+            return rows
+        empty = True
+    if empty:
+        return []
     raise last if last else FetchError("no answer")
 
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 import urllib.parse
 
@@ -29,16 +30,31 @@ deg\tdeg\tmag\tmag
 97.600000\t+29.650000\t12.300\t
 """
 
+EMPTY_REPLY = """#
+#   VizieR Astronomical Server vizier.cfa.harvard.edu
+#RESOURCE=yCat_2336
+#Table	II_336_apass9:
+#Column	RAJ2000	(F10.6)	Right ascension (FK5, Equinox=J2000.0)	[ucd=pos.eq.ra;meta.main]
+#Column	DEJ2000	(F10.6)	Declination (FK5, Equinox=J2000.0)	[ucd=pos.eq.dec;meta.main]
+"""
+
 
 class CompsAsuFallback(unittest.TestCase):
 
     def setUp(self):
         Home(self, copy_fixture=False)
+        # the lookup cache lives under SHOBS_SCHED_HOME (Home sets only SHOBS_DATA_HOME): keep fake APASS rows out of
+        # the real cache (Fable M1)
+        tmp = tempfile.mkdtemp(prefix="sched_r140e_home_")
+        old = os.environ.get("SHOBS_SCHED_HOME")
+        os.environ["SHOBS_SCHED_HOME"] = tmp
+        self.addCleanup(lambda: os.environ.__setitem__("SHOBS_SCHED_HOME", old) if old
+                        else os.environ.pop("SHOBS_SCHED_HOME", None))
         self._get = T.http_get
         self.addCleanup(lambda: setattr(T, "http_get", self._get))
         self.urls = []
 
-    def fake(self, tap_ok=False, asu_ok=(True, True, True)):
+    def fake(self, tap_ok=False, asu_ok=(True, True, True), replies=None):
         def get(url, timeout=T.TIMEOUT_S):
             self.urls.append(url)
             if url.startswith(T.VIZIER_TAP):
@@ -48,7 +64,8 @@ class CompsAsuFallback(unittest.TestCase):
             for base, ok in zip(T.VIZIER_ASU, asu_ok):
                 if url.startswith(base):
                     if ok:
-                        return ASU_REPLY.encode("utf-8")
+                        r = replies[T.VIZIER_ASU.index(base)] if replies else ASU_REPLY
+                        return r.encode("utf-8")
                     raise T.FetchError("service unavailable")
             raise AssertionError(url)
         T.http_get = get
@@ -80,6 +97,29 @@ class CompsAsuFallback(unittest.TestCase):
         self.fake(tap_ok=False, asu_ok=(False, False, False))
         with self.assertRaises(T.LookupError_):
             T.comp_stars(97.6367, 29.6722, 12.2, 11.57, refresh=True)
+
+    def test_empty_mirror_goes_on_to_the_next(self):
+        # 8 Nov 2026: CfA answered every II/336 query with comments only; IDIA had the stars
+        self.fake(tap_ok=False, asu_ok=(False, True, True), replies=(ASU_REPLY, EMPTY_REPLY, ASU_REPLY))
+        data, _note = T.comp_stars(97.6367, 29.6722, 12.2, 11.57, refresh=True)
+        self.assertEqual(len(data["rows"]), 3)
+        self.assertTrue(self.urls[-1].startswith(T.VIZIER_ASU[2]))
+
+    def test_all_empty_is_no_comps_not_an_outage(self):
+        self.fake(tap_ok=False, asu_ok=(True, True, True), replies=(EMPTY_REPLY,) * 3)
+        data, note = T.comp_stars(348.32, 57.17, 12.2, 5.57, refresh=True)
+        self.assertEqual((data["rows"], note), ([], ""))
+
+    def test_garbage_is_still_an_error(self):
+        self.fake(tap_ok=False, asu_ok=(True, True, True), replies=("#just a comment\n",) * 3)
+        with self.assertRaises(T.LookupError_):
+            T.comp_stars(97.6367, 29.6722, 12.2, 11.57, refresh=True)
+
+    def test_out_max_unlimited(self):
+        self.fake(tap_ok=False)
+        T.comp_stars(97.6367, 29.6722, 12.2, 11.57, refresh=True)
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.urls[-1]).query)
+        self.assertEqual(q["-out.max"], ["unlimited"])
 
     def test_tap_answer_used_first(self):
         self.fake(tap_ok=True)
