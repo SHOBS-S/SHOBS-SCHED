@@ -4144,8 +4144,8 @@ class EditTargetDialog:
         if plan.get("sigma") is not None:
             self.ro_vars["precision"].set(f"Precision {ppt(plan['sigma'])} per 10-minute bin "
                                           f"(~{plan.get('frames_per_bin') or 0:.0f} "
-                                          f"{'frame' if round(plan.get('frames_per_bin') or 0) == 1 else 'frames'} a bin; the target star "
-                                          "alone)")
+                                          f"{'frame' if round(plan.get('frames_per_bin') or 0) == 1 else 'frames'} a bin; "
+                                          f"{plan.get('sigma_with') or 'the target star alone'})")
         else:
             self.ro_vars["precision"].set("Precision: —")
         self.draw_budget(plan.get("parts") or {})

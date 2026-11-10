@@ -78,6 +78,8 @@ class Inputs:
                                        # pattern on most CMOS sensors, so the same counts are used; a camera that
                                        # merges colours when binned would want 4 — not modelled)
     bias_adu: float = 0.0              # the camera's bias level (raw ADU), added to the peak (linear limits are raw)
+    peak_cal: bool = False             # 1.4.1: apply the back-test peak calibration (peak_factor) — with a zero
+                                       # point measured by SHOBS-FLUX
     rough: bool = False                # the zero point is only the cold-start guess
     sources: dict = field(default_factory=dict)   # key → "from FLUX" / "set here" / "estimate" (for the readout)
 
@@ -122,10 +124,30 @@ def central_fraction(fwhm_arcsec: float, scale: float) -> float:
     return math.erf(0.5 / (math.sqrt(2.0) * sigma_px)) ** 2
 
 
+# 1.4.1 release gate (GitHub #6): the back-test against John's real nights (SHOBS-P on-sky logs, 14" RC +
+# ASI2600MC, 36 runs Sep–Nov 2026, target and brightest comp) found the measured raw peak 1.3–1.9× the Gaussian
+# model's at SHOBS-FLUX's median in-focus FWHM — most at short exposures, which freeze the seeing (HD 219134 at
+# 0.75 s: median 1.8×). A model that reads low would let a star the aim calls 80 % of the linear limit sit over it,
+# so the peak is scaled by the fit ln f = 0.597 − 0.055 ln t (f 1.85 at 0.75 s, 1.45 at 60 s, 1.37 at 180 s;
+# scatter of the residual ±30 %), only with a zero point SHOBS-FLUX measured (the cold start keeps 1.3.0's peak, which
+# was calibrated on John's frames already). To be replaced by a peak ratio SHOBS-FLUX measures per system.
+PEAK_CAL_LN_A = 0.597
+PEAK_CAL_B = -0.055
+
+
+def peak_factor(t: float) -> float:
+    """The measured / modelled peak ratio at exposure t (s), between 1 and 2 (see above)."""
+    x = math.exp(PEAK_CAL_LN_A + PEAK_CAL_B * math.log(max(0.1, float(t))))
+    return min(2.0, max(1.0, x))
+
+
 def peak_adu(inp: Inputs, mag: float, t: float, airmass: float = 1.0, moon_penalty: float = 0.0) -> float:
-    """Predicted raw peak (ADU, the bias included when known) of the star's brightest pixel."""
+    """Predicted raw peak (ADU, the bias included when known) of the star's brightest pixel (scaled by peak_factor
+    when inp.peak_cal)."""
     share = inp.band_share()
     star = star_rate(inp, mag, airmass) * central_fraction(inp.fwhm, inp.scale) * share
+    if inp.peak_cal:
+        star *= peak_factor(t)
     sky = sky_rate(inp, moon_penalty) * inp.scale ** 2 * share
     return (star + sky + inp.dark_e_s) * float(t) / max(1e-9, inp.gain) + float(inp.bias_adu or 0.0)
 
@@ -169,6 +191,21 @@ def bin_precision(inp: Inputs, mag: float, t: float, airmass: float = 1.0, moon_
     if not math.isfinite(tot) or tot <= 0:
         return {"sigma": math.inf, "parts": {k: 0.0 for k in v}, "frames": n}
     return {"sigma": math.sqrt(tot / n), "parts": {k: x / tot for k, x in v.items()}, "frames": n}
+
+
+def ensemble_variance(inp: Inputs, mags, t: float, airmass: float = 1.0, moon_penalty: float = 0.0) -> float:
+    """1.4.1 (#6 back-test): the relative variance of ONE frame of the comparison ensemble (the sum of the comps'
+    fluxes): Σ var_i / (Σ S_i)², each comp's photon, sky, read and scintillation noise (independent from star to
+    star). A bright target with faint comps is limited by them, which the target-alone number hid (HD 219134)."""
+    num, den = 0.0, 0.0
+    for m in mags:
+        v = frame_variances(inp, m, t, airmass, moon_penalty)
+        if not math.isfinite(v["photon"]) or v["photon"] <= 0:
+            continue
+        s = 1.0 / v["photon"]
+        num += sum(v.values()) * s * s
+        den += s
+    return num / (den * den) if den > 0 else 0.0
 
 
 def curve(inp: Inputs, mag: float, exposures, airmass: float = 1.0, moon_penalty: float = 0.0,

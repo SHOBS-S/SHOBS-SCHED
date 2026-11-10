@@ -407,6 +407,7 @@ CADENCE_VAR_DIVISOR = 50.0         # variables and campaigns: frame cycle ≤ P/
 CADENCE_INGRESS_DIVISOR = 10.0     # transits: frame cycle ≤ ingress ÷ 10 (John, 10 Nov 2026)
 INGRESS_T14_FRACTION = 0.10        # ingress when b or Rp/R* is unknown: ~10 % of T14
 POOR_COST = 0.25                   # a cap costing this much precision (or a worse verdict) is said in words
+SHORT_EXPOSURE_S = 5.0             # under this the back-test's peaks varied ±40 % night to night (a plain note)
 
 
 def _mins(sec: float) -> str:
@@ -664,7 +665,16 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     bp = S.bin_precision(use, mag, e, airmass, pen_snr)
     pk = S.peak_adu(use, mag, e, airmass, pen_snr)
     out.update(sigma=bp["sigma"], parts=bp["parts"], frames_per_bin=bp["frames"], peak_frac=pk / inp.linear_adu,
-               model_peak_adu=pk)
+               model_peak_adu=pk, sigma_target=bp["sigma"], sigma_with="the target star alone")
+    # 1.4.1 (#6 back-test): with the SHOBS-P series' comps known, the 10-minute precision counts their noise too
+    if bnd is not None and bnd["measured"].get("source") == "series":
+        cm = [s["band_mag"] for s in bnd["stars"] if _is_comp(s)]
+        if cm and math.isfinite(bp["sigma"]):
+            ens = S.ensemble_variance(use, cm, e, airmass, pen_snr)
+            tot = bp["sigma"] ** 2 + ens / max(1e-9, bp["frames"])
+            out.update(sigma=math.sqrt(tot), sigma_with=f"the target and its {len(cm)} "
+                       f"comp{'s' if len(cm) != 1 else ''} (SHOBS-P series)")
+            bp = dict(bp, sigma=math.sqrt(tot))
     if not model:
         # the bare cold start: the exposure was chosen as 1.3.0 did, but the peak shown everywhere (the note, the
         # Schedule's cautions, the readout) is the noise model's, so they never disagree
@@ -823,7 +833,12 @@ def _report_bounds(out: dict, t: Target, inp, mag, bnd: dict, free_e, e: float, 
     # row 4: what the cap costs (and a worse verdict) in words
     if capped:
         use = S.replace(inp, overhead_s=max(0.0, overhead(float(free_e))))
-        sig_free = S.bin_precision(use, mag, float(free_e), airmass, pen)["sigma"]
+        bpf = S.bin_precision(use, mag, float(free_e), airmass, pen)
+        sig_free = bpf["sigma"]
+        cm = [s["band_mag"] for s in bnd["stars"] if _is_comp(s)] if bnd["measured"].get("source") == "series" else []
+        if cm and math.isfinite(sig_free):
+            sig_free = math.sqrt(sig_free ** 2 + S.ensemble_variance(use, cm, float(free_e), airmass, pen)
+                                 / max(1e-9, bpf["frames"]))
         if sig and sig_free and math.isfinite(sig_free) and sig_free > 0:
             cost = sig / sig_free - 1.0
             parts.append(f"cap costs {max(0.0, cost) * 100:.0f} % vs {fmt_exposure(float(free_e))}")
@@ -846,6 +861,10 @@ def _report_bounds(out: dict, t: Target, inp, mag, bnd: dict, free_e, e: float, 
                 notes.append(f"cap costs {cost * 100:.0f} % vs {fe} ({there}" + (f", but {why}" if why else "")
                              + "); you can trade timing for photons with My exposure")
         out["bound_note"] = f"Exposure {fmt_exposure(e)}: {won}"
+    # the back-test (#6): under ~5 s the seeing is frozen in each frame and the peak varies ±40 % night to night
+    if mode in ("safe", "precision") and float(e) < SHORT_EXPOSURE_S and not out.get("note", "").startswith("⚠"):
+        notes.append(f"short exposure: the peak varies about ±40 % night to night with the seeing; check the "
+                     "first frames' peaks (or defocus a little more)")
     # row 6 (and a series that could not be read): plain
     mnote = bnd["measured"].get("note")
     readout_only = []

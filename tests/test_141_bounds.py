@@ -385,6 +385,53 @@ class CdsSkip(unittest.TestCase):
         self.assertIsNotNone(tg.cds_skip_reason())
 
 
+class BackTestFixes(unittest.TestCase):
+    """The release gate's findings (#6): the peak calibration (measured zero point only), the comps in the
+    10-minute precision, the short-exposure note."""
+
+    def test_peak_factor(self):
+        import snr
+        self.assertAlmostEqual(snr.peak_factor(0.75), 1.85, delta=0.01)
+        self.assertAlmostEqual(snr.peak_factor(60), 1.45, delta=0.01)
+        self.assertAlmostEqual(snr.peak_factor(180), 1.37, delta=0.01)
+        self.assertGreaterEqual(snr.peak_factor(1e9), 1.0)
+        self.assertLessEqual(snr.peak_factor(0.001), 2.0)
+        inp = snr.Inputs(zp=20.6, fwhm=4.9, scale=0.267, gain=0.243)
+        a = snr.peak_adu(inp, 11.0, 60)
+        b = snr.peak_adu(snr.replace(inp, peak_cal=True), 11.0, 60)
+        self.assertGreater(b / a, 1.35)
+
+    def test_calibration_only_with_a_measured_zero_point(self):
+        sched_home(self)
+        h = Home(self)
+        p = planner.exposure_plan(variable(period=2.0), optics(), {}, 1.1, 0.0, 280)
+        self.assertFalse(p["inputs"].peak_cal)
+        h.measure()
+        q = planner.exposure_plan(variable(period=2.0), optics(), {}, 1.1, 0.0, 280)
+        self.assertTrue(q["inputs"].peak_cal)
+        Home(self, copy_fixture=False)
+        self.assertFalse(planner.exposure_plan(variable(), optics(), {}, 1.1)["inputs"].peak_cal)
+
+    def test_series_comps_join_the_precision(self):
+        d = sched_home(self)
+        Home(self)
+        t = variable(v=6.0, period=2.0)
+        alone = planner.exposure_plan(t, optics(), {}, 1.1, 0.0, 280, mode="own", exposure_s=1)
+        t.shobs_p_series = write_series(d, [("C1", 9.5), ("C2", 10.0)])
+        withc = planner.exposure_plan(t, optics(), {}, 1.1, 0.0, 280, mode="own", exposure_s=1)
+        self.assertGreater(withc["sigma"], alone["sigma"] * 1.2)            # faint comps dominate a bright target
+        self.assertAlmostEqual(withc["sigma_target"], alone["sigma"], delta=1e-12)
+        self.assertEqual(withc["sigma_with"], "the target and its 2 comps (SHOBS-P series)")
+        self.assertEqual(alone["sigma_with"], "the target star alone")
+
+    def test_short_exposure_note(self):
+        sched_home(self)
+        Home(self)
+        p = planner.exposure_plan(variable(v=7.0, period=2.0), optics(), {}, 1.1, 0.0, 280)
+        self.assertLess(p["exposure_s"], planner.SHORT_EXPOSURE_S)
+        self.assertTrue(any(n.startswith("short exposure: the peak varies") for n in p["exposure_notes"]))
+
+
 class PlannerNotes(unittest.TestCase):
     def test_planet_lookup_keeps_b_and_k(self):
         row = {"pl_name": "W b", "pl_orbper": "1.09", "pl_tranmid": "2457010.5", "pl_trandur": "3.0",
