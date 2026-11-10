@@ -179,7 +179,8 @@ class SaturationBound(unittest.TestCase):
         self.assertEqual(p["bounds"]["measured"]["source"], "series")
         self.assertLess(p["exposure_s"], free["exposure_s"])
         self.assertTrue(p["bound"].startswith("comp-limited (Comp 1 (C1), V 9.90)"), p["bound"])
-        self.assertIn("(brightest comp: C1)", p["bounds_line"])
+        self.assertIn("peak ", p["bounds_line"])
+        self.assertIn("(that star)", p["bounds_line"])                 # named once, by the bound
         c1 = [s for s in p["bounds"]["stars"] if s["name"] == "C1"][0]
         frac = [c for c in c1["curve"] if c["t"] == p["exposure_s"]][0]["peak_frac"]
         self.assertLessEqual(frac, 0.8)

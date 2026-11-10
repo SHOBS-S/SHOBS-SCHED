@@ -838,9 +838,12 @@ def _report_bounds(out: dict, t: Target, inp, mag, bnd: dict, free_e, e: float, 
     for s in bnd["stars"]:
         f = frac_at(s["curve"], e)
         if f is not None and (top is None or f > top):
-            who = ("brightest comp" if _is_comp(s) else
-                   "check star" if s.get("role") == "Check" else "brightest comp candidate")
-            who += f": {s['name']}" if (_is_comp(s) or s.get("role") == "Check") else ""
+            if won.startswith(("comp-", "check-star-")) and s is bnd.get("sat_by"):
+                who = "that star"                     # already named by the bound (John's run-through nit)
+            else:
+                who = ("brightest comp" if _is_comp(s) else
+                       "check star" if s.get("role") == "Check" else "brightest comp candidate")
+                who += f": {s['name']}" if (_is_comp(s) or s.get("role") == "Check") else ""
             top = f
     peak_part = ""
     if top is not None:
