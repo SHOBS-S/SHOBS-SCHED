@@ -60,6 +60,7 @@ class Highlights(unittest.TestCase):
         self.assertEqual(U.parse_highlights("## Fixes\n- one"), [])
         self.assertEqual(U.parse_highlights(None), [])
         self.assertEqual(U.parse_highlights("Highlights:\nnot a bullet\n- late"), [])
+        self.assertEqual(U.parse_highlights("Highlights:\n\n- one\n\n- two\n\n## Fixes\n- x"), ["one", "two"])
 
     def test_long_line_trimmed(self):
         hl = U.parse_highlights("Highlights:\n- " + "word " * 40)
@@ -125,12 +126,21 @@ class Window(Base):
         opened = []
         self.sa.open_url = opened.append
         note = U.check("SHOBS-SCHED", "r", "1.4.0", {}, now=1.0, fetch=lambda: U.fetch_latest("r", opener=reply()))
+        app.geometry("2200x900+0+0")
+        app.update()
         app.show_update(note)
         self.assertTrue(app.update_var.get().startswith("SHOBS-SCHED 1.4.1 is available: Exposure picks"))
+        app.geometry("1000x700+0+0")                   # narrow: the short form leaves room for the status line
+        app.update()
+        app._fit_update_note()
+        self.assertEqual(app.update_var.get(), "SHOBS-SCHED 1.4.1 is available — click for details")
         app.open_update()
         app.update()
         wins = [w for w in app.winfo_children() if str(w.winfo_class()) == "Toplevel"]
         self.assertTrue(wins)
+        first = app._new_version_win
+        app.open_update()                              # a second click raises the same window
+        self.assertIs(app._new_version_win, first)
         nv = self.sa.NewVersionWindow(app, note)
         self.assertEqual(len(nv.lines), 3)
         nv.open_page()

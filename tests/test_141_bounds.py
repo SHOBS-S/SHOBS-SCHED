@@ -35,6 +35,7 @@ def sched_home(test):
                     else os.environ.pop("SHOBS_P_SETTINGS", None))
     comps._SERIES_CACHE.clear()
     comps._UNREACHABLE.clear()
+    comps._DOWN["at"] = None
     return d
 
 
@@ -196,7 +197,8 @@ class SaturationBound(unittest.TestCase):
         self.assertEqual([s["v"] for s in m["stars"]], [10.4])
         self.assertEqual([s["v"] for s in m["field"]], [6.0])
         self.assertTrue(p["bound"].startswith("comp-candidate-limited (APASS V 10.40"), p["bound"])
-        self.assertTrue(any(n.startswith("field star APASS V 6.00") for n in p["exposure_notes"]), p["exposure_notes"])
+        self.assertTrue(any(n.startswith("1 brighter field star would be over the linear limit")
+                            and "APASS V 6.00" in n for n in p["exposure_notes"]), p["exposure_notes"])
         self.assertFalse(any(c.startswith("⚠") and "6.00" in c for c in p["exposure_cautions"]))
 
 
@@ -430,6 +432,84 @@ class BackTestFixes(unittest.TestCase):
         p = planner.exposure_plan(variable(v=7.0, period=2.0), optics(), {}, 1.1, 0.0, 280)
         self.assertLess(p["exposure_s"], planner.SHORT_EXPOSURE_S)
         self.assertTrue(any(n.startswith("short exposure: the peak varies") for n in p["exposure_notes"]))
+
+
+class ReviewFixes(unittest.TestCase):
+    """The Fable review of build-1.4.1 (S2-1 … S3)."""
+
+    def cone(self, t, n=60):
+        rows = [{"ra": t.ra, "dec": t.dec, "v": t.vmag}]
+        for i in range(n):
+            rows.append({"ra": t.ra + 0.002 * (i + 1), "dec": t.dec, "v": 7.0 + 0.1 * i})
+        return rows
+
+    def test_one_line_for_many_field_stars_and_candidates(self):
+        sched_home(self)
+        Home(self)
+        t = variable(v=12.6, period=2.0)
+        op = optics()
+        save_cone(t, op, self.cone(t))
+        p = planner.exposure_plan(t, op, {}, 1.1, 0.0, 280)
+        self.assertEqual(sum(1 for n in p["exposure_notes"] if "field star" in n), 1, p["exposure_notes"])
+        q = planner.exposure_plan(t, op, {}, 1.1, 0.0, 280, mode="own", exposure_s=120)
+        self.assertFalse([c for c in q["exposure_cautions"] if c.startswith("⚠ Your exposure")], q["exposure_cautions"])
+        self.assertLessEqual(len(q["exposure_notes"]), 5, q["exposure_notes"])
+
+    def test_bright_target_says_apass_is_incomplete(self):
+        sched_home(self)
+        Home(self)
+        t = variable(v=9.0, period=2.0)
+        op = optics()
+        save_cone(t, op, [{"ra": t.ra + 0.01, "dec": t.dec, "v": 9.5}])
+        p = planner.exposure_plan(t, op, {}, 1.1, 0.0, 280)
+        self.assertTrue(any("may be missing (APASS is incomplete" in n for n in p["exposure_notes"]))
+
+    def test_ra_wrap(self):
+        c, b = comps.catalog_split([{"ra": 359.999, "dec": 10.0, "v": 11.0}, {"ra": 0.02, "dec": 10.0, "v": 10.5}],
+                                   0.0005, 10.0, 11.0)
+        self.assertEqual([s["v"] for s in c], [10.5])        # the target's own row left out across RA 0
+        self.assertIn("(1.2′ away)", c[0]["name"])
+
+    def test_unnamed_series_comp(self):
+        d = sched_home(self)
+        p = write_series(d, [("", 9.0), ("C2", 11.0)], check_v=10.0)
+        meta = json.load(open(p))
+        meta["meta"]["check_name"] = ""
+        json.dump(meta, open(p, "w"))
+        got = comps.read_series(p)
+        self.assertEqual([(s["role"], s["name"]) for s in got["stars"]],
+                         [("Comp 1", "comp"), ("Comp 2", "C2"), ("Check", "check")])
+
+    def test_prefetch_deadline_and_down_memory(self):
+        sched_home(self)
+        Home(self)
+        calls = []
+        old = tg.comp_stars
+
+        def slow(*a, **k):
+            calls.append(tg._QUICK.cap)
+            raise tg.LookupError_("no answer")
+        tg.comp_stars = slow
+        self.addCleanup(lambda: setattr(tg, "comp_stars", old))
+        ts = [Target(name=f"T{i}", kind="variable", ra=10.0 + i, dec=20.0, vmag=11.0) for i in range(4)]
+        comps.prefetch(ts, optics())
+        self.assertEqual(calls, [comps.PREFETCH_TIMEOUT_S] * 2)    # the short timeout, then it gave up
+        res = comps.prefetch(ts, optics())                          # the next Build: not asked again
+        self.assertEqual((len(calls), res["asked"], res["failed"]), (2, 0, 4))
+        comps._DOWN["at"] -= comps.PREFETCH_DOWN_S + 1
+        comps.prefetch(ts, optics())
+        self.assertEqual(len(calls), 4)
+        self.assertIsNone(getattr(tg._QUICK, "cap", None))
+
+    def test_quick_timeouts_cap(self):
+        seen = []
+        old = tg._http_get
+        tg._http_get = lambda url, timeout=None: seen.append(timeout) or b"x"
+        self.addCleanup(lambda: setattr(tg, "_http_get", old))
+        with tg.quick_timeouts(8):
+            tg.http_get("https://example.org/a", timeout=30)
+        tg.http_get("https://example.org/a", timeout=30)
+        self.assertEqual(seen, [8.0, 30])
 
 
 class PlannerNotes(unittest.TestCase):

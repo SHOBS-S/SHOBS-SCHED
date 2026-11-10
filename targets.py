@@ -44,7 +44,9 @@ import json
 import math
 import os
 import re
+import contextlib
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -178,9 +180,27 @@ def note_cds_result(url: str, exc: "FetchError | None", now: float | None = None
     _CDS_DOWN.update(at=time.time() if now is None else now, why=exc.reason)
 
 
+_QUICK = threading.local()           # 1.4.1 (Fable S2-1): a cap on every timeout of this thread (the Build's comp step)
+
+
+@contextlib.contextmanager
+def quick_timeouts(seconds: float):
+    """Inside the block, every request of this thread waits at most `seconds` (a background step that must not
+    hold the Build up when a catalog hangs)."""
+    old = getattr(_QUICK, "cap", None)
+    _QUICK.cap = float(seconds)
+    try:
+        yield
+    finally:
+        _QUICK.cap = old
+
+
 def http_get(url: str, timeout: float = TIMEOUT_S) -> bytes:
     """GET a URL → bytes. Every failure becomes FetchError with a plain reason. Tests replace this function.
     A CDS address is skipped (FetchError at once) for CDS_SKIP_S after CDS failed to answer (1.4.1 nit)."""
+    cap = getattr(_QUICK, "cap", None)
+    if cap:
+        timeout = min(float(timeout), cap)
     if _is_cds(url):
         why = cds_skip_reason()
         if why:
@@ -1324,10 +1344,11 @@ def refine_transit_target(t: Target, when_jd: float | None = None) -> bool:
     for k in ("period", "period_err", "t0", "t0_err", "reference", "source"):
         if pl.get(k) is not None:
             new[k] = pl[k]
-    for k in ("t14", "depth"):
-        if not new.get(k) and pl.get(k):
+    for k in ("t14", "depth", "ratror", "impact"):    # 1.4.1: b and Rp/R* for the ingress (Fable S3)
+        if new.get(k) is None and pl.get(k) is not None:
             new[k] = pl[k]
-    changed = any(new.get(k) != t.planet.get(k) for k in ("period", "t0", "period_err", "t0_err", "reference"))
+    changed = any(new.get(k) != t.planet.get(k) for k in ("period", "t0", "period_err", "t0_err", "reference",
+                                                          "ratror", "impact"))
     t.planet = new
     return changed
 

@@ -481,6 +481,8 @@ def _bounds(t: Target, inp, band: str, airmass: float, pen: float, overhead, aim
         shortest = STANDARD_EXPOSURES[0]
         for group, key in ((m.get("stars") or [], "stars"), (m.get("field") or [], "field")):
             for s0 in group:
+                # a series' magnitudes are in its own catalog band (V or the TG-matched Gaia/APASS values SHOBS-P
+                # uses); like the target's V they are carried into the S/N band with catalog_mag
                 mag, _w = instrument.catalog_mag(s0["v"], band)
                 if mag is None:
                     continue
@@ -771,13 +773,27 @@ def _report_bounds(out: dict, t: Target, inp, mag, bnd: dict, free_e, e: float, 
                             f"linear limit); {fix}" + (f", e.g. {alt}" if alt else ""))
     # a measured star over the linear limit at the user's own exposure → ⚠ (the target's own is in the note)
     if mode == "own":
+        over_c = []
         for s in bnd["stars"]:
             f = frac_at(s["curve"], e)
-            if f is not None and f > 1.0 and not s.get("over_short"):
+            if f is None or f <= 1.0 or s.get("over_short"):
+                continue
+            if _is_comp(s) or s.get("role") == "Check":
                 cautions.append(f"⚠ Your exposure: {_star_label(s)} predicted peak ~{f * 100:.0f} % of the linear "
                                 f"limit — shorten {fmt_exposure(e)}")
-    for s in bnd.get("dropped") or []:
-        notes.append(f"{_star_label(s)} would saturate even at {fmt_exposure(shortest)}: don't use it as a comp")
+            else:
+                over_c.append((f, s))
+        if over_c:                                     # stars nobody chose yet: one plain line (Fable S2-2)
+            f, s = max(over_c, key=lambda x: x[0])
+            n = len(over_c)
+            notes.append(f"{n} comp candidate{'s' if n != 1 else ''} would be over the linear limit at "
+                         f"{fmt_exposure(e)} (brightest {s['name']}, ~{f * 100:.0f} %): pick fainter comps")
+    dropped = bnd.get("dropped") or []
+    if dropped:
+        b0 = min(dropped, key=lambda s: s["v"])
+        n = len(dropped)
+        notes.append(f"{n} comp candidate{'s' if n != 1 else ''} would saturate even at {fmt_exposure(shortest)} "
+                     f"(brightest {b0['name']}): don't use {'them' if n != 1 else 'it'} as comps")
     # row 2: the timing cap is shorter than the frame cycle the camera can do
     if cad and bnd.get("e_cad") is not None and bnd["e_cad"] < shortest:
         cyc = shortest + max(0.0, float(overhead(shortest)))
@@ -796,7 +812,10 @@ def _report_bounds(out: dict, t: Target, inp, mag, bnd: dict, free_e, e: float, 
     elif capped and e_cad is not None and (sat_cap is None or e_cad <= sat_cap):
         won = f"cadence-limited ({cad['words']})"
         if cad.get("estimated"):
-            notes.append("ingress taken as ~10 % of T14 (the planet's b or Rp/R* is not known)")
+            pl = t.planet_obj()
+            known = bool(pl and getattr(pl, "ratror", None) and getattr(pl, "impact", None) is not None)
+            notes.append("ingress taken as ~10 % of T14 (" + ("a grazing transit: b near 1)" if known else
+                                                            "the planet's b or Rp/R* is not known)"))
     elif capped and sat_cap is not None:
         by = bnd["sat_by"]
         role = by.get("role", "")
@@ -872,11 +891,17 @@ def _report_bounds(out: dict, t: Target, inp, mag, bnd: dict, free_e, e: float, 
         readout_only.append(mnote)          # the Edit readout says it; a Schedule block need not (a Build asks)
     elif mnote:
         notes.append(mnote)
+    over_f = []
     for s in bnd["field"]:
         f = frac_at(s["curve"], e)
         if f is not None and f > 1.0:
-            notes.append(f"field star {s['name']} would be over the linear limit at {fmt_exposure(e)} "
-                         "(not a comp candidate; just don't measure it)")
+            over_f.append(s)
+    if over_f:                                         # one line however many (Fable S2-2)
+        b0 = min(over_f, key=lambda s: s["v"])
+        n = len(over_f)
+        notes.append(f"{n} brighter field star{'s' if n != 1 else ''} would be over the linear limit at "
+                     f"{fmt_exposure(e)} (brightest {b0['name']}; not comp candidates: just don't measure "
+                     f"{'them' if n != 1 else 'it'})")
     out["bounds_line"] = " · ".join(parts)
     out["exposure_cautions"] = list(dict.fromkeys(cautions))
     out["exposure_notes"] = list(dict.fromkeys(notes))

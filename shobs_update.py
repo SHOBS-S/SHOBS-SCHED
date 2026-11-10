@@ -88,9 +88,7 @@ def parse_highlights(body) -> list[str]:
                 break
             continue
         if not ln.strip():
-            if out:
-                break                                   # a blank line after the bullets ends the section
-            continue
+            continue                                    # blank lines (a "loose" list) do not end the section
         break                                           # any other line (the next heading, a paragraph) ends it
     return out
 

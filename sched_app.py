@@ -850,10 +850,37 @@ class App(tk.Tk):
         um.start(self, settings.APP_NAME, settings.REPO, settings.APP_VERSION, self.settings, settings.save_settings,
                  self.show_update)
 
+    UPDATE_STATUS_ROOM = 640       # px kept for the status message beside the note (Fable S2-3)
+
     def show_update(self, note: dict):
+        if not self.settings.get("check_updates", True):
+            return                                     # unticked while the check ran
         self.update_note = dict(note or {})
-        self.update_var.set(self.update_note.get("text") or "")
+        self._fit_update_note()
         settings.log(f"new version: {self.update_note.get('tag')} ({self.update_note.get('url')})")
+
+    def _fit_update_note(self, _e=None):
+        """The note with its highlight when the strip has room for it beside the status message, else the short
+        form ("… is available — click for details"); the window always lists the highlights."""
+        note = self.update_note
+        if not note:
+            return
+        full = note.get("text") or ""
+        short = (f"{note.get('app') or settings.APP_NAME} {note.get('version') or note.get('tag')} is available — "
+                 + ("click for details" if note.get("highlights") else "see the release notes"))
+        try:
+            room = int(self.winfo_width()) - px(self, self.UPDATE_STATUS_ROOM)
+            f = getattr(self, "_update_font", None)
+            if f is None:
+                f = self._update_font = tkfont.Font(self, font=style.font(10, "underline"))
+            text = full if f.measure(full) <= room else short
+        except (tk.TclError, Exception):
+            text = short
+        if self.update_var.get() != text:
+            self.update_var.set(text)
+        if not getattr(self, "_update_fit_bound", False):
+            self._update_fit_bound = True
+            self.bind("<Configure>", lambda e: self._fit_update_note() if e.widget is self else None, add="+")
 
     def open_update(self):
         """A click on the note: the New version window when the release has highlights, else the release page."""
@@ -861,7 +888,14 @@ class App(tk.Tk):
         if not note:
             return
         if note.get("highlights"):
-            NewVersionWindow(self, note)
+            w = getattr(self, "_new_version_win", None)
+            try:
+                if w is not None and w.win.winfo_exists():
+                    w.win.lift()
+                    return
+            except tk.TclError:
+                pass
+            self._new_version_win = NewVersionWindow(self, note)
         else:
             open_url(note.get("url"))
 

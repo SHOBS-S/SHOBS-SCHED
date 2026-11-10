@@ -21,10 +21,15 @@ import os
 import re
 
 CANDIDATE_BRIGHTER = 1.5       # comp candidates: up to this many magnitudes brighter than the target …
+APASS_BRIGHT_V = 10.0          # APASS is incomplete (saturated) brighter than about this (Fable S2-4)
 CANDIDATE_FAINTER = 1.0        # … and down to this much fainter (targets.COMP_DV: the comps the comp check counts)
 TARGET_MATCH_ARCSEC = 6.0      # the APASS star at the target's own place (not a comp)
 MAX_COMPS = 10                 # SHOBS-P's comp slots: comp, comp2 … comp10
 PREFETCH_GIVE_UP = 2           # the Build's comp step stops asking after this many targets in a row got no answer
+PREFETCH_TIMEOUT_S = 8.0       # … waits at most this long for each request (Fable S2-1) …
+PREFETCH_DEADLINE_S = 20.0     # … and this long in all, then leaves the rest for the next Build …
+PREFETCH_DOWN_S = 600.0        # … and after a step where the catalog never answered, the next Builds skip it this long
+_DOWN = {"at": None}
 
 _SERIES_CACHE: dict = {}       # path → (mtime, size, result)
 _UNREACHABLE: set = set()      # comp-check cache keys the last Build could not fetch
@@ -72,16 +77,16 @@ def read_series(path: str) -> dict:
     comps = []
     for i, r in enumerate(roles, 1):
         name, v = str(meta.get(f"{r}_name") or "").strip(), _mag(meta.get(f"{r}_mag"))
-        if name and v is not None:
-            comps.append({"name": name, "role": f"Comp {i}", "v": v})
+        if v is not None:                              # SHOBS-P allows a comp with no name (Fable S3)
+            comps.append({"name": name or f"comp{i if i > 1 else ''}", "role": f"Comp {i}", "v": v})
     active = {_key(n) for n in (meta.get("active_comps") or meta.get("comps_used") or []) if str(n).strip()}
     if active:
         used = [c for c in comps if _key(c["name"]) in active]
         comps = used or comps
     stars = list(comps)
     cname, cv = str(meta.get("check_name") or "").strip(), _mag(meta.get("check_mag"))
-    if cname and cv is not None:
-        stars.append({"name": cname, "role": "Check", "v": cv})
+    if cv is not None:
+        stars.append({"name": cname or "check", "role": "Check", "v": cv})
     out["stars"] = stars
     if not stars:
         out["error"] = f"{os.path.basename(p)} names no comp or check star with a magnitude"
@@ -100,7 +105,8 @@ def _photometry_app() -> str:
 
 def _sep_arcsec(r: dict, ra: float, dec: float) -> float:
     cosd = math.cos(math.radians(float(dec)))
-    return math.hypot((float(r["ra"]) - float(ra)) * cosd, float(r["dec"]) - float(dec)) * 3600.0
+    dra = (float(r["ra"]) - float(ra) + 180.0) % 360.0 - 180.0        # across RA 0/360 (Fable S3)
+    return math.hypot(dra * cosd, float(r["dec"]) - float(dec)) * 3600.0
 
 
 def catalog_split(rows: list, ra: float, dec: float, target_v: float) -> tuple[list, list]:
@@ -155,8 +161,11 @@ def measured_stars(t, optics) -> dict:
     if data:
         cands, bright = catalog_split(data.get("rows") or [], t.ra, t.dec, t.vmag)
         out.update(source="catalog", stars=cands, field=bright, candidates=cands)
-        if series_err:
-            out["note"] = series_err + "; checked APASS comp candidates instead"
+        notes = [series_err + "; checked APASS comp candidates instead"] if series_err else []
+        if float(t.vmag) - CANDIDATE_BRIGHTER < APASS_BRIGHT_V:
+            notes.append(f"comp candidates brighter than V {APASS_BRIGHT_V:g} may be missing (APASS is incomplete "
+                         f"there); check comp peaks in {_photometry_app()}")
+        out["note"] = "; ".join(notes)
         return out
     if key is not None and key in _UNREACHABLE:
         why = f"comps not checked: catalog unreachable; check comp peaks in {_photometry_app()}"
@@ -189,9 +198,18 @@ def prefetch(targets, optics, step=None, tg=None) -> dict:
             continue
         want.append((t, rad, key))
     res = {"asked": 0, "got": 0, "failed": 0}
+    import time as _time
+    now = _time.monotonic()
+    if _DOWN["at"] is not None and now - _DOWN["at"] < PREFETCH_DOWN_S:
+        for _t, _r, key in want:                      # it did not answer a few minutes ago: don't wait again
+            _UNREACHABLE.add(key)
+        res["failed"] = len(want)
+        return res
+    quick = getattr(tg, "quick_timeouts", None)
     misses = 0
+    t0 = now
     for i, (t, rad, key) in enumerate(want, 1):
-        if misses >= PREFETCH_GIVE_UP:
+        if misses >= PREFETCH_GIVE_UP or _time.monotonic() - t0 > PREFETCH_DEADLINE_S:
             _UNREACHABLE.add(key)
             res["failed"] += 1
             continue
@@ -199,7 +217,11 @@ def prefetch(targets, optics, step=None, tg=None) -> dict:
             step(f"Checking comp stars for {t.name} ({i} of {len(want)})")
         res["asked"] += 1
         try:
-            tg.comp_stars(t.ra, t.dec, rad, t.vmag)
+            if quick is not None:
+                with quick(PREFETCH_TIMEOUT_S):
+                    tg.comp_stars(t.ra, t.dec, rad, t.vmag)
+            else:
+                tg.comp_stars(t.ra, t.dec, rad, t.vmag)
             _UNREACHABLE.discard(key)
             res["got"] += 1
             misses = 0
@@ -212,4 +234,8 @@ def prefetch(targets, optics, step=None, tg=None) -> dict:
                 settings.log(f"comp check for {t.name}: {exc}")
             except Exception:
                 pass
+    if res["asked"] and not res["got"]:
+        _DOWN["at"] = _time.monotonic()
+    elif res["got"]:
+        _DOWN["at"] = None
     return res
