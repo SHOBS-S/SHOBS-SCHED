@@ -582,6 +582,64 @@ class ScrollBody:
 
 # ---- dialogs --------------------------------------------------------------------------------------------------------
 
+def open_url(url):
+    if url:
+        import webbrowser
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+
+class NewVersionWindow:
+    """1.4.1 (#5): what the newer release brings (its notes' Highlights), with Open release page and Close. It never
+    downloads or installs anything: the release page has the zip and the manual."""
+
+    def __init__(self, app, note: dict):
+        self.app, self.note = app, note
+        self.win, body = _dialog(app, "New version")
+        when = note.get("published") or ""
+        try:
+            when = date.fromisoformat(when).strftime("%d %b %Y") if when else ""
+        except ValueError:
+            pass
+        ttk.Label(body, text=f"{note.get('app') or settings.APP_NAME} {note.get('version') or note.get('tag')} is "
+                             f"available" + (f" (released {when})" if when else ""), style="Section.TLabel").grid(
+            row=0, column=0, sticky="w")
+        ttk.Label(body, text=f"You have {settings.APP_VERSION}. What's new:", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(px(app, 4), px(app, 2)))
+        r = 2
+        self.lines = []
+        for h in note.get("highlights") or []:
+            lb = ttk.Label(body, text=f"•  {h}", style="Card.TLabel", justify=tk.LEFT, wraplength=px(app, 440))
+            lb.grid(row=r, column=0, sticky="w", padx=(px(app, 6), 0), pady=px(app, 1))
+            self.lines.append(h)
+            r += 1
+        ttk.Label(body, text="The release page has the full notes, the zip and the users manual. Install it the way "
+                             "you installed this one; your settings and targets are kept.", style="Hint.TLabel",
+                  justify=tk.LEFT, wraplength=px(app, 440)).grid(row=r, column=0, sticky="w", pady=(px(app, 8), 0))
+        r += 1
+        btns = ttk.Frame(body, style="Card.TFrame")
+        btns.grid(row=r, column=0, sticky="w", pady=(px(app, 10), 0))
+        self.open_btn = style.green_button(btns, "Open release page", self.open_page)
+        self.open_btn.pack(side=tk.LEFT)
+        ttk.Button(btns, text="Close", command=self.close).pack(side=tk.LEFT, padx=(px(app, 8), 0))
+        try:
+            self.win.bind("<Escape>", lambda _e: self.close())
+        except tk.TclError:
+            pass
+
+    def open_page(self):
+        open_url(self.note.get("url"))
+        self.close()
+
+    def close(self):
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
+
+
 def _dialog(app, title: str):
     win = tk.Toplevel(app)
     win.title(title)
@@ -781,6 +839,31 @@ class App(tk.Tk):
             settings.save_settings(self.settings)
         if not testing:                  # kept transits still on the composite ephemeris: upgrade them (background)
             self.after(800, lambda: self.pages[1].refine_ephemerides(quiet=True))
+            self.after(1500, self.check_for_update)
+
+    # ---- a newer release (1.4.1, GitHub #5) ----
+    def check_for_update(self):
+        """Ask GitHub, in the background, whether a newer release is out (once a day at most; never downloads)."""
+        um = mod("shobs_update")
+        if um is None:
+            return
+        um.start(self, settings.APP_NAME, settings.REPO, settings.APP_VERSION, self.settings, settings.save_settings,
+                 self.show_update)
+
+    def show_update(self, note: dict):
+        self.update_note = dict(note or {})
+        self.update_var.set(self.update_note.get("text") or "")
+        settings.log(f"new version: {self.update_note.get('tag')} ({self.update_note.get('url')})")
+
+    def open_update(self):
+        """A click on the note: the New version window when the release has highlights, else the release page."""
+        note = self.update_note
+        if not note:
+            return
+        if note.get("highlights"):
+            NewVersionWindow(self, note)
+        else:
+            open_url(note.get("url"))
 
     def destroy(self):
         """Cancel pending timers first (no "invalid command name" noise after the window closes)."""
@@ -1051,6 +1134,12 @@ class App(tk.Tk):
         self.busy_bar = style.BusyBar(row, label_style="Status.TLabel", frame_style="Status.TFrame",
                                       bar_style="Status.Horizontal.TProgressbar")
         self.busy_bar.pack(side=tk.LEFT)
+        # a newer release (shobs_update.py, #5): its own note at the right, so other messages never wipe it
+        self.update_var = tk.StringVar(value="")
+        self.update_note: dict = {}
+        self.update_label = ttk.Label(row, textvariable=self.update_var, style="StatusLink.TLabel", cursor="hand2")
+        self.update_label.pack(side=tk.RIGHT, anchor="e", padx=(px(self, 10), 0))
+        self.update_label.bind("<Button-1>", lambda _e: self.open_update())
         self.status_label = ttk.Label(row, textvariable=self.status_var, style="Status.TLabel")
         self.status_label.pack(side=tk.LEFT, anchor="w", fill=tk.X, expand=True)
         cr = mod("credits")
@@ -1218,6 +1307,7 @@ class SetupPage:
         self.groups.append(self._weather_group(g))
         self.groups.append(self._suggest_group(g))
         self.groups.append(self._snr_group(g))
+        self.groups.append(self._updates_group(g))
         self._columns = 0
         g.bind("<Configure>", self._layout, add="+")
         self._layout()
@@ -1453,6 +1543,26 @@ class SetupPage:
                         variable=self.vars["options.dew_sensitive_end"], style="Card.TCheckbutton").grid(
             row=2, column=0, columnspan=2, sticky="w", pady=px(self.app, 2))
         return box
+
+    def _updates_group(self, g):
+        """1.4.1 (#5): the new-version check, saved at once (it is not a planning value)."""
+        box = self._box(g, "New versions")
+        self.check_updates_var = tk.BooleanVar(value=bool(self.app.settings.get("check_updates", True)))
+        ttk.Checkbutton(box, text="Check for new versions at start", variable=self.check_updates_var,
+                        style="Card.TCheckbutton", command=self._set_check_updates).grid(
+            row=0, column=0, sticky="w", pady=px(self.app, 2))
+        self._hint(box, 1, "Asks GitHub once a day whether a newer SHOBS-SCHED is out and says so on the status "
+                           "strip. Nothing about you is sent, and it never downloads anything. For an email at each "
+                           "release: on GitHub, Watch → Custom → Releases.")
+        return box
+
+    def _set_check_updates(self):
+        on = bool(self.check_updates_var.get())
+        self.app.settings["check_updates"] = on
+        settings.save_settings(self.app.settings)
+        if not on:
+            self.app.update_var.set("")
+            self.app.update_note = {}
 
     def _suggest_group(self, g):
         """The filters Find suggested transits / variables use, and the darks you already have (fix list 1, 2, 13)."""
@@ -3854,9 +3964,18 @@ class EditTargetDialog:
         # the readout
         ro = ttk.Frame(body, style="Card.TFrame")
         ro.grid(row=r, column=0, columnspan=3, sticky="w", pady=(px(app, 4), 0))
-        self.ro_vars = {k: tk.StringVar() for k in ("exposure", "precision", "budget", "event", "where")}
+        self.ro_vars = {k: tk.StringVar() for k in ("exposure", "precision", "budget", "event", "where", "bounds",
+                                                    "xcaution", "xnotes")}
         self.exp_lbl = ttk.Label(ro, textvariable=self.ro_vars["exposure"], style="Card.TLabel")
         self.exp_lbl.pack(anchor="w")
+        # 1.4.1 (#6): the three bounds on one line, the bound that won named; then what could not be met
+        ttk.Label(ro, textvariable=self.ro_vars["bounds"], style="Card.TLabel", justify=tk.LEFT,
+                  wraplength=px(app, 460)).pack(anchor="w")
+        self.xcaution_lbl = ttk.Label(ro, textvariable=self.ro_vars["xcaution"], style="Warn.TLabel",
+                                      justify=tk.LEFT, wraplength=px(app, 460))
+        self.xcaution_lbl.pack(anchor="w")
+        ttk.Label(ro, textvariable=self.ro_vars["xnotes"], style="Hint.TLabel", justify=tk.LEFT,
+                  wraplength=px(app, 460)).pack(anchor="w")
         ttk.Label(ro, textvariable=self.ro_vars["precision"], style="Card.TLabel").pack(anchor="w")
         self.bar = tk.Canvas(ro, width=px(app, self.BAR_W), height=px(app, 14), background=style.CARD,
                              highlightthickness=0)
@@ -3891,6 +4010,31 @@ class EditTargetDialog:
         self.comp_ind.label.configure(wraplength=px(app, 460), justify=tk.LEFT)
         self.comp_ind.grid(row=r, column=0, columnspan=3, sticky="w")
         r += 1
+        # 1.4.1 (#6): the target's SHOBS-P series (read only): its comps and check join the saturation check. Only
+        # where SHOBS-P is installed (or the target already names a series): SCHED otherwise says nothing of SHOBS-P
+        # (round 4: it must stand alone)
+        if app.shobs_p is None and not str(getattr(t, "shobs_p_series", "") or "").strip():
+            self._show_saved_comps()
+            self.how_var.trace_add("write", lambda *_a: self._how_clicked(redraw=False))
+            self.how_var.trace_add("write", lambda *_a: self._readout_later())
+            self.band_var.trace_add("write", lambda *_a: self._readout_later())
+            var.trace_add("write", self._exposure_typed)
+            return r
+        sf = ttk.Frame(body, style="Card.TFrame")
+        sf.grid(row=r, column=0, columnspan=3, sticky="w", pady=(px(app, 4), 0))
+        ttk.Label(sf, text="SHOBS-P series", style="Card.TLabel").pack(side=tk.LEFT)
+        self.vars["shobs_p_series"] = svar = tk.StringVar(value=str(getattr(t, "shobs_p_series", "") or ""))
+        self.loaded["shobs_p_series"] = svar.get().strip()
+        self.widgets["shobs_p_series"] = ttk.Entry(sf, textvariable=svar, width=34)
+        self.widgets["shobs_p_series"].pack(side=tk.LEFT, padx=px(app, 6))
+        ttk.Button(sf, text="Browse…", command=self._browse_series).pack(side=tk.LEFT)
+        r += 1
+        ttk.Label(body, text="Optional. Its comparison and check stars join the saturation check (SCHED only reads "
+                             "the file, never changes it). Without one, SCHED checks the likely comps: APASS stars "
+                             "up to 1.5 mag brighter than the target.", style="Hint.TLabel", justify=tk.LEFT,
+                  wraplength=px(app, 460)).grid(row=r, column=0, columnspan=3, sticky="w")
+        r += 1
+        svar.trace_add("write", lambda *_a: self._readout_later())
         self._show_saved_comps()
         self.how_var.trace_add("write", lambda *_a: self._how_clicked(redraw=False))
         self.how_var.trace_add("write", lambda *_a: self._readout_later())
@@ -3991,6 +4135,10 @@ class EditTargetDialog:
             pk = plan.get("model_peak_adu") or 0
             line += f" · predicted peak ~{plan['peak_frac'] * 100:.0f} % of the linear limit ({pk:,.0f} ADU)"
         self.ro_vars["exposure"].set(line)
+        self.ro_vars["bounds"].set(("Bounds: " + plan["bounds_line"]) if plan.get("bounds_line") else "")
+        self.ro_vars["xcaution"].set("\n".join(plan.get("exposure_cautions") or []))
+        self.ro_vars["xnotes"].set("\n".join(list(plan.get("exposure_notes") or [])
+                                              + list(plan.get("readout_notes") or [])))
         # over the linear limit: the peak in the warning style (a plain word "Saturates" below; no icon)
         self.exp_lbl.configure(style="Warn.TLabel" if (plan.get("peak_frac") or 0) > 1.0 else "Card.TLabel")
         if plan.get("sigma") is not None:
@@ -4083,14 +4231,32 @@ class EditTargetDialog:
         # whole bias into the slope and drew 'saturated' ~7x too short (1.4.0 first look, TOI-6130 b)
         lin, sat = plan.get("linear_adu"), plan.get("sat_adu")
         noise = mod("snr")
+        labels = []
         for limit, fill, word in ((lin, style.WARN_BG, "over linear"), (sat, "#f3d6d6", "saturated")):
             t_at = noise.exposure_at_peak(pts, limit) if (limit and noise) else None
             if t_at is None or t_at >= hi:
                 continue
             x0 = self._plot_xy(max(lo, t_at), 0, lo, hi, ymax)[0]
             c.create_rectangle(x0, top, w - px(app, 10), bottom, fill=fill, outline="")
-            c.create_text(w - px(app, 12), top + px(app, 2) + (px(app, 12) if word == "saturated" else 0),
-                          text=word, anchor="ne", fill=style.HINT, font=style.font(8))
+            labels.append((word, fill))
+        # 1.4.1 (#6): the bound that caps the exposure (cadence or a comp), a grey dashed line with its word
+        bnd = plan.get("bounds") or {}
+        e_max = bnd.get("e_max")
+        if e_max is not None and math.isfinite(e_max) and lo < e_max < hi:
+            xc = self._plot_xy(e_max, 0, lo, hi, ymax)[0]
+            c.create_line(xc, top, xc, bottom, fill=style.HINT, dash=(2, 3))
+            why = "cadence cap" if (bnd.get("e_cad") is not None and (bnd.get("sat_cap") is None
+                                                                       or bnd["e_cad"] <= bnd["sat_cap"])) else "comp cap"
+            labels.append((why, "#ffffff"))
+        # the words last, one under the other at the top right on their own backing, so a narrow shaded band (or
+        # the next band drawn over it) can never clip them (1.4.1 nit: 'over l')
+        y = top + px(app, 2)
+        for word, fill in labels:
+            tid = c.create_text(w - px(app, 14), y, text=word, anchor="ne", fill=style.HINT, font=style.font(8))
+            x1, y1, x2, y2 = c.bbox(tid)
+            bg = c.create_rectangle(x1 - 2, y1 - 1, x2 + 2, y2 + 1, fill=fill, outline=style.LINE)
+            c.tag_lower(bg, tid)
+            y = y2 + px(app, 2)
         c.create_line(left, top, left, bottom, w - px(app, 10), bottom, fill=style.LINE)
         for tick in (1, 10, 100):
             if lo <= tick <= hi:
@@ -4144,6 +4310,15 @@ class EditTargetDialog:
         data = tg.saved_comp_stars(t.ra, t.dec, self._comp_radius()) if t.ra is not None else None
         self.comp_var.set(tg.comp_check_text(t.vmag, t.ra, t.dec, data))
 
+    def _browse_series(self):
+        cur = self.vars["shobs_p_series"].get().strip()
+        path = filedialog.askopenfilename(
+            parent=self.win, title="The target's SHOBS-P series (read only)",
+            initialdir=os.path.dirname(cur) if cur and os.path.isdir(os.path.dirname(cur)) else None,
+            filetypes=[("SHOBS-P series", "*.cvseries"), ("All files", "*.*")])
+        if path:
+            self.vars["shobs_p_series"].set(os.path.normpath(path))
+
     def check_comps(self):
         """Ask APASS at VizieR for the field's stars (in the background, with the dialog's busy bar)."""
         tg = mod("targets")
@@ -4166,6 +4341,7 @@ class EditTargetDialog:
             self.comp_var.set(tg.comp_check_text(t.vmag, t.ra, t.dec, data))
             self.comp_ind.finish(f"⚠ {note[:1].upper() + note[1:]}." if note else "✔ Checked with APASS.",
                                  linger_ms=0 if note else 6000)
+            self._readout_later()                     # the comp candidates now join the saturation check (#6)
         self.app.jobs.run(lambda: tg.comp_stars(t.ra, t.dec, rad, t.vmag, refresh=True), done, self.comp_ind,
                           "Asking APASS (VizieR) for comparison stars")
 
@@ -4575,6 +4751,8 @@ class EditTargetDialog:
             band = self.band_code()
             ins = mod("instrument")
             t.snr_band = "" if (ins is None or band == ins.main_band(self.app.optics)) else band
+            if "shobs_p_series" in v:
+                t.shobs_p_series = v["shobs_p_series"]
             t.cycle_s = num("cycle_s", "Seconds between frames", 0.001, 7200)
             if t.cycle_s is not None and t.exposure_s and t.cycle_s < t.exposure_s:
                 raise ValueError("Seconds between frames cannot be shorter than the exposure.")
@@ -4906,6 +5084,24 @@ class SchedulePage:
             return False
         return True
 
+    @staticmethod
+    def _prefetch_comps(targets, optics, step):
+        """1.4.1 (#6): ask APASS once for the comp candidates of ticked targets with no SHOBS-P series and no saved
+        comp check, so the exposure's saturation bound can judge them (soft-fail: a target the catalog did not
+        answer for is planned on itself, with a plain note)."""
+        cm = mod("comps")
+        if cm is None:
+            return
+        try:
+            tgm = mod("targets")
+            if tgm is None:
+                return
+            res = cm.prefetch(targets, optics, step, tg=tgm)
+            if res.get("asked") or res.get("failed"):
+                settings.log(f"comp check before the build: {res}")
+        except Exception as exc:
+            settings.log(f"comp check before the build failed: {exc!r}")
+
     def _prefetch_info(self, sch: Schedule):
         for n in sch.nights:
             try:
@@ -4945,6 +5141,7 @@ class SchedulePage:
         nn = f"{n} night{'s' if n > 1 else ''}"
 
         def work(step):
+            self._prefetch_comps(targets, optics, step)
             step(f"Getting the forecast from {opts.get('weather_source') or 'Open-Meteo'}")
             wx, note = app.fetch_weather(start, n)
             step(f"Building {nn}")
@@ -4983,6 +5180,7 @@ class SchedulePage:
         prior = Schedule.from_dict(app.schedule.to_dict())
 
         def work(step):
+            self._prefetch_comps(targets, optics, step)
             step(f"Getting the forecast from {opts.get('weather_source') or 'Open-Meteo'}")
             wx, note = app.fetch_weather(today, n)
             step(f"Re-reviewing {n} night{'s' if n > 1 else ''}")

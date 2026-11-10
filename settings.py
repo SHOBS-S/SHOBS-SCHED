@@ -19,7 +19,8 @@ from models import Optics, Schedule, Site, Target
 
 APP_NAME = "SHOBS-SCHED"
 APP_TITLE = "Shiloh Hill Observatory – Photometry Scheduler (SHOBS-SCHED)"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
+REPO = "SHOBS-S/SHOBS-SCHED"   # GitHub: releases, and the new-version check (shobs_update.py, #5)
 
 
 def home() -> str:
@@ -123,7 +124,9 @@ def default_settings() -> dict:
             "options": dict(DEFAULT_OPTIONS), "observer_code": "", "set_here": [], "shobs_p_read": "",
             "from_fits": {}, "from_finder": {}, "export_dir": "",
             # OBSPlan page: the ASIAIR folder ("" = Downloads); night plots on the printed card
-            "asiair_dir": "", "card_plots": True}
+            "asiair_dir": "", "card_plots": True,
+            # 1.4.1 (#5): the new-version check (shobs_update.py) — on by default; the last answer kept
+            "check_updates": True}
 
 
 def _windows_downloads() -> str | None:

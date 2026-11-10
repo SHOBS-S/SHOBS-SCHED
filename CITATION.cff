@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use SHOBS-SCHED in your work, please cite it as below."
 title: "SHOBS-SCHED: Shiloh Hill Observatory Photometry Scheduler"
 type: software
-version: 1.4.0
+version: 1.4.1
 doi: 10.5281/zenodo.23674791
 authors:
   - family-names: Armbrust

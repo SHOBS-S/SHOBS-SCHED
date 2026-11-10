@@ -127,8 +127,8 @@ class TestSimbad(unittest.TestCase):
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["query"][0]
                 if "hostname = 'V1298 Tau'" in q or "pl_name = 'V1298 Tau d'" in q:
                     head = T.NEA_COLUMNS
-                    row = ["V1298 Tau d", "V1298 Tau", "12.4", "", "", "", "", "", "", "61.33", "20.16", "10.1", "1",
-                           "", ""]
+                    row = ["V1298 Tau d", "V1298 Tau", "12.4", "", "", "", "", "", "", "", "61.33", "20.16", "10.1",
+                           "1", "", ""]           # (1.4.1: pl_imppar after pl_ratror)
                     return (head + "\n" + ",".join(row) + "\n").encode()
                 return (T.NEA_COLUMNS + "\n").encode()
             raise T.FetchError("offline")

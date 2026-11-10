@@ -270,6 +270,15 @@ class Base(unittest.TestCase):
         import sched_app
         self.sa = sched_app
         self._saved_modules = dict(sched_app._MODULES)
+        # never the real network from a window test (1.4.1: a Build now asks APASS for comp candidates first);
+        # a test that wants answers replaces targets.http_get as before
+        import targets as _tg
+        self._real_http = _tg._http_get
+
+        def _offline(url, timeout=None):
+            raise _tg.FetchError("offline (tests)")
+        _tg._http_get = _offline
+        _tg._CDS_DOWN.update(at=None, why="")
         if self.use_fakes:
             fakes, self.calls = make_fakes()
             self.fakes = fakes
@@ -285,6 +294,9 @@ class Base(unittest.TestCase):
                 pass
         self.sa._MODULES.clear()
         self.sa._MODULES.update(self._saved_modules)
+        import targets as _tg
+        _tg._http_get = self._real_http
+        _tg._CDS_DOWN.update(at=None, why="")
         for k, v in self._env.items():
             if v is None:
                 os.environ.pop(k, None)

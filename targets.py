@@ -79,7 +79,7 @@ SOURCE_WORDS = {"NEA": "the NASA Exoplanet Archive", "VSX": "AAVSO VSX", "VizieR
 
 # pscomppars columns for one planet (the composite table also carries the first-error columns)
 NEA_COLUMNS = ("pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,"
-               "pl_ratror,ra,dec,sy_vmag,tran_flag,pl_tranmid_reflink,pl_orbper_reflink")
+               "pl_ratror,pl_imppar,ra,dec,sy_vmag,tran_flag,pl_tranmid_reflink,pl_orbper_reflink")
 PS_COLUMNS = ("pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,pl_tsystemref,"
               "pl_refname")
 CATALOG_COLUMNS = ("pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,"
@@ -137,8 +137,65 @@ class FetchError(Exception):
 
 # ---- network -------------------------------------------------------------------------------------------------------
 
+# 1.4.1 (nit): CDS (simbad / vizier / tapvizier .cds.unistra.fr) went down for hours at a time in Oct–Nov 2026 and
+# every lookup then waited out its full timeout there before trying a mirror. After a CDS request fails for want of an
+# answer (a timeout, no connection, a 5xx), SCHED skips CDS for CDS_SKIP_S and goes straight to the mirrors; the first
+# request after that tries CDS again. A 4xx (the server answered) never starts the skip.
+CDS_SKIP_S = 600.0
+_CDS_DOWN: dict = {"at": None, "why": ""}
+
+
+def _is_cds(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host == "cds.unistra.fr" or host.endswith(".cds.unistra.fr")
+
+
+def cds_skip_reason(now: float | None = None) -> str | None:
+    """Why CDS is being skipped ("CDS did not answer 3 min ago (…); skipped for 10 min"), or None."""
+    at = _CDS_DOWN.get("at")
+    now = time.time() if now is None else now
+    if at is None or not 0 <= now - at < CDS_SKIP_S:
+        return None
+    mins = max(0, int((now - at) // 60))
+    when = "just now" if mins < 1 else f"{mins} min ago"
+    return f"CDS did not answer {when} ({_CDS_DOWN.get('why') or 'no answer'}); skipped for {CDS_SKIP_S / 60:.0f} min"
+
+
+def note_cds_result(url: str, exc: "FetchError | None", now: float | None = None) -> None:
+    """Remember a CDS failure that means "no answer" (starts the skip) or a success (ends it)."""
+    if not _is_cds(url):
+        return
+    if exc is None:
+        if _CDS_DOWN.get("at") is not None:
+            settings.log("CDS answered again; no longer skipped")
+        _CDS_DOWN.update(at=None, why="")
+        return
+    st = getattr(exc, "status", None)
+    if st is not None and st < 500 and st != 429:
+        return                                     # it answered (404, 403…): not down
+    if _CDS_DOWN.get("at") is None:
+        settings.log(f"CDS did not answer ({exc.reason}); skipping CDS for {CDS_SKIP_S / 60:.0f} min (mirrors first)")
+    _CDS_DOWN.update(at=time.time() if now is None else now, why=exc.reason)
+
+
 def http_get(url: str, timeout: float = TIMEOUT_S) -> bytes:
-    """GET a URL → bytes. Every failure becomes FetchError with a plain reason. Tests replace this function."""
+    """GET a URL → bytes. Every failure becomes FetchError with a plain reason. Tests replace this function.
+    A CDS address is skipped (FetchError at once) for CDS_SKIP_S after CDS failed to answer (1.4.1 nit)."""
+    if _is_cds(url):
+        why = cds_skip_reason()
+        if why:
+            raise FetchError(why)
+        try:
+            data = _http_get(url, timeout)
+        except FetchError as exc:
+            note_cds_result(url, exc)
+            raise
+        note_cds_result(url, None)
+        return data
+    return _http_get(url, timeout)
+
+
+def _http_get(url: str, timeout: float = TIMEOUT_S) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -554,8 +611,10 @@ def planet_target(data: dict, when_jd: float | None = None) -> Target:
     dep = _f(row.get("pl_trandep"))
     depth = k * k if k else (dep / 100.0 if dep else None)
     dur = _f(row.get("pl_trandur"))
+    b = _f(row.get("pl_imppar"))
     pl = Planet(name=name, period=period, period_err=period_err, t0=t0, t0_err=t0_err,
-                t14=dur / 24.0 if dur else None, depth=depth, reference=ref, source=source)
+                t14=dur / 24.0 if dur else None, depth=depth, ratror=k if k and 0 < k < 1 else None,
+                impact=b if b is not None and 0 <= b < 1.5 else None, reference=ref, source=source)
     return Target(name=name, kind="transit", mode="T", ra=_f(row.get("ra")), dec=_f(row.get("dec")),
                   vmag=_f(row.get("sy_vmag")), source=source, planet=pl.__dict__.copy(), added=today_iso())
 

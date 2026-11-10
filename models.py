@@ -136,6 +136,8 @@ class Planet:
     t0_err: float | None = None
     t14: float | None = None
     depth: float | None = None
+    ratror: float | None = None               # 1.4.1 (#6): Rp/R* (the Archive's pl_ratror), for the ingress time
+    impact: float | None = None               # 1.4.1 (#6): impact parameter b (pl_imppar), for the ingress time
     reference: str = ""                       # where the ephemeris came from ("Kabáth et al. 2022", "your Tc", ...)
     source: str = ""                          # "NEA", "NEA (most precise)", "ExoFOP", "typed"
 
@@ -214,6 +216,8 @@ class Target:
                                               # than the old 3 s default still applies (planner.frame_cycle_s)
     cycle_s: float | None = None              # "seconds between frames" (total cycle); None = exposure + overhead
     notes: str = ""
+    shobs_p_series: str = ""                  # 1.4.1 (#6): the target's SHOBS-P series file (.cvseries), READ ONLY:
+                                              # its comp and check stars join the saturation check
     added: str = ""                           # ISO date added
     planets_checked: bool = False             # its planets were offered once (Edit/Add); later Edits never re-tick
     suggest_info: dict | None = None          # a suggestion's night, "when" (JD of its event / first good night,

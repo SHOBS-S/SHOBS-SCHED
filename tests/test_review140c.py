@@ -4,6 +4,7 @@ for Longest safe and the Saturates check, and consistent wording (flip time on a
 Saturates, "needs 5" with Out of reach)."""
 from __future__ import annotations
 
+import math
 import os
 import re
 import sys
@@ -92,7 +93,8 @@ class OnePeakModel(unittest.TestCase):
                 else:
                     # the longest one under the aim: the next standard exposure would be over it
                     i = planner.STANDARD_EXPOSURES.index(p["exposure_s"])
-                    if i + 1 < len(planner.STANDARD_EXPOSURES):
+                    if i + 1 < len(planner.STANDARD_EXPOSURES) and planner.STANDARD_EXPOSURES[i + 1] <= \
+                            p["bounds"]["e_max"]:          # 1.4.1 (#6): or the next is past the cadence cap
                         nxt = [c for c in p["curve"] if c["t"] == planner.STANDARD_EXPOSURES[i + 1]][0]
                         self.assertGreater(nxt["peak_frac"], 0.8, (setup, v, x, moon, dfc))
 
@@ -121,7 +123,13 @@ class OnePeakModel(unittest.TestCase):
                     t = transit(v=v, notes=dfc)
                     p = planner.exposure_plan(t, optics(), {}, x, moon, 280, mode="safe")
                     ex = planner.estimate_exposure(t, optics(), {}, x, moon)
-                    self.assertEqual(p["exposure_s"], ex["exposure_s"], (v, dfc, x))
+                    # 1.3.0's choice, capped by the 1.4.1 bounds (#6: ingress ÷ 10 for a transit)
+                    e_max = (p.get("bounds") or {}).get("e_max", math.inf)
+                    want = ex["exposure_s"]
+                    if want > e_max and not ex["note"].startswith("⚠"):
+                        want = max([s for s in planner.STANDARD_EXPOSURES if s <= e_max] or
+                                   [planner.STANDARD_EXPOSURES[0]])
+                    self.assertEqual(p["exposure_s"], want, (v, dfc, x))
                     if p.get("model_peak_adu") is not None:
                         # the note's and the readout's peak are one number (the noise model's)
                         self.assertAlmostEqual(p["peak_adu"], p["model_peak_adu"], delta=1e-6)
@@ -166,7 +174,11 @@ class LaterFindings(unittest.TestCase):
                    planet=pl.__dict__.copy())
         p = planner.exposure_plan(t, op, {}, 1.1, 0.0, 280)
         ex = planner.estimate_exposure(t, op, {}, 1.1)
-        self.assertEqual((p["mode"], p["exposure_s"]), ("safe", ex["exposure_s"]))   # 1.3.0's choice
+        # 1.3.0's choice (300 s here), capped by 1.4.1's cadence bound (ingress ~18 min, 10 % of T14, ÷ 10 = 108 s)
+        self.assertEqual(ex["exposure_s"], 300.0)
+        self.assertEqual((p["mode"], p["exposure_s"]), ("safe", 90.0))
+        self.assertTrue(p["bound"].startswith("cadence-limited (ingress ~18 min (10 % of T14) ÷ 10 = 108 s)"),
+                        p["bound"])
         shown = re.findall(r"peak ~([\d,]+) ADU", p["note"])
         self.assertEqual(shown, [f"{p['model_peak_adu']:,.0f}"])
         self.assertAlmostEqual(p["peak_adu"], p["model_peak_adu"], delta=1e-6)
