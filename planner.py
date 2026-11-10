@@ -614,12 +614,14 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     elif mode == "precision" and pts:
         free, _ok = S.best_exposure(pts, aim)
         free_e = free["t"] if _ok else None
-        inside = _pick_under(pts, e_max) or [min(pts, key=lambda p: p["t"])]
-        pick, fits = S.best_exposure(inside, aim)
-        if not fits and _ok:
-            # nothing inside the caps is under the aim for the target, yet a longer one is: the cap is below the
-            # shortest exposure (cadence) — the shortest is the answer, the note says why
-            pick, fits = min(inside, key=lambda p: p["t"]), pick["peak_frac"] <= aim
+        pick, fits = free, _ok
+        if _ok and free["t"] > e_max * (1.0 + 1e-9):
+            # the cap bites only when Best precision's own pick is past it: then the longest exposure inside the cap
+            # (re-running the 2 % rule on the capped set would move its anchor and pick shorter still — John's first
+            # look, HAT-P-32 b: 60 s "cadence-limited" under a 109 s cap that 90 s already met)
+            inside = [p for p in _pick_under(pts, e_max) if p["peak_frac"] <= aim]
+            pick = max(inside, key=lambda p: p["t"]) if inside else min(pts, key=lambda p: p["t"])
+            fits = pick["peak_frac"] <= aim
         out["fits"] = fits
         e = pick["t"]
         if fits:

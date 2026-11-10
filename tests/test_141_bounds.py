@@ -134,6 +134,25 @@ class CadenceBound(unittest.TestCase):
         self.assertIn("ingress taken as ~10 % of T14", " ".join(p["exposure_notes"]) + p["bounds_line"]
                       if p["bound"].startswith("cadence") else "ingress taken as ~10 % of T14")
 
+    def test_best_precision_cap_only_bites_past_its_own_pick(self):
+        """John's first look (HAT-P-32 b): Best precision's own pick (90 s) is under the cap (~109 s): it stays 90 s
+        and the bound is Best precision, not 'cadence-limited' at 60 s."""
+        sched_home(self)
+        h = Home(self)
+        h.measure()
+        for v, t14 in ((11.4, 3.1), (12.5, 2.0), (10.5, 1.5), (13.0, 3.0)):
+            t = transit(v=v, t14_h=t14)
+            capped = planner.exposure_plan(t, optics(), {}, 1.02, 0.0, 280)
+            free = planner.exposure_plan(transit(v=v, t14_h=24.0), optics(), {}, 1.02, 0.0, 280)
+            self.assertEqual(capped["mode"], "precision")
+            e_max = capped["bounds"]["e_max"]
+            if free["exposure_s"] <= e_max:
+                self.assertEqual(capped["exposure_s"], free["exposure_s"], (v, t14))
+                self.assertEqual(capped["bound"], "Best precision", (v, t14))
+            else:
+                self.assertEqual(capped["exposure_s"], max(x for x in S if x <= e_max), (v, t14))
+                self.assertTrue(capped["bound"].startswith("cadence-limited"), (v, t14, capped["bound"]))
+
     def test_own_exposure_is_kept_and_said(self):
         sched_home(self)
         Home(self)

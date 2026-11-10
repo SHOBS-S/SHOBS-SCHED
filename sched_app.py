@@ -4014,7 +4014,8 @@ class EditTargetDialog:
                                       justify=tk.LEFT, wraplength=px(app, 460))
         self.xnotes_lbl = ttk.Label(ro, textvariable=self.ro_vars["xnotes"], style="Hint.TLabel", justify=tk.LEFT,
                                     wraplength=px(app, 460))
-        ttk.Label(ro, textvariable=self.ro_vars["precision"], style="Card.TLabel").pack(anchor="w")
+        ttk.Label(ro, textvariable=self.ro_vars["precision"], style="Card.TLabel", justify=tk.LEFT,
+                  wraplength=px(app, 460)).pack(anchor="w")
         self.bar = tk.Canvas(ro, width=px(app, self.BAR_W), height=px(app, 14), background=style.CARD,
                              highlightthickness=0)
         self.bar.pack(anchor="w", pady=(px(app, 2), 0))
