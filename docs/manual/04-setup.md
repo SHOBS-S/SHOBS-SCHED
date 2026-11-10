@@ -24,7 +24,7 @@ This chapter covers:
 - saving, and leaving the page with unsaved changes,
 - the planner settings that are not on the page.
 
-![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values), Weather and the new Photometry noise box on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
+![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values), Weather and the Photometry noise box on the left; Telescope and camera, Horizon profile, Suggestions and darks (darks on hand 60, 120, 180) and the New versions box on the right; Save at the bottom](img/04-setup-page.png)
 
 The boxes sit in two columns when the window is wide enough: **Site**, **Mount and limits**, **Weather** and
 **Photometry noise (exposure by S/N)** on the left; **Telescope and camera**, **Horizon profile**, **Suggestions
@@ -150,7 +150,7 @@ The TELESCOP keyword is not used: ASIAIR writes the mount driver's name there, n
 
 Values read from a frame are tagged *from FITS* and win over SHOBS-P's. Type over one and it becomes *set here*.
 
-![The Setup page right after Read from a FITS frame…: the summary "⚠ Read the header of example_frame2.fits (ZWO ASI533MC Pro). Press Save to keep these values.", the Changed: list (Gain setting 100 → 120, e⁻ per ADU 1 → 0.75, Focal length 1600 → 1580 mm), the values already the same, the keyword not in this frame (ROTATOR, hence ⚠), and the *from FITS* tags](img/04-fits-summary.png)
+![The Setup page right after Read from a FITS frame…: the summary "⚠ Read the header of example_frame2.fits (ZWO ASI533MC Pro). Press Save to keep these values.", the Changed: list (Gain setting 100 → 120, e⁻ per ADU 0.25 → 0.75 e⁻/ADU, Focal length 1600 → 1580 mm), the values already the same, the keyword not in this frame (ROTATOR, hence ⚠), and the *from FITS* tags](img/04-fits-summary.png)
 
 ## Mount and limits
 

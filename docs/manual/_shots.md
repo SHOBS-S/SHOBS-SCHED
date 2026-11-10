@@ -5,6 +5,14 @@ is kept from 1.1.0: the Windows setup did not change.
 
 ## 1.4.1: what must be reshot
 
+**Done 10 Nov 2026** on build 394d62c (example site, no SHOBS-P, no FLUX profile): every image in the table below and
+every main-window shot, except the REUSE list. Notes from the session: 05-edit-exposure came out **40 s,
+comp-candidate-limited** (APASS V 10.47, 9.9′ away), not the "90 s capped" guessed below, because the comp check now
+bounds Longest safe (chapter 5 updated); 02-first-start and 04-setup-page are two captures joined so the whole page
+(New versions box included) shows; 05-edit-dialog is joined the same way to show the start of Observing; the
+username in 07-obsplan-page's paths reads "you"; 03-targets-two and 03-night-tab come from a fresh settings folder
+(NEA was down, so WASP-12 b's saved Archive answer was copied in).
+
 Same house rule and the same set-up as 1.4.0 below (example site, **no SHOBS-FLUX profile**, no real observatory
 names). Every main-window shot shows **Version 1.4.1** in the sidebar, so all of them are reshot again; the 1.4.0
 table below says how to set each up. On top of that:

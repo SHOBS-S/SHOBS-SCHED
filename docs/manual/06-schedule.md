@@ -135,7 +135,7 @@ The Moon is given in the order the dark night meets it: whether it is up or down
 dawn. For example *Moon 62 % (down at dusk, rises 23:10)*, *Moon 48 % (up at dusk, sets 01:35)*, or, when it does not
 rise or set in the dark, *Moon 95 % (up all night)* or *Moon 3 % (down all night)*.
 
-![A night tab (Sat 31 Oct): the night's line and a ⚠ dew line, the weather strip above the night plot, the HAT-P-32 b transit selected and drawn bright, DY Peg and the HD 219134 campaign, the nightly table with its (S/N) and (est.) exposures and its notes (each led by the verdict), and the Flats and darks, Didn't fit (with Plan this instead) and Free time boxes](img/06-night-tab.png)
+![A night tab (Sun 15 Nov, its tab marked ⚠): the night's line and a ⚠ dew line, the weather strip with its dew-onset marker above the night plot, the HAT-P-32 b transit selected and drawn bright with its ▼ flip, TZ Aur and the WASP-12 b transit, the nightly table with its 20 s (S/N) and (est.) exposures and its notes (each led by the verdict), the selected block's notes with "⚠ Baseline trimmed (next to TZ Aur)" and "⚠ Meridian flip during the transit (23:05)", and the Flats and darks, Didn't fit and Free time boxes](img/06-night-tab.png)
 
 ## The night plot
 
@@ -278,7 +278,7 @@ While a build or rebuild runs, these buttons wait: *⚠ Wait for the build to fi
 
 Under the table are three boxes.
 
-![Another night (Tue 03 Nov, its tab marked ⚠): AB And with "stop by 21:04 at the latest", the WASP-12 b transit selected with its meridian time marked (flip) and the caution "⚠ Meridian flip during the transit (04:18)"; the Lock, Remove, Move to night… (grayed for a transit), Edit times… and Status row; and the Flats and darks, Didn't fit and Free time boxes](img/06-night-tab-lower.png)
+![Another night (Sat 14 Nov): DY Peg and U Peg with their flips, the WASP-12 b transit selected, its notes ending "Ends 3 min past its meridian, inside your tracking margin; stop by 03:39 at the latest" and its caution "⚠ Baseline trimmed (next to U Peg)"; the Lock, Remove, Move to night… (grayed for a transit), Edit times… and Status row; and the Flats and darks, Didn't fit (with Plan this instead) and Free time boxes](img/06-night-tab-lower.png)
 
 **Flats and darks to shoot.** For example *Flats: one set at the night's camera angle; a meridian flip's 180° turn
 needs no new flats*, and *Darks to shoot: 0.75 s, 45 s, 60 s*. A defocused target adds *flats at the defocus position

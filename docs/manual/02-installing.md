@@ -82,7 +82,7 @@ console window, on the **Setup** page.
 
 The window fills most of the screen. You can resize it or maximize it like any other window.
 
-![SHOBS-SCHED on first start: the Setup page with empty fields and the line "Enter your site and equipment once"](img/02-first-start.png)
+![SHOBS-SCHED on first start: the Setup page with empty fields, the line "Enter your site and equipment once", the time zone guessed from the computer's clock, the Photometry noise box with its estimate tags, and the New versions box at the bottom right](img/02-first-start.png)
 
 ### Other ways to start
 

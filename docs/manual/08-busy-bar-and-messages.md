@@ -39,7 +39,7 @@ Some things to know:
   planet… 291 of 302*), then checks the best of them again with each planet's most precise ephemeris (*Finding
   suggested transits: the best with their most precise ephemeris… 12 of 50*).
 
-![The green busy bar with "Finding suggested transits: the best with their most precise ephemeris… 10 of 37": the second pass of the search](img/08-busy-bar-find.png)
+![The green busy bar with "Finding suggested transits: the best with their most precise ephemeris… 14 of 35": the second pass of the search](img/08-busy-bar-find.png)
 
 - **Dialogs have their own busy bar.** The Edit dialog's planet lookup, for example, shows its busy bar at the
   **dialog's** lower left (*Looking up HD 219134's planets at the NASA Exoplanet Archive…*, or *Asking APASS
