@@ -1,9 +1,9 @@
-# SHOBS-SCHED User's Manual (version 1.4.0)
+# SHOBS-SCHED User's Manual (version 1.4.1)
 
 **Shiloh Hill Observatory Photometry Scheduler (SHOBS-SCHED)**
 *Plans each night's photometry: transits, variable stars and campaigns.*
 
-> Fourth edition, November 2026. Written for SHOBS-SCHED 1.4.0 and checked against the program; the screenshots
+> Fifth edition, November 2026. Written for SHOBS-SCHED 1.4.1 and checked against the program; the screenshots
 > are real captures from SHOBS-SCHED on Windows, using a made-up example site. Each chapter is its own file in this
 > folder; this page is the table of contents. A PDF of the whole manual is built with
 > `python tools/build_manual_pdf.py`.

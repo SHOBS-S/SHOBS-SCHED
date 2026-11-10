@@ -59,7 +59,8 @@ CREDITS = [
          "with the National Aeronautics and Space Administration under the Exoplanet Exploration Program.\"",
          "https://exofop.ipac.caltech.edu/tess"),
         ("APASS DR9 (via VizieR)", "The comp check in a target's Edit window (Check comps: stars near the target's "
-         "V and B−V), asked only when you press the button.",
+         "V and B−V), and Build schedule's comp step (the likely comps whose peaks the exposure must protect, for "
+         "targets with no saved check; 1.4.1).",
          "\"This research was made possible through the use of the AAVSO Photometric All-Sky Survey (APASS), funded "
          "by the Robert Martin Ayers Sciences Fund and NSF AST-1412587.\" Henden, A. A. et al. 2016, VizieR On-line "
          "Data Catalog II/336.", "https://www.aavso.org/apass"),

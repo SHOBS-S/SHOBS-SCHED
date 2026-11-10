@@ -8,14 +8,15 @@ used.
 
 1. Click **Credits and sources** near the bottom of the sidebar. It is not a step: **Back** returns you to the page
    you came from.
-2. At the top: **SHOBS-SCHED 1.4.0 © 2026 Shiloh Hill Observatory**, the license line, and **How to cite
+2. At the top: **SHOBS-SCHED 1.4.1 © 2026 Shiloh Hill Observatory**, the license line, and **How to cite
    SHOBS-SCHED** with the citation and a **Copy** button (see "How to cite SHOBS-SCHED" below).
 3. Below that, the full list, in four parts:
    - **CATALOGS AND SERVICES**: the NASA Exoplanet Archive, AAVSO VSX, VizieR (CDS), SIMBAD (CDS), ExoClock,
      ExoFOP-TESS, **APASS DR9 (via VizieR)** and Open-Meteo. The VizieR and SIMBAD entries also name the mirrors
      SHOBS-SCHED asks when CDS does not answer: VizieR's at the CfA and at IDIA (Cape Town), and SIMBAD's at IDIA.
-     ExoClock and ExoFOP-TESS give the optional priorities of **Find suggested transits…** (chapter 5). APASS is new
-     in 1.4.0: it answers **Check comps** in a target's Edit dialog, and is asked only when you press that button.
+     ExoClock and ExoFOP-TESS give the optional priorities of **Find suggested transits…** (chapter 5). APASS (new
+     in 1.4.0) answers **Check comps** in a target's Edit dialog and, since 1.4.1, **Build schedule**'s comp step for
+     targets with no saved comp check (the stars whose peaks the exposure must protect).
    - **DESIGN AND CODE**: TAPIR (the night plot's design), **SHOBS-FLUX** (new in 1.4.0: the instrument profiles
      behind the exposure by S/N, which SHOBS-SCHED only reads) and SHOBS-P (where SHOBS-SCHED's sky arithmetic
      started).
@@ -29,7 +30,7 @@ used.
    acknowledgements each source asks for, in its own words.
 4. To keep a copy, click **Save credits as text…**. It offers `SHOBS-SCHED_credits.txt` in your Downloads folder.
 
-![The Credits and sources page: "SHOBS-SCHED 1.4.0 © 2026 Shiloh Hill Observatory", the license line, How to cite SHOBS-SCHED with its Copy button, the list of catalogs (with APASS DR9), design (with SHOBS-FLUX), libraries and methods, and the Save credits as text… and Back buttons](img/09-credits-page.png)
+![The Credits and sources page: "SHOBS-SCHED 1.4.1 © 2026 Shiloh Hill Observatory", the license line, How to cite SHOBS-SCHED with its Copy button, the list of catalogs (with APASS DR9), design (with SHOBS-FLUX), libraries and methods, and the Save credits as text… and Back buttons](img/09-credits-page.png)
 
 The saved text starts with the same citation (*How to cite SHOBS-SCHED:*) before the list.
 
@@ -77,10 +78,10 @@ This is the *concept* DOI: it stands for all versions of SHOBS-SCHED and always 
 right however often the program is updated. Cite it with the version you used.
 
 The **How to cite SHOBS-SCHED** section at the top of the Credits and sources page gives the citation, ready to
-paste; press **Copy** to put it on the clipboard (*✔ Citation copied to the clipboard.*). For 1.4.0 it reads:
+paste; press **Copy** to put it on the clipboard (*✔ Citation copied to the clipboard.*). For 1.4.1 it reads:
 
 *Armbrust, J. W., and Shiloh Hill Observatory, SHOBS-SCHED: Shiloh Hill Observatory Photometry Scheduler, version
-1.4.0, Zenodo, doi:10.5281/zenodo.23674791*
+1.4.1, Zenodo, doi:10.5281/zenodo.23674791*
 
 The version in it is always the one you are running (it is also at the bottom of the sidebar).
 
@@ -94,7 +95,7 @@ For a reference list in BibTeX, for example:
 @software{shobs_sched,
   author    = {Armbrust, John William and {Shiloh Hill Observatory}},
   title     = {{SHOBS-SCHED: Shiloh Hill Observatory Photometry Scheduler}},
-  version   = {1.4.0},
+  version   = {1.4.1},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.23674791},
   url       = {https://doi.org/10.5281/zenodo.23674791}

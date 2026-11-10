@@ -54,6 +54,26 @@ All times are shown on your **site's clock**, whatever time zone the computer is
 Setup can also **read your camera from a FITS frame** (camera, gain, e⁻/ADU, pixel size, focal length, binning,
 camera angle), and every Setup value is tagged with where it came from: *from SHOBS-P*, *from FITS* or *set here*.
 
+## New in 1.4.1
+
+* **The exposure names the bound that decided it** (GitHub issue #6). Best precision and Longest safe keep inside
+  three bounds: **saturation** of the target *and* the stars you will measure (the comparison and check stars of the
+  target's SHOBS-P series, read only; without one, the APASS stars up to 1.5 mag brighter than the target, which a
+  Build now checks first), **cadence** (frame cycle at most P/50 for a variable or campaign, at most the ingress ÷ 10
+  for a transit) and **precision** within them. The Edit window's new **Bounds** line reads, for example, *180 s,
+  cadence-limited (P/50 = 4.3 min) · peak 61 % of linear ✓ (check star) · 1.2 ppt / 10 min, Detectable · cap costs
+  1 % vs 300 s*, and a plot line marks the cap. **An answer always comes back**: when nothing fits, the exposure is
+  still a number, with a sentence saying which bound broke and what to do.
+* **Checked against real nights.** The back-test against SHOBS-P's on-sky logs (36 runs, Sep–Nov 2026) found the
+  predicted peaks 1.3–1.9× low; with a SHOBS-FLUX zero point they are now scaled to match (median error 9 % at
+  30 s and longer). A SHOBS-P series' comps now count in the 10-minute precision.
+* **New-version check** (#5): at start, once a day and in the background, SHOBS-SCHED asks GitHub whether a newer
+  version is out and says so on the status strip, with the release's highlights a click away. It never downloads
+  anything; Setup → New versions turns it off. Want an email for each release? On GitHub: **Watch → Custom →
+  Releases** (or the feed `https://github.com/SHOBS-S/SHOBS-SCHED/releases.atom`).
+* The precision plot's *over linear* / *saturated* words are no longer clipped, and a CDS server that does not
+  answer is skipped for 10 minutes (the mirrors are asked at once).
+
 ## New in 1.4.0
 
 * **Exposure by S/N, with a verdict** (GitHub issue #4). A target's **Edit…** window has an **Exposure** section:
@@ -111,7 +131,7 @@ Settings live in your home folder: `.shobs_sched_settings.json`, `.shobs_sched_t
 
 ## Documentation
 
-**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (written for version 1.4.0) walks you through the program
+**[The SHOBS-SCHED User's Manual](docs/manual/README.md)** (written for version 1.4.1) walks you through the program
 step by step: installing, your first night, the Setup, Targets, Schedule and OBSPlan pages, the busy bar and messages,
 troubleshooting and a glossary. A PDF of the whole manual can be built with `python tools/build_manual_pdf.py`.
 

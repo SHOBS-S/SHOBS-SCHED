@@ -167,6 +167,19 @@ The Python environment is separate again: it holds only Python and its packages.
 
 ## Updating to a new version
 
+**How you hear of one (new in 1.4.1).** At start, SHOBS-SCHED asks GitHub, in the background and at most once a day,
+whether a newer version is out. When one is, the status strip says so at its right end, in light blue, for example
+*SHOBS-SCHED 1.4.2 is available: Exposure picks name their bound — click for details*. Click it: a small **New
+version** window lists what the new version brings, with an **Open release page** button (your web browser opens the
+release page, with the zip, the users manual and the full notes) and **Close**. When a release names no highlights,
+the note says *… is available — see the release notes* and a click opens the page at once.
+
+SHOBS-SCHED never downloads or installs anything itself, and nothing about you is sent (only the program's name and
+version, which GitHub asks of every caller). With no internet, or when GitHub does not answer, it says nothing. To
+turn the check off: Setup → **New versions** → untick **Check for new versions at start**. For an email at each
+release instead: on the GitHub page, **Watch** → **Custom** → **Releases** (or follow
+`https://github.com/SHOBS-S/SHOBS-SCHED/releases.atom` in a feed reader).
+
 1. Unzip the new version, over the old folder or beside it.
 2. On Windows, double-click **Create shortcuts.bat** in the new folder. It points the shortcuts at it and installs
    any new packages the new version needs. The Python environment is shared by every SHOBS-SCHED version, so this is

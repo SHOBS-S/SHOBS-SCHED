@@ -48,7 +48,7 @@ What it does **not** do:
 SHOBS-SCHED has one main window. The blue sidebar on the left reads **Shiloh Hill / Observatory / Photometry /
 Scheduler**, with **(SHOBS-SCHED)** under it and the line *Plans each night's photometry: transits, variable stars
 and campaigns*. Below that are the four steps, and at the bottom **Credits and sources** and the version number
-(**Version 1.4.0**).
+(**Version 1.4.1**).
 
 ![The SHOBS-SCHED window: sidebar with the four steps, the white page area with its title, and the status strip along the bottom](img/01-window-parts.png)
 

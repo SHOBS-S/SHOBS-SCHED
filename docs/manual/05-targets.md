@@ -300,6 +300,44 @@ measured by SHOBS-FLUX or typed in Setup). Longest safe: the longest standard ex
 under the aim
 (1.3.0's rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours.*
 
+**The three bounds (new in 1.4.1).** Best precision and Longest safe both keep inside three bounds, and the
+readout names the one that decided the exposure:
+
+1. **Saturation.** Not only the target: the stars you will measure must stay under the aim too. When the target has
+   a SHOBS-P series (the **SHOBS-P series** field below), these are its comparison and check stars. Without one, they
+   are the likely comps: the APASS stars in the field from the target's brightness up to 1.5 mag brighter (from the
+   comp check, which **Build schedule** also runs for you). A brighter field star nobody would use as a comp only gets a
+   plain note when it would be over the linear limit.
+2. **Cadence.** Frames must come often enough to time the event: the frame cycle (exposure plus download) at most
+   **P/50** for a variable or campaign with a period, and at most **the ingress ÷ 10** for a transit. The ingress
+   comes from the planet's duration, impact parameter and size; when the Archive does not give those, SCHED takes it
+   as 10 % of the duration and says so.
+3. **Precision.** Inside those two, Best precision picks as described above; Longest safe takes the longest.
+
+The **Bounds** line under the Exposure line shows all three at once, for example *Bounds: 180 s, cadence-limited
+(P/50 = 4.3 min) · peak 61 % of linear ✓ (check star: TYC 3281-582-1) · 1.2 ppt / 10 min, Detectable · cap costs
+1 % vs 300 s*. "Cap costs" is how much precision the cap gives up against the exposure SCHED would take without it;
+when that is a lot, or the verdict drops, a note says so: you can still trade timing for photons with **My
+exposure**.
+
+**An answer always comes back.** When even the best exposure is not a good one, SCHED still gives a number and says
+why:
+
+| When | Exposure given | What it says |
+|---|---|---|
+| A comp or the check saturates even at 0.75 s | 0.75 s | *⚠ even 0.75 s may saturate Comp 2 (…) (peak ~118 % of the linear limit); pick a fainter comp* (with a candidate when the comp check has one). The target itself: *⚠ even 0.75 s may saturate…; defocus*. |
+| The cadence cap is shorter than the camera can cycle | 0.75 s | *cadence-limited: frame cycle 5.2 s can't reach P/50 = 3.1 s; timing ~1.7× coarser than the rule* (a plain note: nothing to fix but the download time) |
+| Both | 0.75 s | Both, saturation first. |
+| The caps cost much precision | the capped one | *cap costs 40 % vs 300 s (Marginal? at 300 s, but timing coarser than P/50); you can trade timing for photons with My exposure* |
+| No V magnitude, or no telescope and camera | 60 s | *estimate: 60 s placeholder (no V magnitude); set your own exposure* |
+| The catalog did not answer (no series) | from the target alone | *comps not checked: catalog unreachable; check comp peaks in SHOBS-P* |
+
+Under 5 s a plain note adds that the peak varies about ±40 % night to night with the seeing (very short frames
+freeze it), so check the first frames' peaks.
+
+With a SHOBS-FLUX zero point the predicted peaks are scaled to what your own frames showed: the 1.4.1 back-test
+against SHOBS-P's on-sky logs found real peaks 1.3–1.9 times the simple model's, most at short exposures.
+
 **The default.** When you have not chosen, a target gets:
 
 - a **transit**: **Best precision**, but only when the zero point is known: measured by a SHOBS-FLUX profile or
@@ -331,7 +369,8 @@ Under it, a gray line says which magnitude was used. SHOBS-SCHED knows only the 
 | Line | Example | What it says |
 |---|---|---|
 | Exposure | *Exposure 90 s (Longest safe) · predicted peak ~62 % of the linear limit (31,009 ADU)* | The exposure, how it was chosen, and the predicted peak of the star's brightest pixel. Over the linear limit the line turns yellow. |
-| Precision | *Precision 1.1 ppt per 10-minute bin (~3 frames a bin; the target star alone)* | The scatter you can expect in 10 minutes of data (see "How SHOBS-SCHED works out the S/N"). |
+| Bounds (1.4.1) | *Bounds: 90 s, cadence-limited (ingress ~18 min (10 % of T14) ÷ 10 = 108 s) · peak 62 % of linear ✓ (target) · 1.1 ppt / 10 min, Detectable? · cap costs 2 % vs 300 s* | The three bounds and the one that won (above). Under it, any ⚠ in yellow and the plain notes in gray. |
+| Precision | *Precision 1.1 ppt per 10-minute bin (~3 frames a bin; the target star alone)* | The scatter you can expect in 10 minutes of data (see "How SHOBS-SCHED works out the S/N"). With a SHOBS-P series it counts the comps' noise too (*… the target and its 4 comps (SHOBS-P series)*): a bright target with faint comps is limited by them. |
 | Noise budget bar | a small bar in four colors | Where the noise comes from: **photon** (blue), **sky** (gray), **scintillation** (orange) and **read + dark** (purple). |
 | Noise budget words | *Noise budget: photon 77 % · sky 1 % · scintillation 22 % · read + dark 0 %* | The same in numbers (shares of the noise). |
 | The event | *Transit 1.37 % deep, 3.0 h long: 18 ten-minute bins in transit*, or for a variable *Range 0.56 mag (VSX; 40 % in flux), against one 10-minute bin* | What the S/N is measured against. |
@@ -347,8 +386,10 @@ VSX variable)* for any other star, such as a planet host kept as a campaign).
 
 **The precision vs exposure plot.** Under the readout, a small plot shows the precision per 10-minute bin (up) for each
 standard exposure (across, on a log scale: 1 s, 10 s, 100 s). Lower is better. Where the peak would be over the linear
-limit the plot is shaded yellow (*over linear*); where it would saturate the camera, pink (*saturated*). The chosen
-exposure is circled in green. **Click the plot** to pick the nearest standard exposure: it becomes **My exposure**.
+limit the plot is shaded yellow (*over linear*); where it would saturate the camera, pink (*saturated*). A gray dashed
+line marks the cap from bound 1 or 2 (*cadence cap* or *comp cap*); the words sit at the top right on their own
+backing. The chosen exposure is circled in green. **Click the plot** to pick the nearest standard exposure: it becomes
+**My exposure**.
 
 The curve is usually steep on the left (short frames lose much time to download and suffer more scintillation) and
 flat on the right. The flat part is where longer frames no longer help; that is why Best precision stops there.
@@ -366,7 +407,13 @@ and an earlier answer was saved; or *✖ Comps not checked: …*). The answer is
   dim differently as the star sinks.
 - *…; the star's own B−V is not in APASS, so colours are not compared.*
 
-The search radius is half the shorter side of your camera's field (between 5′ and 30′).
+The search radius is half the shorter side of your camera's field (between 5′ and 30′). After a check, the readout
+works the saturation bound out again with the candidates it found.
+
+**SHOBS-P series (1.4.1, shown when SHOBS-P is installed).** The target's SHOBS-P series file (*.cvseries*), typed or
+chosen with **Browse…**. Its comparison and check stars, with the magnitudes the series uses, join the saturation
+check, and their noise joins the precision. SHOBS-SCHED only reads the file; it never changes it. Empty: the APASS
+candidates are checked instead. A file that cannot be read is said in a plain note, and the candidates are used.
 
 **Saving.** With **My exposure** chosen and its box empty, **Save** says *✖ Not saved: My exposure is empty: type your
 exposure in seconds, or choose Best precision or Longest safe.*

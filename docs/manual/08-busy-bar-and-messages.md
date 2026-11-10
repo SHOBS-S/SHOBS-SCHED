@@ -21,6 +21,7 @@ You see it while SHOBS-SCHED is:
 | Filling in the Targets lists' next events | *Working out each target's next event…* |
 | Looking up a star's planets for a new campaign | *Looking up the star HD 219134…* (or *Looking up HD 219134's known planets…* when its position is already known) |
 | Finding suggestions | *Finding suggested transits…* (while the planet list and any Priority lists load), *Finding suggested transits: transits of each planet… 121 of 640*, then *Finding suggested transits: the best with their most precise ephemeris… 12 of 50*; *Finding suggested variables (VSX at VizieR; up to a minute or two)… 251 of 1200* |
+| Checking comp stars first (Build, Re-review; 1.4.1) | *Checking comp stars for GSC 03308-00462 (1 of 3)…* — only for ticked targets with no SHOBS-P series and no saved comp check; after two targets in a row get no answer it stops asking for the rest |
 | Getting the weather (Build, Re-review) | *Getting the forecast from Open-Meteo…* |
 | Building the schedule | *Building 7 nights…*, *Re-reviewing 7 nights…*, *Working out twilight and Moon times…*, *Rebuilding Mon 02 Nov…* |
 | Checking transit ephemerides (at startup, and when you tick or keep a transit) | *Checking transit ephemerides at the NASA Exoplanet Archive…* |
@@ -29,8 +30,8 @@ You see it while SHOBS-SCHED is:
 
 Some things to know:
 
-- **A multi-step job changes its words step by step.** **Build schedule**, for example, first says *Getting the
-  forecast from Open-Meteo…*, then *Building 7 nights…*, then *Working out twilight and Moon times…*.
+- **A multi-step job changes its words step by step.** **Build schedule**, for example, first says (when there are
+  comps to check) *Checking comp stars for …*, then *Getting the forecast from Open-Meteo…*, then *Building 7 nights…*, then *Working out twilight and Moon times…*.
 - **When the count is known, the words carry it.** A suggestion search says how far it has got, *… 12 of 40*. The
   bar itself still moves back and forth; it never fills up.
 - **A search in two passes names each pass, and each counts up on its own.** **Find suggested transits…** first
@@ -79,6 +80,8 @@ The status strip runs along the bottom of the window:
 2. **Its second line** is a short credits line: *© Shiloh Hill Observatory*, *Data: NASA Exoplanet Archive, AAVSO
    VSX, CDS (VizieR, SIMBAD), Open-Meteo, ExoClock, ExoFOP, APASS*, *Night plot after TAPIR* and *Full list: Credits and sources*.
 3. **The busy bar** appears at the left end of the first line, before the news, while the program works.
+4. **A newer version** (1.4.1): at the right end of the first line, in light blue and underlined, *SHOBS-SCHED 1.4.2
+   is available: … — click for details*. Other news never replaces it. See chapter 2, "Updating to a new version".
 
 If something unexpected goes wrong inside the window, the status strip says *✖ Something went wrong: … Details are in
 …\sched.log.* See chapter 10.

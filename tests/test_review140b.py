@@ -405,7 +405,7 @@ class ManualTool(unittest.TestCase):
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
         self.assertEqual(m.VERSION, settings.APP_VERSION)
-        self.assertEqual(m.EDITION, "Fourth edition")          # read from docs/manual/README.md
+        self.assertEqual(m.EDITION, "Fifth edition")           # read from docs/manual/README.md (1.4.1)
 
 
 class AimClamp(unittest.TestCase):
