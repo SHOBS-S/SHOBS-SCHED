@@ -1573,18 +1573,25 @@ COMP_DV = 1.0                 # a comp within this many magnitudes of the target
 COMP_DBV = 0.3                # … and this close in B−V counts as a colour match
 TARGET_MATCH_ARCSEC = 6.0     # the APASS star at the target's place (its own B−V)
 APASS_DAMAGED_V = 6.0         # a reply where most stars are brighter than this is a broken catalog copy, not the sky
+APASS_MAX_BRIGHT = 10         # … or with more than this many stars brighter than V 7, whatever the target
 
 
 def apass_vs_plausible(vs, vmax: float | None = None) -> bool:
     """False when most of an APASS cone's stars (and at least 3) are brighter than V APASS_DAMAGED_V: a damaged copy
     of the catalog, not a real field (10 Nov 2026: the CfA mirror's II/336 sent V 0.1–2.1 for stars IDIA and CDS give
     as V 12–13; a 12′ cone holds a star brighter than V 6 about once in a hundred fields). Not judged when the query's
-    own limit vmax is under 8 (a target of V 6 or brighter: every row it can get is bright). It sees only damage that
+    own limit vmax is under 8 (a target of V 6 or brighter: every row it can get is bright), but more than
+    APASS_MAX_BRIGHT stars brighter than V 7 in one cone is damaged for every target. It sees only damage that
     makes stars too bright: one or two bad rows, or magnitudes shifted fainter, pass (the CfA rows had V close to
     their B−V, as if columns were shifted, so their B−V is suspect too)."""
+    vs = [v for v in vs if v is not None]
+    # for every target: the whole sky has ~15,000 stars brighter than V 7, under one per square degree even in the
+    # Milky Way, so a cone (≤ 30′) with more than APASS_MAX_BRIGHT of them is a damaged copy (10 Nov 2026: CfA sent
+    # 288 "stars" brighter than V 7.6 around HD 219134, which the majority rule below lets through for a bright target)
+    if sum(1 for v in vs if v < 7.0) > APASS_MAX_BRIGHT:
+        return False
     if vmax is not None and vmax < 8.0:
         return True
-    vs = [v for v in vs if v is not None]
     bright = sum(1 for v in vs if v < APASS_DAMAGED_V)
     return not (bright >= 3 and bright * 2 > len(vs))
 

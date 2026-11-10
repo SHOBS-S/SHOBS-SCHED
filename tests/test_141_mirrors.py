@@ -150,6 +150,16 @@ class DamagedMirror(unittest.TestCase):
         self.assertEqual(len(T.saved_comp_stars(t.ra, t.dec, 12.2, t.vmag)["rows"]), 3)
         self.assertTrue(hasattr(comps, "prefetch"))
 
+    def test_bright_target_damaged_copy_still_caught(self):
+        # 10 Nov 2026, the OBSPlan card: HD 219134 (V 5.57, query to V 7.57) got 288 CfA rows, brightest V 0.06
+        bad = "#\n" + HEAD + "".join(f"348.3{i:02d}\t+57.1{i:02d}\t {0.06 + i * 0.05:.3f}\t 0.2\n" for i in range(40))
+        self.fake(replies=(None, bad, ASU_REPLY))
+        data, _note = T.comp_stars(348.3208, 57.1683, 12.2, 5.57, refresh=True)
+        self.assertEqual(len(data["rows"]), 3)                 # IDIA's (here the fake ASU reply)
+        self.assertTrue(self.urls[-1].startswith(T.VIZIER_ASU[2]))
+        self.assertFalse(T.apass_vs_plausible([0.06 + i * 0.05 for i in range(40)], vmax=7.57))
+        self.assertTrue(T.apass_vs_plausible([5.57, 6.8, 7.2], vmax=7.57))     # the target and two real neighbours
+
 
 if __name__ == "__main__":
     unittest.main()
