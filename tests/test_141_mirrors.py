@@ -160,6 +160,15 @@ class DamagedMirror(unittest.TestCase):
         self.assertFalse(T.apass_vs_plausible([0.06 + i * 0.05 for i in range(40)], vmax=7.57))
         self.assertTrue(T.apass_vs_plausible([5.57, 6.8, 7.2], vmax=7.57))     # the target and two real neighbours
 
+    def test_bright_target_small_sparse_cone(self):
+        # Fable recheck of c75bb9b (S2): a 5′ cone at the North Galactic Pole gets only 5 damaged rows (V 0.35–1.17)
+        self.assertFalse(T.apass_vs_plausible([0.35, 0.6, 0.8, 1.0, 1.17], vmax=7.57))
+        self.assertFalse(T.apass_vs_plausible([0.35, 1.17], vmax=7.57))
+        self.assertTrue(T.apass_vs_plausible([3.9], vmax=7.57))              # one odd row alone is not enough
+        self.assertTrue(T.apass_vs_plausible([6.26, 6.9, 7.4], vmax=7.57))   # APASS's brightest real rows
+        # M7, the closest real call: 9 stars brighter than V 7 in 30′, none brighter than V 6
+        self.assertTrue(T.apass_vs_plausible([6.1, 6.3, 6.5, 6.6, 6.7, 6.8, 6.85, 6.9, 6.95] + [9.0] * 200))
+
 
 if __name__ == "__main__":
     unittest.main()

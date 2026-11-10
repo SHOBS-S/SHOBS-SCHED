@@ -1573,22 +1573,26 @@ COMP_DV = 1.0                 # a comp within this many magnitudes of the target
 COMP_DBV = 0.3                # … and this close in B−V counts as a colour match
 TARGET_MATCH_ARCSEC = 6.0     # the APASS star at the target's place (its own B−V)
 APASS_DAMAGED_V = 6.0         # a reply where most stars are brighter than this is a broken catalog copy, not the sky
-APASS_MAX_BRIGHT = 10         # … or with more than this many stars brighter than V 7, whatever the target
+APASS_MAX_BRIGHT = 10         # … or with more than this many stars brighter than V 6, whatever the target
+APASS_FLOOR_V = 4.0           # … or with two stars brighter than this (APASS has none: its range starts at V 5.5)
 
 
 def apass_vs_plausible(vs, vmax: float | None = None) -> bool:
     """False when most of an APASS cone's stars (and at least 3) are brighter than V APASS_DAMAGED_V: a damaged copy
     of the catalog, not a real field (10 Nov 2026: the CfA mirror's II/336 sent V 0.1–2.1 for stars IDIA and CDS give
     as V 12–13; a 12′ cone holds a star brighter than V 6 about once in a hundred fields). Not judged when the query's
-    own limit vmax is under 8 (a target of V 6 or brighter: every row it can get is bright), but more than
-    APASS_MAX_BRIGHT stars brighter than V 7 in one cone is damaged for every target. It sees only damage that
+    own limit vmax is under 8 (a target of V 6 or brighter: every row it can get is bright), but two stars brighter
+    than V APASS_FLOOR_V, or more than APASS_MAX_BRIGHT brighter than V 6, are damaged for every target. It sees only
+    damage that
     makes stars too bright: one or two bad rows, or magnitudes shifted fainter, pass (the CfA rows had V close to
     their B−V, as if columns were shifted, so their B−V is suspect too)."""
     vs = [v for v in vs if v is not None]
-    # for every target: the whole sky has ~15,000 stars brighter than V 7, under one per square degree even in the
-    # Milky Way, so a cone (≤ 30′) with more than APASS_MAX_BRIGHT of them is a damaged copy (10 Nov 2026: CfA sent
-    # 288 "stars" brighter than V 7.6 around HD 219134, which the majority rule below lets through for a bright target)
-    if sum(1 for v in vs if v < 7.0) > APASS_MAX_BRIGHT:
+    # For every target and cone size (10 Nov 2026: CfA sent 288 "stars" brighter than V 7.6 around HD 219134, which
+    # the majority rule below lets through for a bright target; a 5′ cone in a sparse field gets only ~5 such rows).
+    # APASS saturates near V 7: VizieR gives its Vmag range as 5.5–27.4 and the brightest real row seen is V 6.26,
+    # while every damaged row was under V 1.9. So two rows brighter than V 4 are a damaged copy; more than
+    # APASS_MAX_BRIGHT brighter than V 6 (no real row seen anywhere, open clusters included) is the backstop.
+    if sum(1 for v in vs if v < APASS_FLOOR_V) >= 2 or sum(1 for v in vs if v < APASS_DAMAGED_V) > APASS_MAX_BRIGHT:
         return False
     if vmax is not None and vmax < 8.0:
         return True
@@ -1631,7 +1635,7 @@ def _fetch_comps(ra: float, dec: float, radius_arcmin: float, vmax: float):
     try:
         rows = _tap_csv(VIZIER_TAP, adql, nea=False, expect="RAJ2000")
         if not _rows_plausible(rows, vmax):
-            raise FetchError("its APASS magnitudes made no sense (most stars brighter than V 6)")
+            raise FetchError("its APASS magnitudes made no sense (stars brighter than APASS can hold)")
     except FetchError as exc:
         # VizieR's TAP service can be down while its plain (ASU) interface answers (8 Nov 2026: TAP timed out on
         # every query for an evening; the variable search got through on ASU, the comp check had no way round)
@@ -1664,8 +1668,8 @@ def _comps_asu(ra: float, dec: float, radius_arcmin: float, vmax: float) -> list
             continue
         if rows and not _rows_plausible(rows, vmax):
             host = urllib.parse.urlsplit(base).hostname
-            settings.log(f"VizieR ASU at {host} sent APASS magnitudes that make no sense (most of {len(rows)} stars "
-                         f"brighter than V {APASS_DAMAGED_V:.0f}); trying the next mirror")
+            settings.log(f"VizieR ASU at {host} sent APASS magnitudes that make no sense ({len(rows)} stars, "
+                         f"brightest V {min((v for v in (_f(r.get('Vmag')) for r in rows) if v is not None), default=99.0):.2f}); trying the next mirror")
             damaged = True
             continue
         if rows:
