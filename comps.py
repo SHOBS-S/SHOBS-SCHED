@@ -155,7 +155,7 @@ def measured_stars(t, optics) -> dict:
         return out
     try:
         tg, rad, key = _cone(t, optics)
-        data = tg.saved_comp_stars(t.ra, t.dec, rad)
+        data = tg.saved_comp_stars(t.ra, t.dec, rad, t.vmag)
     except Exception:
         key, data = None, None
     if data:
@@ -193,7 +193,7 @@ def prefetch(targets, optics, step=None, tg=None) -> dict:
             continue
         rad = tg.comp_radius_arcmin(optics)
         key = tg._comp_key(float(t.ra), float(t.dec), rad)
-        if tg.saved_comp_stars(t.ra, t.dec, rad):
+        if tg.saved_comp_stars(t.ra, t.dec, rad, t.vmag):
             _UNREACHABLE.discard(key)
             continue
         want.append((t, rad, key))

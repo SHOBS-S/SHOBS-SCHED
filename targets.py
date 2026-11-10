@@ -1572,24 +1572,36 @@ APASS_MAX_AGE_DAYS = 180.0
 COMP_DV = 1.0                 # a comp within this many magnitudes of the target
 COMP_DBV = 0.3                # … and this close in B−V counts as a colour match
 TARGET_MATCH_ARCSEC = 6.0     # the APASS star at the target's place (its own B−V)
-APASS_BRIGHT_V = 6.0          # a reply where most stars are brighter than this is a broken catalog copy, not the sky
+APASS_DAMAGED_V = 6.0         # a reply where most stars are brighter than this is a broken catalog copy, not the sky
 
 
-def apass_vs_plausible(vs) -> bool:
-    """False when most of an APASS cone's stars (and at least 3) are brighter than V APASS_BRIGHT_V: a damaged copy of
-    the catalog, not a real field (10 Nov 2026: the CfA mirror's II/336 sent V 0.1–2.1 for stars IDIA and CDS give as
-    V 12–13; a 12′ cone holds a star brighter than V 6 about once in a hundred fields)."""
+def apass_vs_plausible(vs, vmax: float | None = None) -> bool:
+    """False when most of an APASS cone's stars (and at least 3) are brighter than V APASS_DAMAGED_V: a damaged copy
+    of the catalog, not a real field (10 Nov 2026: the CfA mirror's II/336 sent V 0.1–2.1 for stars IDIA and CDS give
+    as V 12–13; a 12′ cone holds a star brighter than V 6 about once in a hundred fields). Not judged when the query's
+    own limit vmax is under 8 (a target of V 6 or brighter: every row it can get is bright). It sees only damage that
+    makes stars too bright: one or two bad rows, or magnitudes shifted fainter, pass (the CfA rows had V close to
+    their B−V, as if columns were shifted, so their B−V is suspect too)."""
+    if vmax is not None and vmax < 8.0:
+        return True
     vs = [v for v in vs if v is not None]
-    bright = sum(1 for v in vs if v < APASS_BRIGHT_V)
+    bright = sum(1 for v in vs if v < APASS_DAMAGED_V)
     return not (bright >= 3 and bright * 2 > len(vs))
 
 
-def _rows_plausible(rows) -> bool:
-    return apass_vs_plausible(_f(r.get("Vmag")) for r in rows)
+def _rows_plausible(rows, vmax: float | None = None) -> bool:
+    return apass_vs_plausible((_f(r.get("Vmag")) for r in rows), vmax)
 
 
-def _data_plausible(data) -> bool:
-    return not data or apass_vs_plausible(r.get("v") for r in data.get("rows") or [])
+def _data_plausible(data, target_v=None) -> bool:
+    """A saved comp check that is not from a damaged catalog copy (a malformed saved file counts as damaged)."""
+    if not data:
+        return True
+    try:
+        vmax = float(target_v) + COMP_DV + 1.0 if target_v is not None else None
+        return apass_vs_plausible((_f(r.get("v")) for r in data.get("rows") or []), vmax)
+    except Exception:
+        return False
 
 
 def comp_radius_arcmin(optics) -> float:
@@ -1611,7 +1623,7 @@ def _fetch_comps(ra: float, dec: float, radius_arcmin: float, vmax: float):
             f"DEJ2000), CIRCLE('ICRS', {ra:.6f}, {dec:.6f}, {radius_arcmin / 60.0:.5f})) AND Vmag < {vmax:.2f}")
     try:
         rows = _tap_csv(VIZIER_TAP, adql, nea=False, expect="RAJ2000")
-        if not _rows_plausible(rows):
+        if not _rows_plausible(rows, vmax):
             raise FetchError("its APASS magnitudes made no sense (most stars brighter than V 6)")
     except FetchError as exc:
         # VizieR's TAP service can be down while its plain (ASU) interface answers (8 Nov 2026: TAP timed out on
@@ -1635,25 +1647,32 @@ def _comps_asu(ra: float, dec: float, radius_arcmin: float, vmax: float) -> list
     with nothing near its V: "none within 1 mag", as from TAP). FetchError only when none answered."""
     q = {"-source": "II/336/apass9", "-c": f"{ra:.6f} {dec:+.6f}", "-c.rm": f"{radius_arcmin:.2f}",
          "-out": "RAJ2000,DEJ2000,Vmag,B-V", "-oc.form": "d", "-out.max": "unlimited", "Vmag": f"<{vmax:.2f}"}
-    last, empty = None, False
+    last, empty, damaged, failed = None, False, False, False
     for base in VIZIER_ASU:
         try:
             rows = parse_asu_tsv(_get_text(base + urllib.parse.urlencode(q)), key="RAJ2000", numeric=True,
                                  empty_ok=True)
         except FetchError as exc:
-            last = exc
+            last, failed = exc, True
             continue
-        if rows and not _rows_plausible(rows):
+        if rows and not _rows_plausible(rows, vmax):
             host = urllib.parse.urlsplit(base).hostname
             settings.log(f"VizieR ASU at {host} sent APASS magnitudes that make no sense (most of {len(rows)} stars "
-                         f"brighter than V {APASS_BRIGHT_V:.0f}); trying the next mirror")
-            last = FetchError(f"{host}'s APASS copy sent magnitudes that make no sense")
+                         f"brighter than V {APASS_DAMAGED_V:.0f}); trying the next mirror")
+            damaged = True
             continue
         if rows:
             return rows
         empty = True
-    if empty:
+    # "no stars" is believed only when every mirror said so: with one down or damaged, an empty copy may be the
+    # broken one (8 Nov 2026 the CfA answered every II/336 query empty), and [] would be saved for 180 days
+    if empty and not (damaged or failed):
         return []
+    if damaged:
+        raise FetchError("only damaged copies of APASS answered" if not empty else
+                         "one APASS copy was damaged and another had no stars")
+    if empty:
+        raise FetchError("a mirror was down and another had no stars")
     raise last if last else FetchError("no answer")
 
 
@@ -1664,22 +1683,23 @@ def comp_stars(ra: float, dec: float, radius_arcmin: float, target_v: float | No
     key = _comp_key(ra, dec, radius_arcmin)
     query = f"APASS stars within {radius_arcmin:.0f}′ of the target"
     saved, _age = cache_read("VizieR", key)
-    if not _data_plausible(saved):
+    if not _data_plausible(saved, target_v):
         refresh = True                        # a saved answer from a damaged catalog copy is asked again
     data, note = cached_lookup("VizieR", key, query, APASS_MAX_AGE_DAYS,
                                lambda: _fetch_comps(ra, dec, radius_arcmin, vmax), refresh=refresh)
-    if not _data_plausible(data):            # VizieR down and only the damaged copy saved
-        raise LookupError_(f"VizieR did not answer and the saved copy for {query} came from a damaged catalog "
-                           "copy. Try again later.")
+    if not _data_plausible(data, target_v):  # VizieR down and only the damaged copy saved
+        raise LookupError_(f"VizieR did not answer, and the saved {query} came from a damaged copy of APASS. "
+                           "Try again later.")
     return data, note
 
 
-def saved_comp_stars(ra, dec, radius_arcmin: float) -> dict | None:
-    """The saved answer of an earlier comp check, or None (never asks the network)."""
+def saved_comp_stars(ra, dec, radius_arcmin: float, target_v=None) -> dict | None:
+    """The saved answer of an earlier comp check, or None (never asks the network). target_v: the target's V (a
+    target of V 6 or brighter is not judged for a damaged copy)."""
     if ra is None or dec is None:
         return None
     data, _age = cache_read("VizieR", _comp_key(float(ra), float(dec), radius_arcmin))
-    return data if _data_plausible(data) else None     # a damaged catalog copy's answer counts as not checked
+    return data if _data_plausible(data, target_v) else None    # a damaged copy's answer counts as not checked
 
 
 def comp_check_text(target_v, ra, dec, data: dict | None) -> str:

@@ -931,7 +931,7 @@ def _fainter_candidate(t: Target, bnd: dict, aim: float, culprit: dict) -> str:
         import targets as tg
         if t.ra is None or t.dec is None or t.vmag is None:
             return ""
-        data = tg.saved_comp_stars(t.ra, t.dec, tg.comp_radius_arcmin(bnd.get("optics")))
+        data = tg.saved_comp_stars(t.ra, t.dec, tg.comp_radius_arcmin(bnd.get("optics")), t.vmag)
         if not data:
             return ""
         cands, _b = comps.catalog_split(data.get("rows") or [], t.ra, t.dec, t.vmag)

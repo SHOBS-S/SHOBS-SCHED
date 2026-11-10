@@ -4356,7 +4356,7 @@ class EditTargetDialog:
             self.comp_var.set("Comps: not checked (targets.py missing).")
             return
         t = self.t
-        data = tg.saved_comp_stars(t.ra, t.dec, self._comp_radius()) if t.ra is not None else None
+        data = tg.saved_comp_stars(t.ra, t.dec, self._comp_radius(), t.vmag) if t.ra is not None else None
         self.comp_var.set(tg.comp_check_text(t.vmag, t.ra, t.dec, data))
 
     def _browse_series(self):
