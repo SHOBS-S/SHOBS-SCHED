@@ -3973,7 +3973,9 @@ class EditTargetDialog:
                              "whose peak stays under your linear-limit aim (the default for transits once a zero "
                              "point is measured by SHOBS-FLUX or typed in Setup). Longest "
                              "safe: the longest standard exposure whose predicted peak stays under the aim (1.3.0's "
-                             "rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours.",
+                             "rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours. Both "
+                             "of the first two also keep the comps under the aim and the frames often enough "
+                             "(the Bounds line).",
                   style="Hint.TLabel", justify=tk.LEFT, wraplength=px(app, 460)).grid(
             row=r, column=0, columnspan=3, sticky="w", pady=(0, px(app, 4)))
         r += 1
@@ -4003,13 +4005,15 @@ class EditTargetDialog:
         self.exp_lbl = ttk.Label(ro, textvariable=self.ro_vars["exposure"], style="Card.TLabel")
         self.exp_lbl.pack(anchor="w")
         # 1.4.1 (#6): the three bounds on one line, the bound that won named; then what could not be met
-        ttk.Label(ro, textvariable=self.ro_vars["bounds"], style="Card.TLabel", justify=tk.LEFT,
-                  wraplength=px(app, 460)).pack(anchor="w")
+        self.bounds_lbl = ttk.Label(ro, textvariable=self.ro_vars["bounds"], style="Card.TLabel", justify=tk.LEFT,
+                                    wraplength=px(app, 460))
+        self.bounds_lbl.pack(anchor="w")
+        # the ⚠ and plain lines only when there are some (an empty yellow label showed as a thin bar: John's first
+        # look at 1.4.1)
         self.xcaution_lbl = ttk.Label(ro, textvariable=self.ro_vars["xcaution"], style="Warn.TLabel",
                                       justify=tk.LEFT, wraplength=px(app, 460))
-        self.xcaution_lbl.pack(anchor="w")
-        ttk.Label(ro, textvariable=self.ro_vars["xnotes"], style="Hint.TLabel", justify=tk.LEFT,
-                  wraplength=px(app, 460)).pack(anchor="w")
+        self.xnotes_lbl = ttk.Label(ro, textvariable=self.ro_vars["xnotes"], style="Hint.TLabel", justify=tk.LEFT,
+                                    wraplength=px(app, 460))
         ttk.Label(ro, textvariable=self.ro_vars["precision"], style="Card.TLabel").pack(anchor="w")
         self.bar = tk.Canvas(ro, width=px(app, self.BAR_W), height=px(app, 14), background=style.CARD,
                              highlightthickness=0)
@@ -4170,9 +4174,17 @@ class EditTargetDialog:
             line += f" · predicted peak ~{plan['peak_frac'] * 100:.0f} % of the linear limit ({pk:,.0f} ADU)"
         self.ro_vars["exposure"].set(line)
         self.ro_vars["bounds"].set(("Bounds: " + plan["bounds_line"]) if plan.get("bounds_line") else "")
-        self.ro_vars["xcaution"].set("\n".join(plan.get("exposure_cautions") or []))
-        self.ro_vars["xnotes"].set("\n".join(list(plan.get("exposure_notes") or [])
-                                              + list(plan.get("readout_notes") or [])))
+        cau = "\n".join(plan.get("exposure_cautions") or [])
+        nts = "\n".join(list(plan.get("exposure_notes") or []) + list(plan.get("readout_notes") or []))
+        self.ro_vars["xcaution"].set(cau)
+        self.ro_vars["xnotes"].set(nts)
+        after = self.bounds_lbl
+        for lbl, text in ((self.xcaution_lbl, cau), (self.xnotes_lbl, nts)):
+            if text:
+                lbl.pack(anchor="w", after=after)
+                after = lbl
+            else:
+                lbl.pack_forget()
         # over the linear limit: the peak in the warning style (a plain word "Saturates" below; no icon)
         self.exp_lbl.configure(style="Warn.TLabel" if (plan.get("peak_frac") or 0) > 1.0 else "Card.TLabel")
         if plan.get("sigma") is not None:
@@ -4286,9 +4298,10 @@ class EditTargetDialog:
         # the next band drawn over it) can never clip them (1.4.1 nit: 'over l')
         y = top + px(app, 2)
         for word, fill in labels:
-            tid = c.create_text(w - px(app, 14), y, text=word, anchor="ne", fill=style.HINT, font=style.font(8))
+            tid = c.create_text(w - px(app, 14), y, text=word, anchor="ne", fill=style.HINT, font=style.font(8),
+                                tags=("plotword",))
             x1, y1, x2, y2 = c.bbox(tid)
-            bg = c.create_rectangle(x1 - 2, y1 - 1, x2 + 2, y2 + 1, fill=fill, outline=style.LINE)
+            bg = c.create_rectangle(x1 - 2, y1 - 1, x2 + 2, y2 + 1, fill=fill, outline=style.LINE, tags=("plotword",))
             c.tag_lower(bg, tid)
             y = y2 + px(app, 2)
         c.create_line(left, top, left, bottom, w - px(app, 10), bottom, fill=style.LINE)
@@ -4316,6 +4329,7 @@ class EditTargetDialog:
             c.create_oval(x - 5, y - 5, x + 5, y + 5, outline=style.GREEN, width=2)
             c.create_text(x + 7, y - 7, text=f"{fmt_num(e)} s", anchor="sw", fill=style.GREEN,
                           font=style.font(8, "bold"))
+        c.tag_raise("plotword")                        # the words over every line (the chosen exposure's too)
 
     def _plot_click(self, event):
         """Click the curve: the nearest standard exposure becomes My exposure."""

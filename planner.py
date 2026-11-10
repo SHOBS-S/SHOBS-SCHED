@@ -860,7 +860,8 @@ def _report_bounds(out: dict, t: Target, inp, mag, bnd: dict, free_e, e: float, 
                                  / max(1e-9, bpf["frames"]))
         if sig and sig_free and math.isfinite(sig_free) and sig_free > 0:
             cost = sig / sig_free - 1.0
-            parts.append(f"cap costs {max(0.0, cost) * 100:.0f} % vs {fmt_exposure(float(free_e))}")
+            pct = max(0.0, cost) * 100
+            parts.append(f"cap costs {'<1' if pct < 1 else f'{pct:.0f}'} % vs {fmt_exposure(float(free_e))}")
             v_free = None
             if t.kind == "transit":
                 pl = t.planet_obj()

@@ -298,7 +298,8 @@ The gray line under the buttons says the same in short: *Best precision: the sho
 10-minute precision whose peak stays under your linear-limit aim (the default for transits once a zero point is
 measured by SHOBS-FLUX or typed in Setup). Longest safe: the longest standard exposure whose predicted peak stays
 under the aim
-(1.3.0's rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours.*
+(1.3.0's rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours. Both of the first two
+also keep the comps under the aim and the frames often enough (the Bounds line).*
 
 **The three bounds (new in 1.4.1).** Best precision and Longest safe both keep inside three bounds, and the
 readout names the one that decided the exposure:
@@ -316,7 +317,7 @@ readout names the one that decided the exposure:
 
 The **Bounds** line under the Exposure line shows all three at once, for example *Bounds: 180 s, cadence-limited
 (P/50 = 4.3 min) · peak 61 % of linear ✓ (check star: TYC 3281-582-1) · 1.2 ppt / 10 min, Detectable · cap costs
-1 % vs 300 s*. "Cap costs" is how much precision the cap gives up against the exposure SCHED would take without it;
+<1 % vs 300 s*. "Cap costs" is how much precision the cap gives up against the exposure SCHED would take without it;
 when that is a lot, or the verdict drops, a note says so: you can still trade timing for photons with **My
 exposure**.
 
