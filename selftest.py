@@ -207,8 +207,11 @@ def s4b_snr():
     t0 = Target.from_dict([x for x in g["targets"] if x["name"] == "TOI-2046 b"][0])
     t0.exposure_s = None
     cs = planner.exposure_plan(t0, optics, {}, 1.3, 0.0, 280, mode="safe")
-    check("cold start: Longest safe is 1.3.0's rule", cs["exposure_s"] == planner.estimate_exposure(
-        t0, optics, {}, 1.3)["exposure_s"])
+    old13 = planner.estimate_exposure(t0, optics, {}, 1.3)["exposure_s"]
+    e_max = (cs.get("bounds") or {}).get("e_max", float("inf"))
+    want = old13 if old13 <= e_max else max(x for x in planner.STANDARD_EXPOSURES if x <= e_max)
+    check(f"cold start: Longest safe is 1.3.0's rule inside the 1.4.1 bounds ({cs['exposure_s']:g} s, "
+          f"{cs.get('bound') or ''})", cs["exposure_s"] == want, f"1.3.0 alone: {old13:g} s")
     shutil.copytree(os.path.join(HERE, "tests", "fixtures", "shobs_data"), home, dirs_exist_ok=True)
     instrument._CACHE.clear()
     res = instrument.resolve(optics, {})
@@ -312,6 +315,30 @@ def _downloads() -> str:
         return os.path.join(os.path.expanduser("~"), "Downloads")
 
 
+def s4c_bounds():
+    """1.4.1 (#6): the three bounds and 'an answer always comes back'; the new-version check (#5) offline."""
+    import planner
+    import shobs_update
+    from models import Target, VarElements
+    el = VarElements(vtype="DSCT", period=0.149082, epoch=2460000.0, any_time=True, mag_max=13.5, mag_min=13.57)
+    t = Target(name="GSC 03308-00462 (test)", kind="campaign", ra=300.0, dec=50.0, vmag=13.5,
+               elements=el.__dict__.copy())
+    from models import Optics
+    optics = Optics.from_dict(dict(golden()["optics"], telescope="14in RC"))
+    p = planner.exposure_plan(t, optics, {}, 1.1, 0.0, 280)
+    check(f"P/50 caps a δ Scuti's frame cycle: {p['exposure_s']:g} s ({p.get('bound')})",
+          p["exposure_s"] + 3.0 <= 0.149082 * 86400 / 50 and str(p.get("bound", "")).startswith("cadence-limited"),
+          p.get("bounds_line", ""))
+    fast = Target.from_dict(dict(t.to_dict(), elements=dict(el.__dict__, period=0.002)))
+    q = planner.exposure_plan(fast, optics, {}, 1.1, 0.0, 280)
+    check("a cap under the frame cycle still answers (shortest exposure + why)",
+          q["exposure_s"] == planner.STANDARD_EXPOSURES[0]
+          and any(n.startswith("cadence-limited: frame cycle") for n in q.get("exposure_notes") or []))
+    hl = shobs_update.parse_highlights("Highlights:\n- one\n- two\n\nmore")
+    check("new-version check reads a release's Highlights (no network)", hl == ["one", "two"]
+          and shobs_update.note_text("SHOBS-SCHED", "9.9.9", hl).endswith("— click for details"))
+
+
 def main() -> int:
     import settings
     say(f"SHOBS-SCHED self-test, version {settings.APP_VERSION}, {time.strftime('%Y-%m-%d %H:%M')}")
@@ -321,6 +348,7 @@ def main() -> int:
     section("3. Planner: the five golden nights", s3_planner)
     section("4. Weather and export", s4_weather_export)
     section("4b. Exposure by S/N", s4b_snr)
+    section("4c. Exposure bounds and the new-version check (1.4.1)", s4c_bounds)
     section("5. Window", s5_window)
     section("6. Live services (information only)", s6_live)
     say("")

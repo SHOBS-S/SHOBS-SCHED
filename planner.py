@@ -392,6 +392,136 @@ def _own_note(pk, lim, e, dword, dfc):
     return f"Your exposure{';' + dword if dfc else ''}: predicted peak ~{pk:,.0f} ADU"
 
 
+# ---- the three bounds (1.4.1, GitHub issue #6) --------------------------------------------------------------------
+#
+# The chosen exposure must satisfy all three, and the readout says which one decided it:
+#   1. saturation / linearity: the target AND the stars that will be measured (comps.py: the SHOBS-P series' comps and
+#      check, else the APASS comp candidates) stay under the aim (target_peak_frac of the linear limit);
+#   2. cadence: the frame cycle (exposure + overhead) at most P/50 for a variable or campaign with a period, at most
+#      the ingress ÷ 10 for a transit (ingress from T14, b and Rp/R*; ~10 % of T14 when b or Rp/R* is not known);
+#   3. precision: within 1 and 2, Best precision or the longest (Longest safe), as the mode says.
+# Bounds 1 and 2 are upper limits; SCHED takes the shorter. An answer always comes back (John, 10 Nov 2026): when the
+# shortest exposure still breaks a limit, it is given with a sentence saying which bound broke and what to do.
+
+CADENCE_VAR_DIVISOR = 50.0         # variables and campaigns: frame cycle ≤ P/50 (SHOBS-P's #54 time-resolution rule)
+CADENCE_INGRESS_DIVISOR = 10.0     # transits: frame cycle ≤ ingress ÷ 10 (John, 10 Nov 2026)
+INGRESS_T14_FRACTION = 0.10        # ingress when b or Rp/R* is unknown: ~10 % of T14
+POOR_COST = 0.25                   # a cap costing this much precision (or a worse verdict) is said in words
+SHORT_EXPOSURE_S = 5.0             # under this the back-test's peaks varied ±40 % night to night (a plain note)
+
+
+def _mins(sec: float) -> str:
+    return f"{sec / 60.0:.1f} min" if sec < 600 else f"{sec / 60.0:.0f} min"
+
+
+def ingress_s(pl) -> tuple[float | None, bool]:
+    """(ingress duration in seconds, estimated?) of a transit: T14 · (Rp/R*) / (1 − b²) (Winn 2010, small planet,
+    at most half of T14) when b and Rp/R* are known, else INGRESS_T14_FRACTION of T14 (estimated = True). (None,
+    False) without a T14."""
+    if pl is None or not pl.t14:
+        return None, False
+    t14 = float(pl.t14) * 86400.0
+    k, b = getattr(pl, "ratror", None), getattr(pl, "impact", None)
+    if k and b is not None and 0 < float(k) < 1 and 0 <= float(b) and 1.0 - float(b) ** 2 > 0.05:
+        return min(0.5 * t14, t14 * float(k) / (1.0 - float(b) ** 2)), False
+    return INGRESS_T14_FRACTION * t14, True
+
+
+def cadence_cap(t: Target) -> dict | None:
+    """The time-resolution cap on the frame cycle: {cap_s, rule ("P/50" / "ingress ÷ 10"), words ("P/50 = 4.3 min",
+    "ingress 18 min ÷ 10"), estimated (ingress from 10 % of T14)}; None when the target has no period or T14."""
+    if t is None:
+        return None
+    if t.kind == "transit":
+        ing, est = ingress_s(t.planet_obj())
+        if not ing:
+            return None
+        cap = ing / CADENCE_INGRESS_DIVISOR
+        words = (f"ingress ~{_mins(ing)} (10 % of T14) ÷ 10 = {cap:.0f} s" if est
+                 else f"ingress {_mins(ing)} ÷ 10 = {cap:.0f} s")
+        return {"cap_s": cap, "rule": "ingress ÷ 10", "words": words, "estimated": est, "ingress_s": ing}
+    el = t.elements_obj()
+    if el and el.period and float(el.period) > 0:
+        cap = float(el.period) * 86400.0 / CADENCE_VAR_DIVISOR
+        return {"cap_s": cap, "rule": "P/50", "words": f"P/50 = {_mins(cap) if cap >= 120 else f'{cap:.0f} s'}",
+                "estimated": False}
+    return None
+
+
+def _is_comp(s: dict) -> bool:
+    """A SHOBS-P series comp ("Comp 1" … "Comp 10"), not an APASS "Comp candidate"."""
+    r = str(s.get("role") or "")
+    return r.startswith("Comp ") and r[5:].isdigit()
+
+
+def _star_label(s: dict) -> str:
+    role = s.get("role") or "star"
+    if _is_comp(s) or role == "Check":
+        return f"{role} ({s.get('name')})" if s.get("name") else role
+    return f"{role.lower()} {s.get('name')}"
+
+
+def _bounds(t: Target, inp, band: str, airmass: float, pen: float, overhead, aim: float, optics) -> dict:
+    """Bounds 1 and 2 for exposure_plan: {e_max (s, or inf), sat_cap, sat_by (star), cad, e_cad, stars (each with its
+    curve), field, measured (comps.measured_stars), cautions, notes}. The noise model gives each star's peak."""
+    import comps
+    import instrument
+    import snr as S
+    out = {"e_max": math.inf, "sat_cap": None, "sat_by": None, "cad": None, "e_cad": None, "stars": [], "field": [],
+           "measured": {"source": "none", "stars": [], "field": [], "candidates": [], "note": ""},
+           "cautions": [], "notes": [], "dropped": [], "optics": optics}
+    if inp is not None:
+        try:
+            m = comps.measured_stars(t, optics)
+        except Exception as exc:                      # a damaged cache or file: target only, said plainly
+            m = {"source": "none", "stars": [], "field": [], "candidates": [],
+                 "note": f"comps not checked ({type(exc).__name__})"}
+        out["measured"] = m
+        lim = inp.linear_adu
+        shortest = STANDARD_EXPOSURES[0]
+        for group, key in ((m.get("stars") or [], "stars"), (m.get("field") or [], "field")):
+            for s0 in group:
+                # a series' magnitudes are in its own catalog band (V or the TG-matched Gaia/APASS values SHOBS-P
+                # uses); like the target's V they are carried into the S/N band with catalog_mag
+                mag, _w = instrument.catalog_mag(s0["v"], band)
+                if mag is None:
+                    continue
+                c = S.curve(inp, mag, STANDARD_EXPOSURES, airmass, pen, overhead)
+                s = dict(s0, band_mag=mag, curve=c)
+                if key == "field":
+                    out["field"].append(s)
+                    continue
+                over_short = bool(c) and c[0]["peak_frac"] > aim
+                if over_short and m.get("source") == "catalog":
+                    # a candidate too bright even at the shortest exposure cannot be a comp: not a bound
+                    out["dropped"].append(s)
+                    continue
+                s["t_aim"] = S.exposure_at_peak(c, aim * lim)
+                s["over_short"] = over_short
+                out["stars"].append(s)
+        capped = [s for s in out["stars"] if s.get("t_aim") is not None]
+        if capped:
+            by = min(capped, key=lambda s: s["t_aim"])
+            out["sat_cap"], out["sat_by"] = by["t_aim"] if not by["over_short"] else shortest, by
+    cad = cadence_cap(t)
+    out["cad"] = cad
+    if cad:
+        if t.cycle_s:
+            if float(t.cycle_s) > cad["cap_s"] * 1.0001:
+                out["notes"].append(f"your seconds between frames ({float(t.cycle_s):g} s) are longer than "
+                                    f"{cad['rule']} ({cad['words']}); timing ~{float(t.cycle_s) / cad['cap_s']:.1f}× "
+                                    "coarser than the rule")
+        else:
+            out["e_cad"] = cad["cap_s"] - max(0.0, float(overhead(cad["cap_s"])))
+    caps = [x for x in (out["sat_cap"], out["e_cad"]) if x is not None]
+    out["e_max"] = min(caps) if caps else math.inf
+    return out
+
+
+def _pick_under(points: list, e_max: float) -> list:
+    return [p for p in points if p["t"] <= e_max * (1.0 + 1e-9)]
+
+
 def exposure_plan(target: Target, optics, options: dict | None = None, airmass: float = 1.2,
                   moon_penalty: float = 0.0, elevation_m: float = 0.0, band: str | None = None,
                   mode: str | None = None, exposure_s: float | None = None) -> dict:
@@ -451,6 +581,12 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     model = bool(pts) and not cold_inputs(inp)
     lim = inp.linear_adu if inp else None
     dword = f" defocused (stars ~{_defocus_factor(o):g}× wider)" if dfc else ""
+    # bounds 1 and 2 (1.4.1, #6): the stars that will be measured, and the time-resolution cap
+    out.update(exposure_cautions=[], exposure_notes=[], bounds_line="", bound="", bound_note="")
+    bnd = _bounds(t, inp, band, airmass, pen_snr, overhead, aim, optics) if pts else None
+    e_max = bnd["e_max"] if bnd else math.inf
+    out["bounds"] = bnd
+    free_e = None                                   # the pick without bounds 1 and 2 (what the cap costs)
     if mode == "own" and model:
         e = float(exposure_s if exposure_s else (t.exposure_s or 60.0))
         pk = S.peak_adu(S.replace(inp, overhead_s=max(0.0, overhead(e))), mag, e, airmass, pen_snr)
@@ -464,7 +600,10 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     elif mode == "safe" and model:
         under = [p for p in pts if p["peak_frac"] <= aim]
         if under:
-            pick = max(under, key=lambda p: p["t"])
+            free = max(under, key=lambda p: p["t"])
+            free_e = free["t"]
+            inside = _pick_under(under, e_max)
+            pick = max(inside, key=lambda p: p["t"]) if inside else min(pts, key=lambda p: p["t"])
             note = (f"Longest safe{dword}: peak ~{pick['peak_frac'] * 100:.0f} % of your {_k(lim)} linear limit "
                     f"(~{pick['peak']:,.0f} ADU)")
         else:
@@ -473,7 +612,16 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
                     f"limit {lim:,.0f}); " + ("defocus more" if dfc else "defocus"))
         out.update(exposure_s=float(pick["t"]), peak_adu=pick["peak"], is_estimate=True, note=note)
     elif mode == "precision" and pts:
-        pick, fits = S.best_exposure(pts, aim)
+        free, _ok = S.best_exposure(pts, aim)
+        free_e = free["t"] if _ok else None
+        pick, fits = free, _ok
+        if _ok and free["t"] > e_max * (1.0 + 1e-9):
+            # the cap bites only when Best precision's own pick is past it: then the longest exposure inside the cap
+            # (re-running the 2 % rule on the capped set would move its anchor and pick shorter still — John's first
+            # look, HAT-P-32 b: 60 s "cadence-limited" under a 109 s cap that 90 s already met)
+            inside = [p for p in _pick_under(pts, e_max) if p["peak_frac"] <= aim]
+            pick = max(inside, key=lambda p: p["t"]) if inside else min(pts, key=lambda p: p["t"])
+            fits = pick["peak_frac"] <= aim
         out["fits"] = fits
         e = pick["t"]
         if fits:
@@ -500,6 +648,13 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
                 shorter = [x for x in STANDARD_EXPOSURES if x < e and by_t[x]["peak_frac"] <= aim]
                 if shorter:
                     ex = dict(ex, exposure_s=float(max(shorter)))
+        if pts and not ex["note"].startswith("⚠"):
+            free_e = float(ex["exposure_s"])
+            if free_e > e_max * (1.0 + 1e-9):
+                # bounds 1 and 2 (1.4.1): step down to the longest standard exposure inside them (the shortest
+                # when even that is outside; the notes below say why)
+                inside = [x for x in STANDARD_EXPOSURES if x <= e_max * (1.0 + 1e-9)]
+                ex = dict(ex, exposure_s=float(max(inside) if inside else STANDARD_EXPOSURES[0]))
         out.update(exposure_s=ex["exposure_s"], peak_adu=ex["peak_adu"], is_estimate=True, note=ex["note"])
     if not inp:
         out["reason"] = ("telescope and camera not set up (aperture, focal length, pixel size)"
@@ -514,7 +669,16 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     bp = S.bin_precision(use, mag, e, airmass, pen_snr)
     pk = S.peak_adu(use, mag, e, airmass, pen_snr)
     out.update(sigma=bp["sigma"], parts=bp["parts"], frames_per_bin=bp["frames"], peak_frac=pk / inp.linear_adu,
-               model_peak_adu=pk)
+               model_peak_adu=pk, sigma_target=bp["sigma"], sigma_with="the target star alone")
+    # 1.4.1 (#6 back-test): with the SHOBS-P series' comps known, the 10-minute precision counts their noise too
+    if bnd is not None and bnd["measured"].get("source") == "series":
+        cm = [s["band_mag"] for s in bnd["stars"] if _is_comp(s)]
+        if cm and math.isfinite(bp["sigma"]):
+            ens = S.ensemble_variance(use, cm, e, airmass, pen_snr)
+            tot = bp["sigma"] ** 2 + ens / max(1e-9, bp["frames"])
+            out.update(sigma=math.sqrt(tot), sigma_with=f"the target and its {len(cm)} "
+                       f"comp{'s' if len(cm) != 1 else ''} (SHOBS-P series)")
+            bp = dict(bp, sigma=math.sqrt(tot))
     if not model:
         # the bare cold start: the exposure was chosen as 1.3.0 did, but the peak shown everywhere (the note, the
         # Schedule's cautions, the readout) is the noise model's, so they never disagree
@@ -568,7 +732,214 @@ def exposure_plan(target: Target, optics, options: dict | None = None, airmass: 
     else:
         out["reason"] = f"S/N {val:.0f}: {what}" if val >= 10 else f"S/N {val:.1f}: {what}"
     out["what"] = what
+    if bnd is not None:
+        _report_bounds(out, t, inp, mag, bnd, free_e, e, airmass, pen_snr, overhead, aim, dfc)
     return out
+
+
+def _report_bounds(out: dict, t: Target, inp, mag, bnd: dict, free_e, e: float, airmass: float, pen: float,
+                   overhead, aim: float, dfc: bool) -> None:
+    """Fill out's bound (which bound decided the exposure), bounds_line (the readout's one line), bound_note (the
+    Schedule's line when a cap decided it), exposure_cautions (⚠: serious, needs action) and exposure_notes (plain),
+    following #6's 'When nothing fits' table: an answer always comes back, with the reason when it is not a good one."""
+    import snr as S
+    mode = out.get("mode")
+    lim = inp.linear_adu
+    shortest = STANDARD_EXPOSURES[0]
+    cautions, notes = [], []
+    cad = bnd.get("cad")
+
+    def frac_at(curve, x):
+        for p in curve or []:
+            if abs(p["t"] - x) < 1e-9:
+                return p["peak_frac"]
+        if curve:                                      # an exposure between the standard ones (My exposure)
+            return S.peak_adu(S.replace(inp, overhead_s=max(0.0, overhead(x))), curve_mag(curve), x, airmass,
+                              pen) / lim
+        return None
+
+    def curve_mag(curve):
+        return curve[0].get("_mag")
+
+    for s in bnd["stars"] + bnd["field"]:
+        for p in s["curve"]:
+            p["_mag"] = s["band_mag"]
+
+    # row 1: a measured star (SHOBS-P comp or check) over the aim even at the shortest exposure → ⚠, fainter comp
+    for s in bnd["stars"]:
+        if s.get("over_short") and bnd["measured"].get("source") == "series":
+            pct = s["curve"][0]["peak_frac"] * 100.0
+            fix = "pick a fainter check star" if s.get("role") == "Check" else "pick a fainter comp"
+            alt = _fainter_candidate(t, bnd, aim, s)
+            cautions.append(f"⚠ even {fmt_exposure(shortest)} may saturate {_star_label(s)} (peak ~{pct:.0f} % of the "
+                            f"linear limit); {fix}" + (f", e.g. {alt}" if alt else ""))
+    # a measured star over the linear limit at the user's own exposure → ⚠ (the target's own is in the note)
+    if mode == "own":
+        over_c = []
+        for s in bnd["stars"]:
+            f = frac_at(s["curve"], e)
+            if f is None or f <= 1.0 or s.get("over_short"):
+                continue
+            if _is_comp(s) or s.get("role") == "Check":
+                cautions.append(f"⚠ Your exposure: {_star_label(s)} predicted peak ~{f * 100:.0f} % of the linear "
+                                f"limit — shorten {fmt_exposure(e)}")
+            else:
+                over_c.append((f, s))
+        if over_c:                                     # stars nobody chose yet: one plain line (Fable S2-2)
+            f, s = max(over_c, key=lambda x: x[0])
+            n = len(over_c)
+            notes.append(f"{n} comp candidate{'s' if n != 1 else ''} would be over the linear limit at "
+                         f"{fmt_exposure(e)} (brightest {s['name']}, ~{f * 100:.0f} %): pick fainter comps")
+    dropped = bnd.get("dropped") or []
+    if dropped:
+        b0 = min(dropped, key=lambda s: s["v"])
+        n = len(dropped)
+        notes.append(f"{n} comp candidate{'s' if n != 1 else ''} would saturate even at {fmt_exposure(shortest)} "
+                     f"(brightest {b0['name']}): don't use {'them' if n != 1 else 'it'} as comps")
+    # row 2: the timing cap is shorter than the frame cycle the camera can do
+    if cad and bnd.get("e_cad") is not None and bnd["e_cad"] < shortest:
+        cyc = shortest + max(0.0, float(overhead(shortest)))
+        notes.append(f"cadence-limited: frame cycle {cyc:.1f} s can't reach {cad['rule']} = {cad['cap_s']:.1f} s; "
+                     f"timing ~{cyc / cad['cap_s']:.1f}× coarser than the rule")
+    elif cad and mode == "own" and bnd.get("e_cad") is not None and e > bnd["e_cad"] * 1.0001:
+        cyc = e + max(0.0, float(overhead(e)))
+        notes.append(f"Your exposure: frame cycle {cyc:.0f} s is longer than {cad['words']}; timing "
+                     f"~{cyc / cad['cap_s']:.1f}× coarser than the rule")
+    notes.extend(bnd.get("notes") or [])
+    # which bound decided it
+    capped = free_e is not None and e < float(free_e) * (1.0 - 1e-9) and mode in ("safe", "precision")
+    sat_cap, e_cad = bnd.get("sat_cap"), bnd.get("e_cad")
+    if mode == "own":
+        won = "your exposure"
+    elif capped and e_cad is not None and (sat_cap is None or e_cad <= sat_cap):
+        won = f"cadence-limited ({cad['words']})"
+        if cad.get("estimated"):
+            pl = t.planet_obj()
+            known = bool(pl and getattr(pl, "ratror", None) and getattr(pl, "impact", None) is not None)
+            notes.append("ingress taken as ~10 % of T14 (" + ("a grazing transit: b near 1)" if known else
+                                                            "the planet's b or Rp/R* is not known)"))
+    elif capped and sat_cap is not None:
+        by = bnd["sat_by"]
+        role = by.get("role", "")
+        won = (f"comp-limited ({_star_label(by)}, V {by['v']:.2f})" if _is_comp(by) else
+               f"check-star-limited ({_star_label(by)}, V {by['v']:.2f})" if role == "Check" else
+               f"comp-candidate-limited ({by.get('name')})")
+    elif mode == "precision":
+        won = "Best precision"
+    elif out.get("note", "").startswith("⚠") or (out.get("peak_frac") or 0) > aim:
+        won = "target too bright"
+    elif float(e) >= STANDARD_EXPOSURES[-1]:
+        won = f"longest standard exposure ({fmt_exposure(STANDARD_EXPOSURES[-1])})"
+    else:
+        won = "peak-limited (target)"
+    out["bound"] = won
+    # the brightest pixel among the target and the measured stars at this exposure
+    who, top = "target", out.get("peak_frac")
+    for s in bnd["stars"]:
+        f = frac_at(s["curve"], e)
+        if f is not None and (top is None or f > top):
+            if won.startswith(("comp-", "check-star-")) and s is bnd.get("sat_by"):
+                who = "that star"                     # already named by the bound (John's run-through nit)
+            else:
+                who = ("brightest comp" if _is_comp(s) else
+                       "check star" if s.get("role") == "Check" else "brightest comp candidate")
+                who += f": {s['name']}" if (_is_comp(s) or s.get("role") == "Check") else ""
+            top = f
+    peak_part = ""
+    if top is not None:
+        peak_part = f"peak {top * 100:.0f} % of linear {'✓' if top <= 1.0 else 'over'} ({who})"
+    sig = out.get("sigma")
+    parts = [f"{fmt_exposure(e)}, {won}"]
+    if peak_part:
+        parts.append(peak_part)
+    if sig is not None and math.isfinite(sig):
+        parts.append(f"{S.ppt(sig)} / 10 min" + (f", {out['verdict']}" if out.get("verdict") else ""))
+    # row 4: what the cap costs (and a worse verdict) in words
+    if capped:
+        use = S.replace(inp, overhead_s=max(0.0, overhead(float(free_e))))
+        bpf = S.bin_precision(use, mag, float(free_e), airmass, pen)
+        sig_free = bpf["sigma"]
+        cm = [s["band_mag"] for s in bnd["stars"] if _is_comp(s)] if bnd["measured"].get("source") == "series" else []
+        if cm and math.isfinite(sig_free):
+            sig_free = math.sqrt(sig_free ** 2 + S.ensemble_variance(use, cm, float(free_e), airmass, pen)
+                                 / max(1e-9, bpf["frames"]))
+        if sig and sig_free and math.isfinite(sig_free) and sig_free > 0:
+            cost = sig / sig_free - 1.0
+            pct = max(0.0, cost) * 100
+            parts.append(f"cap costs {'<1' if pct < 1 else f'{pct:.0f}'} % vs {fmt_exposure(float(free_e))}")
+            v_free = None
+            if t.kind == "transit":
+                pl = t.planet_obj()
+                if pl and pl.depth and pl.t14:
+                    v_free = S.transit_snr(pl.depth, sig_free, pl.t14)
+            else:
+                amp = _amplitude(t)
+                v_free = S.amplitude_snr(amp, sig_free) if amp else None
+            w_free = S.verdict(v_free, inp.rough) if v_free is not None else ""
+            worse = bool(w_free and out.get("verdict") and w_free != out["verdict"]
+                         and not str(out["verdict"]).startswith("Saturates"))
+            if cost >= POOR_COST or worse:
+                why = (f"timing coarser than {cad['rule']}" if won.startswith("cadence") else
+                       f"{_star_label(bnd['sat_by'])} over the linear-limit aim" if bnd.get("sat_by") else "")
+                fe = fmt_exposure(float(free_e))
+                there = (f"{w_free} at {fe}" if worse else f"{S.ppt(sig_free)} / 10 min at {fe}")
+                notes.append(f"cap costs {cost * 100:.0f} % vs {fe} ({there}" + (f", but {why}" if why else "")
+                             + "); you can trade timing for photons with My exposure")
+        out["bound_note"] = f"Exposure {fmt_exposure(e)}: {won}"
+    # the back-test (#6): under ~5 s the seeing is frozen in each frame and the peak varies ±40 % night to night
+    if mode in ("safe", "precision") and float(e) < SHORT_EXPOSURE_S and not out.get("note", "").startswith("⚠"):
+        notes.append(f"short exposure: the peak varies about ±40 % night to night with the seeing; check the "
+                     "first frames' peaks (or defocus a little more)")
+    # row 6 (and a series that could not be read): plain
+    mnote = bnd["measured"].get("note")
+    readout_only = []
+    if mnote and mnote.startswith("comps not checked yet"):
+        readout_only.append(mnote)          # the Edit readout says it; a Schedule block need not (a Build asks)
+    elif mnote:
+        notes.append(mnote)
+    over_f = []
+    for s in bnd["field"]:
+        f = frac_at(s["curve"], e)
+        if f is not None and f > 1.0:
+            over_f.append(s)
+    if over_f:                                         # one line however many (Fable S2-2)
+        b0 = min(over_f, key=lambda s: s["v"])
+        n = len(over_f)
+        notes.append(f"{n} brighter field star{'s' if n != 1 else ''} would be over the linear limit at "
+                     f"{fmt_exposure(e)} (brightest {b0['name']}; not comp candidates: just don't measure "
+                     f"{'them' if n != 1 else 'it'})")
+    out["bounds_line"] = " · ".join(parts)
+    out["exposure_cautions"] = list(dict.fromkeys(cautions))
+    out["exposure_notes"] = list(dict.fromkeys(notes))
+    out["readout_notes"] = readout_only
+
+
+def exposure_words(plan: dict) -> list[str]:
+    """The exposure's lines for a block or the readout, in order: the ⚠ cautions (saturation first), the bound that
+    decided it (when a cap did), then the plain notes."""
+    out = list(plan.get("exposure_cautions") or [])
+    if plan.get("bound_note"):
+        out.append(plan["bound_note"])
+    return out + list(plan.get("exposure_notes") or [])
+
+
+def _fainter_candidate(t: Target, bnd: dict, aim: float, culprit: dict) -> str:
+    """An APASS comp candidate fainter than the culprit that stays under the aim at the shortest exposure, when the
+    comp check is saved ("APASS V 10.92 (4.1′ away)"), else ""."""
+    try:
+        import comps
+        import targets as tg
+        if t.ra is None or t.dec is None or t.vmag is None:
+            return ""
+        data = tg.saved_comp_stars(t.ra, t.dec, tg.comp_radius_arcmin(bnd.get("optics")), t.vmag)
+        if not data:
+            return ""
+        cands, _b = comps.catalog_split(data.get("rows") or [], t.ra, t.dec, t.vmag)
+        ok = [c for c in cands if c["v"] > culprit["v"] + 0.3]
+        ok.sort(key=lambda c: abs(c["v"] - float(t.vmag)))
+        return ok[0]["name"] if ok else ""
+    except Exception:
+        return ""
 
 
 def verdict_note(plan: dict) -> str:
@@ -1620,6 +1991,12 @@ class _Night:
         b.snr, b.verdict, b.precision_bin = ex["snr"], ex["verdict"], ex["sigma"]
         if ex["note"].startswith(("⚠", "✖")):
             cautions.append(ex["note"])
+        # 1.4.1 (#6): which bound decided the exposure (when a cap did), the stars it could not protect, the
+        # cadence it could not reach — an answer always comes with its reason
+        cautions.extend(ex.get("exposure_cautions") or [])
+        if ex.get("bound_note"):
+            notes.append(ex["bound_note"])
+        notes.extend(ex.get("exposure_notes") or [])
         per, how = frame_cycle_s(t, b.exposure_s, self.optics)
         b.cycle_s = per if per > 0 else None
         if how == "cycle":

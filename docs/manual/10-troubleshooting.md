@@ -121,7 +121,25 @@ SHOBS-SCHED tells a service that does not answer from one that does not know the
 - *SIMBAD did not answer (…) and there is no saved copy for HD 12345. Try again later.* SIMBAD (and its mirror) could
   not be reached, or reported a problem on its side: the name may be fine.
 
-The plan itself never needs the network: once your targets are in the list, you can build offline.
+**CDS skipped for 10 minutes (1.4.1).** When a CDS server (VizieR or SIMBAD at cds.unistra.fr) does not answer, SCHED
+skips CDS for the next 10 minutes and goes straight to the mirrors, instead of waiting out CDS's timeout on every
+lookup. The first lookup after that tries CDS again. The log says *CDS did not answer (…); skipping CDS for 10 min
+(mirrors first)* and later *CDS answered again; no longer skipped*. A reply that comes back with an error page
+(such as *page not found*) does not start the skip: CDS answered.
+
+**A damaged catalog copy (1.4.1).** A mirror can answer quickly with wrong data. On 10 Nov 2026, while CDS was
+down, the CfA mirror's copy of APASS sent magnitudes like V 0.2 for stars that are really V 12–13 (the same star at
+IDIA: V 13.08). APASS holds no stars brighter than about V 5.5, so SCHED treats an APASS answer with two stars
+brighter than V 4, or more than 10 brighter than V 6, in one field as damaged: it is not used or saved, the log says
+*VizieR ASU at vizier.cfa.harvard.edu sent APASS magnitudes that make no sense (… stars, brightest V 0.11); trying the
+next mirror*, and the next mirror is asked. An earlier answer saved from such a copy counts as not checked and is
+asked again. "No stars" is believed only when every mirror says so: when one is down or damaged and another has no
+stars, the target shows *comps not checked: catalog unreachable* until a good answer comes.
+
+The plan itself never needs the network: once your targets are in the list, you can build offline. A **Build** does
+ask APASS first for the comp candidates of targets that have no saved comp check (chapter 5, "The three bounds");
+offline, those targets are planned on the target star alone, with the note *comps not checked: catalog unreachable;
+check comp peaks in SHOBS-P*.
 
 ### ExoClock and ExoFOP (Find suggested transits' Priority lists)
 

@@ -15,7 +15,7 @@ This chapter covers:
 - **Export to NINA**,
 - the camera angle in both lists.
 
-![The OBSPlan page: the night ticks with their block counts, Print plan card and Include night plots, the position-angle line, the ASIAIR export folder, and the on-screen card for Sat 31 Oct to Mon 02 Nov, each night with its Export to ASIAIR, Export to NINA and Copy ASIAIR list buttons and its Moon facts ("down at dusk, rises 23:40"); under Sat 31 Oct, an ASIAIR result line with Open folder, Open in Notepad and Show file contents, and Darks "To shoot" leaving out the darks already on hand; in each table the Exposure cell with its verdict word under it (Detectable? on green, Marginal? on yellow)](img/07-obsplan-page.png)
+![The OBSPlan page: the night ticks with their block counts, Print plan card and Include night plots, the position-angle line, the ASIAIR export folder, and the on-screen card for Sun 15 and Mon 16 Nov (the other nights unticked), each night with its Export to ASIAIR, Export to NINA and Copy ASIAIR list buttons and its Moon facts ("up at dusk, sets 22:43"); under Sun 15 Nov, an ASIAIR result line with Open folder, Open in Notepad and Show file contents, and Darks "To shoot" leaving out the darks already on hand; in each table the Exposure cell with its verdict word under it (HAT-P-32 b 20 s (S/N), Detectable? on green)](img/07-obsplan-page.png)
 
 ## Choose the nights
 
@@ -75,7 +75,7 @@ pages if it fits on one.
 The card is saved as `plan_card.html` in SHOBS-SCHED's cache folder (chapter 2), replaced each time you print. If the
 browser does not open, the result line gives the file's full path so you can open it yourself.
 
-![The plan card open in a browser: the title "Photometry plan, Sat 31 Oct to Fri 06 Nov 2026", the site line, Sat 31 Oct's facts and weather, its night plot in print colors, the nightly table (its Exposure cells with the verdict in bold under them), and the Flats, Darks and Free time lists](img/07-plan-card-print.png)
+![The plan card open in a browser: the title "Photometry plan, Sun 15 Nov to Mon 16 Nov 2026", the site line, Sun 15 Nov's facts and weather, its night plot in print colors, the nightly table (its Exposure cells with the verdict in bold under them), and the Flats, Darks and Free time lists](img/07-plan-card-print.png)
 
 > **Tip:** Untick past nights before printing: the card is easier to use at the telescope with only the nights to
 > come.

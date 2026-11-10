@@ -179,6 +179,8 @@ def setup(root) -> ttk.Style:
     st.configure("StatusBad.TLabel", background=STATUS_BG, foreground="#ff8a80")
     st.configure("StatusWarn.TLabel", background=STATUS_BG, foreground="#ffd54f")
     st.configure("StatusOk.TLabel", background=STATUS_BG, foreground="#d5e0e6")
+    # 1.4.1 (#5): the new-version note, a link on the navy strip (as SHOBS-FLUX's)
+    st.configure("StatusLink.TLabel", background=STATUS_BG, foreground="#9fd3ff", font=font(10, "underline"))
     # final-action buttons: GREEN, dim briefly when pressed (see green_button)
     st.configure("Green.TButton", padding=(s(12), s(5)), background=GREEN, foreground="#ffffff",
                  font=font(10, "bold"), bordercolor=GREEN_HOVER, focuscolor="#ffffff")

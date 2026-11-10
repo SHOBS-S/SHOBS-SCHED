@@ -24,11 +24,11 @@ This chapter covers:
 - saving, and leaving the page with unsaved changes,
 - the planner settings that are not on the page.
 
-![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values), Weather and the new Photometry noise box on the left; Telescope and camera, Horizon profile and Suggestions and darks on the right; Save at the bottom](img/04-setup-page.png)
+![The Setup page: Site, Mount and limits (with Moon distance at least: By Moon phase, Fixed, Off and the four phase values), Weather and the Photometry noise box on the left; Telescope and camera, Horizon profile, Suggestions and darks (darks on hand 60, 120, 180) and the New versions box on the right; Save at the bottom](img/04-setup-page.png)
 
 The boxes sit in two columns when the window is wide enough: **Site**, **Mount and limits**, **Weather** and
-**Photometry noise (exposure by S/N)** on the left; **Telescope and camera**, **Horizon profile** and **Suggestions
-and darks** on the right. In a narrow window
+**Photometry noise (exposure by S/N)** on the left; **Telescope and camera**, **Horizon profile**, **Suggestions
+and darks** and **New versions** on the right. In a narrow window
 they sit in one column, in the order this chapter follows. The page scrolls when it does not fit.
 
 ## Where the values came from
@@ -150,7 +150,7 @@ The TELESCOP keyword is not used: ASIAIR writes the mount driver's name there, n
 
 Values read from a frame are tagged *from FITS* and win over SHOBS-P's. Type over one and it becomes *set here*.
 
-![The Setup page right after Read from a FITS frame…: the summary "⚠ Read the header of example_frame2.fits (ZWO ASI533MC Pro). Press Save to keep these values.", the Changed: list (Gain setting 100 → 120, e⁻ per ADU 1 → 0.75, Focal length 1600 → 1580 mm), the values already the same, the keyword not in this frame (ROTATOR, hence ⚠), and the *from FITS* tags](img/04-fits-summary.png)
+![The Setup page right after Read from a FITS frame…: the summary "⚠ Read the header of example_frame2.fits (ZWO ASI533MC Pro). Press Save to keep these values.", the Changed: list (Gain setting 100 → 120, e⁻ per ADU 0.25 → 0.75 e⁻/ADU, Focal length 1600 → 1580 mm), the values already the same, the keyword not in this frame (ROTATOR, hence ⚠), and the *from FITS* tags](img/04-fits-summary.png)
 
 ## Mount and limits
 
@@ -301,7 +301,7 @@ magnetic declination, east positive) so the profile is turned to true north.
 
 | Field | What it does |
 |---|---|
-| **Forecast source** | Where the forecast comes from. In 1.4.0 the only source is **Open-Meteo** (free, no account). |
+| **Forecast source** | Where the forecast comes from. In 1.4.1 the only source is **Open-Meteo** (free, no account). |
 | **Dew when temp − dew point under** | The dew threshold: dew is expected from the first moment in the dark when the air temperature is less than this many degrees above the dew point. 2.5 °C by default. |
 | **End dew-sensitive runs at the predicted dew onset** | When ticked (the default), flexible blocks (campaigns and any-time variables) end when dew is expected. Fixed-time blocks are not cut; they get a ⚠ instead. |
 
@@ -465,6 +465,13 @@ the changes cannot be saved, SHOBS-SCHED asks whether to drop them.
 
 **Changing Setup after a schedule was built.** The schedule was worked out with the old values. The Schedule and
 OBSPlan pages then show a ⚠ line asking you to build again (chapter 6).
+
+## New versions
+
+New in 1.4.1. One tick box, **Check for new versions at start** (on by default): SHOBS-SCHED asks GitHub once a
+day whether a newer version is out and says so on the status strip (chapter 2, "Updating to a new version"). It
+never downloads anything. The tick is saved as soon as you change it (no **Save** needed); unticking clears a note
+already on the strip.
 
 ## Planner settings that are not on the page
 

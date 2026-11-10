@@ -44,7 +44,9 @@ import json
 import math
 import os
 import re
+import contextlib
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -79,7 +81,7 @@ SOURCE_WORDS = {"NEA": "the NASA Exoplanet Archive", "VSX": "AAVSO VSX", "VizieR
 
 # pscomppars columns for one planet (the composite table also carries the first-error columns)
 NEA_COLUMNS = ("pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,"
-               "pl_ratror,ra,dec,sy_vmag,tran_flag,pl_tranmid_reflink,pl_orbper_reflink")
+               "pl_ratror,pl_imppar,ra,dec,sy_vmag,tran_flag,pl_tranmid_reflink,pl_orbper_reflink")
 PS_COLUMNS = ("pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,pl_tsystemref,"
               "pl_refname")
 CATALOG_COLUMNS = ("pl_name,hostname,pl_orbper,pl_orbpererr1,pl_tranmid,pl_tranmiderr1,pl_trandur,pl_trandep,"
@@ -137,8 +139,83 @@ class FetchError(Exception):
 
 # ---- network -------------------------------------------------------------------------------------------------------
 
+# 1.4.1 (nit): CDS (simbad / vizier / tapvizier .cds.unistra.fr) went down for hours at a time in Oct–Nov 2026 and
+# every lookup then waited out its full timeout there before trying a mirror. After a CDS request fails for want of an
+# answer (a timeout, no connection, a 5xx), SCHED skips CDS for CDS_SKIP_S and goes straight to the mirrors; the first
+# request after that tries CDS again. A 4xx (the server answered) never starts the skip.
+CDS_SKIP_S = 600.0
+_CDS_DOWN: dict = {"at": None, "why": ""}
+
+
+def _is_cds(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host == "cds.unistra.fr" or host.endswith(".cds.unistra.fr")
+
+
+def cds_skip_reason(now: float | None = None) -> str | None:
+    """Why CDS is being skipped ("CDS did not answer 3 min ago (…); skipped for 10 min"), or None."""
+    at = _CDS_DOWN.get("at")
+    now = time.time() if now is None else now
+    if at is None or not 0 <= now - at < CDS_SKIP_S:
+        return None
+    mins = max(0, int((now - at) // 60))
+    when = "just now" if mins < 1 else f"{mins} min ago"
+    return f"CDS did not answer {when} ({_CDS_DOWN.get('why') or 'no answer'}); skipped for {CDS_SKIP_S / 60:.0f} min"
+
+
+def note_cds_result(url: str, exc: "FetchError | None", now: float | None = None) -> None:
+    """Remember a CDS failure that means "no answer" (starts the skip) or a success (ends it)."""
+    if not _is_cds(url):
+        return
+    if exc is None:
+        if _CDS_DOWN.get("at") is not None:
+            settings.log("CDS answered again; no longer skipped")
+        _CDS_DOWN.update(at=None, why="")
+        return
+    st = getattr(exc, "status", None)
+    if st is not None and st < 500 and st != 429:
+        return                                     # it answered (404, 403…): not down
+    if _CDS_DOWN.get("at") is None:
+        settings.log(f"CDS did not answer ({exc.reason}); skipping CDS for {CDS_SKIP_S / 60:.0f} min (mirrors first)")
+    _CDS_DOWN.update(at=time.time() if now is None else now, why=exc.reason)
+
+
+_QUICK = threading.local()           # 1.4.1 (Fable S2-1): a cap on every timeout of this thread (the Build's comp step)
+
+
+@contextlib.contextmanager
+def quick_timeouts(seconds: float):
+    """Inside the block, every request of this thread waits at most `seconds` (a background step that must not
+    hold the Build up when a catalog hangs)."""
+    old = getattr(_QUICK, "cap", None)
+    _QUICK.cap = float(seconds)
+    try:
+        yield
+    finally:
+        _QUICK.cap = old
+
+
 def http_get(url: str, timeout: float = TIMEOUT_S) -> bytes:
-    """GET a URL → bytes. Every failure becomes FetchError with a plain reason. Tests replace this function."""
+    """GET a URL → bytes. Every failure becomes FetchError with a plain reason. Tests replace this function.
+    A CDS address is skipped (FetchError at once) for CDS_SKIP_S after CDS failed to answer (1.4.1 nit)."""
+    cap = getattr(_QUICK, "cap", None)
+    if cap:
+        timeout = min(float(timeout), cap)
+    if _is_cds(url):
+        why = cds_skip_reason()
+        if why:
+            raise FetchError(why)
+        try:
+            data = _http_get(url, timeout)
+        except FetchError as exc:
+            note_cds_result(url, exc)
+            raise
+        note_cds_result(url, None)
+        return data
+    return _http_get(url, timeout)
+
+
+def _http_get(url: str, timeout: float = TIMEOUT_S) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -554,8 +631,10 @@ def planet_target(data: dict, when_jd: float | None = None) -> Target:
     dep = _f(row.get("pl_trandep"))
     depth = k * k if k else (dep / 100.0 if dep else None)
     dur = _f(row.get("pl_trandur"))
+    b = _f(row.get("pl_imppar"))
     pl = Planet(name=name, period=period, period_err=period_err, t0=t0, t0_err=t0_err,
-                t14=dur / 24.0 if dur else None, depth=depth, reference=ref, source=source)
+                t14=dur / 24.0 if dur else None, depth=depth, ratror=k if k and 0 < k < 1 else None,
+                impact=b if b is not None and 0 <= b < 1.5 else None, reference=ref, source=source)
     return Target(name=name, kind="transit", mode="T", ra=_f(row.get("ra")), dec=_f(row.get("dec")),
                   vmag=_f(row.get("sy_vmag")), source=source, planet=pl.__dict__.copy(), added=today_iso())
 
@@ -1265,10 +1344,11 @@ def refine_transit_target(t: Target, when_jd: float | None = None) -> bool:
     for k in ("period", "period_err", "t0", "t0_err", "reference", "source"):
         if pl.get(k) is not None:
             new[k] = pl[k]
-    for k in ("t14", "depth"):
-        if not new.get(k) and pl.get(k):
+    for k in ("t14", "depth", "ratror", "impact"):    # 1.4.1: b and Rp/R* for the ingress (Fable S3)
+        if new.get(k) is None and pl.get(k) is not None:
             new[k] = pl[k]
-    changed = any(new.get(k) != t.planet.get(k) for k in ("period", "t0", "period_err", "t0_err", "reference"))
+    changed = any(new.get(k) != t.planet.get(k) for k in ("period", "t0", "period_err", "t0_err", "reference",
+                                                          "ratror", "impact"))
     t.planet = new
     return changed
 
@@ -1492,6 +1572,47 @@ APASS_MAX_AGE_DAYS = 180.0
 COMP_DV = 1.0                 # a comp within this many magnitudes of the target
 COMP_DBV = 0.3                # … and this close in B−V counts as a colour match
 TARGET_MATCH_ARCSEC = 6.0     # the APASS star at the target's place (its own B−V)
+APASS_DAMAGED_V = 6.0         # a reply where most stars are brighter than this is a broken catalog copy, not the sky
+APASS_MAX_BRIGHT = 10         # … or with more than this many stars brighter than V 6, whatever the target
+APASS_FLOOR_V = 4.0           # … or with two stars brighter than this (APASS has none: its range starts at V 5.5)
+
+
+def apass_vs_plausible(vs, vmax: float | None = None) -> bool:
+    """False when most of an APASS cone's stars (and at least 3) are brighter than V APASS_DAMAGED_V: a damaged copy
+    of the catalog, not a real field (10 Nov 2026: the CfA mirror's II/336 sent V 0.1–2.1 for stars IDIA and CDS give
+    as V 12–13; a 12′ cone holds a star brighter than V 6 about once in a hundred fields). Not judged when the query's
+    own limit vmax is under 8 (a target of V 6 or brighter: every row it can get is bright), but two stars brighter
+    than V APASS_FLOOR_V, or more than APASS_MAX_BRIGHT brighter than V 6, are damaged for every target. It sees only
+    damage that
+    makes stars too bright: one or two bad rows, or magnitudes shifted fainter, pass (the CfA rows had V close to
+    their B−V, as if columns were shifted, so their B−V is suspect too)."""
+    vs = [v for v in vs if v is not None]
+    # For every target and cone size (10 Nov 2026: CfA sent 288 "stars" brighter than V 7.6 around HD 219134, which
+    # the majority rule below lets through for a bright target; a 5′ cone in a sparse field gets only ~5 such rows).
+    # APASS saturates near V 7: VizieR gives its Vmag range as 5.5–27.4 and the brightest real row seen is V 6.26,
+    # while every damaged row was under V 1.9. So two rows brighter than V 4 are a damaged copy; more than
+    # APASS_MAX_BRIGHT brighter than V 6 (no real row seen anywhere, open clusters included) is the backstop.
+    if sum(1 for v in vs if v < APASS_FLOOR_V) >= 2 or sum(1 for v in vs if v < APASS_DAMAGED_V) > APASS_MAX_BRIGHT:
+        return False
+    if vmax is not None and vmax < 8.0:
+        return True
+    bright = sum(1 for v in vs if v < APASS_DAMAGED_V)
+    return not (bright >= 3 and bright * 2 > len(vs))
+
+
+def _rows_plausible(rows, vmax: float | None = None) -> bool:
+    return apass_vs_plausible((_f(r.get("Vmag")) for r in rows), vmax)
+
+
+def _data_plausible(data, target_v=None) -> bool:
+    """A saved comp check that is not from a damaged catalog copy (a malformed saved file counts as damaged)."""
+    if not data:
+        return True
+    try:
+        vmax = float(target_v) + COMP_DV + 1.0 if target_v is not None else None
+        return apass_vs_plausible((_f(r.get("v")) for r in data.get("rows") or []), vmax)
+    except Exception:
+        return False
 
 
 def comp_radius_arcmin(optics) -> float:
@@ -1513,6 +1634,8 @@ def _fetch_comps(ra: float, dec: float, radius_arcmin: float, vmax: float):
             f"DEJ2000), CIRCLE('ICRS', {ra:.6f}, {dec:.6f}, {radius_arcmin / 60.0:.5f})) AND Vmag < {vmax:.2f}")
     try:
         rows = _tap_csv(VIZIER_TAP, adql, nea=False, expect="RAJ2000")
+        if not _rows_plausible(rows, vmax):
+            raise FetchError("its APASS magnitudes made no sense (stars brighter than APASS can hold)")
     except FetchError as exc:
         # VizieR's TAP service can be down while its plain (ASU) interface answers (8 Nov 2026: TAP timed out on
         # every query for an evening; the variable search got through on ASU, the comp check had no way round)
@@ -1535,19 +1658,32 @@ def _comps_asu(ra: float, dec: float, radius_arcmin: float, vmax: float) -> list
     with nothing near its V: "none within 1 mag", as from TAP). FetchError only when none answered."""
     q = {"-source": "II/336/apass9", "-c": f"{ra:.6f} {dec:+.6f}", "-c.rm": f"{radius_arcmin:.2f}",
          "-out": "RAJ2000,DEJ2000,Vmag,B-V", "-oc.form": "d", "-out.max": "unlimited", "Vmag": f"<{vmax:.2f}"}
-    last, empty = None, False
+    last, empty, damaged, failed = None, False, False, False
     for base in VIZIER_ASU:
         try:
             rows = parse_asu_tsv(_get_text(base + urllib.parse.urlencode(q)), key="RAJ2000", numeric=True,
                                  empty_ok=True)
         except FetchError as exc:
-            last = exc
+            last, failed = exc, True
+            continue
+        if rows and not _rows_plausible(rows, vmax):
+            host = urllib.parse.urlsplit(base).hostname
+            settings.log(f"VizieR ASU at {host} sent APASS magnitudes that make no sense ({len(rows)} stars, "
+                         f"brightest V {min((v for v in (_f(r.get('Vmag')) for r in rows) if v is not None), default=99.0):.2f}); trying the next mirror")
+            damaged = True
             continue
         if rows:
             return rows
         empty = True
-    if empty:
+    # "no stars" is believed only when every mirror said so: with one down or damaged, an empty copy may be the
+    # broken one (8 Nov 2026 the CfA answered every II/336 query empty), and [] would be saved for 180 days
+    if empty and not (damaged or failed):
         return []
+    if damaged:
+        raise FetchError("only damaged copies of APASS answered" if not empty else
+                         "one APASS copy was damaged and another had no stars")
+    if empty:
+        raise FetchError("a mirror was down and another had no stars")
     raise last if last else FetchError("no answer")
 
 
@@ -1556,16 +1692,25 @@ def comp_stars(ra: float, dec: float, radius_arcmin: float, target_v: float | No
     does not answer and nothing is saved."""
     vmax = (float(target_v) if target_v is not None else 15.0) + COMP_DV + 1.0
     key = _comp_key(ra, dec, radius_arcmin)
-    return cached_lookup("VizieR", key, f"APASS stars within {radius_arcmin:.0f}′ of the target", APASS_MAX_AGE_DAYS,
-                         lambda: _fetch_comps(ra, dec, radius_arcmin, vmax), refresh=refresh)
+    query = f"APASS stars within {radius_arcmin:.0f}′ of the target"
+    saved, _age = cache_read("VizieR", key)
+    if not _data_plausible(saved, target_v):
+        refresh = True                        # a saved answer from a damaged catalog copy is asked again
+    data, note = cached_lookup("VizieR", key, query, APASS_MAX_AGE_DAYS,
+                               lambda: _fetch_comps(ra, dec, radius_arcmin, vmax), refresh=refresh)
+    if not _data_plausible(data, target_v):  # VizieR down and only the damaged copy saved
+        raise LookupError_(f"VizieR did not answer, and the saved {query} came from a damaged copy of APASS. "
+                           "Try again later.")
+    return data, note
 
 
-def saved_comp_stars(ra, dec, radius_arcmin: float) -> dict | None:
-    """The saved answer of an earlier comp check, or None (never asks the network)."""
+def saved_comp_stars(ra, dec, radius_arcmin: float, target_v=None) -> dict | None:
+    """The saved answer of an earlier comp check, or None (never asks the network). target_v: the target's V (a
+    target of V 6 or brighter is not judged for a damaged copy)."""
     if ra is None or dec is None:
         return None
     data, _age = cache_read("VizieR", _comp_key(float(ra), float(dec), radius_arcmin))
-    return data
+    return data if _data_plausible(data, target_v) else None    # a damaged copy's answer counts as not checked
 
 
 def comp_check_text(target_v, ra, dec, data: dict | None) -> str:

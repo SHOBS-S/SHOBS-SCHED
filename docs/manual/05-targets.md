@@ -19,7 +19,7 @@ This chapter covers:
 - **Find suggested transits…** and **Find suggested variables…**,
 - ephemeris precision, and how SHOBS-SCHED upgrades it for you.
 
-![The Targets page: Add a target and the Nights row at the top; the Campaigns box with HD 219134 (its Type and Period columns, next blackout Tue 03 Nov), the Transits box with suggested planets, their Verdict column (Detectable?, Marginal?, Out of reach?) and HAT-P-32 b ticked and selected, and the Variables box with suggestions and AB And ticked; the details line with the exposure and the verdict, and the Edit…, Remove, Keep and Find buttons at the bottom](img/05-targets-page.png)
+![The Targets page: Add a target and the Nights row at the top; the Campaigns box with HD 219134 (next blackout Fri 13 Nov) and V0523 Cas (its Type and Period), the Transits box with LP 714-47 b (Marginal?), WASP-12 b, HAT-P-32 b (ticked and selected) and TOI-7303.01 and their Verdict column, and the Variables box with U Peg ticked and suggestions under it; the details line with the exposure and the verdict, and the Edit…, Remove, Keep and Find buttons at the bottom](img/05-targets-page.png)
 
 ## The three boxes
 
@@ -264,7 +264,7 @@ others.
 **Exposure** (new in 1.4.0), **Observing**, **Ephemeris** (transits only), **No data while a planet transits** and
 **Notes**. The dialog sizes itself to its contents and scrolls if it is taller than the screen.
 
-![The Edit dialog for the HD 219134 campaign: Target; the Exposure section (Longest safe chosen, its readout, No verdict with "no amplitude to judge (not a VSX variable)", the precision vs exposure plot, the Comps line); and the start of Observing. The dialog scrolls to the rest: block length, goal, No data while a planet transits (planets b and c ticked, d, f, g, h grayed) and Notes](img/05-edit-dialog.png)
+![The Edit dialog for the HD 219134 campaign: Target; the Exposure section (Longest safe chosen, its readout, No verdict with "no amplitude to judge (not a VSX variable)", the Bounds line and its gray notes, the precision vs exposure plot, the Comps line); and the start of Observing. The dialog scrolls to the rest: block length, goal, No data while a planet transits (planets b and c ticked, d, f, g, h grayed) and Notes](img/05-edit-dialog.png)
 
 ### Target
 
@@ -280,7 +280,7 @@ period and Tc; if it has transiting planets, the dialog suggests adding the plan
 New in 1.4.0 (it replaces the single **Exposure** field of 1.3.0's Observing part). It sets how this target's
 exposure is chosen, and shows what that exposure buys you: the precision, the S/N and the verdict.
 
-![The Exposure section of the Edit dialog for WASP-12 b: Best precision, Longest safe (chosen) and My exposure; Band Green channel (TG) with its tag "estimate (no FLUX profile)"; the magnitude line; the readout (Exposure 90 s (Longest safe), predicted peak ~62 % of the linear limit; Precision 1.1 ppt per 10-minute bin); the noise budget bar; the transit line with 18 ten-minute bins; "S/N 54  Detectable?" in green; the gray airmass line; the precision vs exposure plot; and the Comps line with Check comps and "✔ Checked with APASS." under it](img/05-edit-exposure.png)
+![The Exposure section of the Edit dialog for WASP-12 b: Best precision, Longest safe (chosen) and My exposure; Band Green channel (TG) with its tag "estimate (no FLUX profile)"; the magnitude line; the readout (Exposure 40 s (Longest safe), predicted peak ~28 % of the linear limit; Bounds: 40 s, comp-candidate-limited (APASS V 10.47, 9.9′ away), peak 76 % of linear for that star, cap costs 2 % vs 90 s; Precision 1.1 ppt per 10-minute bin); the noise budget bar; the transit line with 18 ten-minute bins; "S/N 53  Detectable?" in green; the gray airmass line; the precision vs exposure plot with the gray dashed comp cap; and the Comps line (17 within 1 mag, 7 within 0.3 in B−V) with Check comps](img/05-edit-exposure.png)
 
 **How the exposure is chosen.** Three buttons:
 
@@ -298,7 +298,46 @@ The gray line under the buttons says the same in short: *Best precision: the sho
 10-minute precision whose peak stays under your linear-limit aim (the default for transits once a zero point is
 measured by SHOBS-FLUX or typed in Setup). Longest safe: the longest standard exposure whose predicted peak stays
 under the aim
-(1.3.0's rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours.*
+(1.3.0's rule while no SHOBS-FLUX profile or typed value is in use). My exposure: yours. Both of the first two
+also keep the comps under the aim and the frames often enough (the Bounds line).*
+
+**The three bounds (new in 1.4.1).** Best precision and Longest safe both keep inside three bounds, and the
+readout names the one that decided the exposure:
+
+1. **Saturation.** Not only the target: the stars you will measure must stay under the aim too. When the target has
+   a SHOBS-P series (the **SHOBS-P series** field below), these are its comparison and check stars. Without one, they
+   are the likely comps: the APASS stars in the field from the target's brightness up to 1.5 mag brighter (from the
+   comp check, which **Build schedule** also runs for you). A brighter field star nobody would use as a comp only gets a
+   plain note when it would be over the linear limit.
+2. **Cadence.** Frames must come often enough to time the event: the frame cycle (exposure plus download) at most
+   **P/50** for a variable or campaign with a period, and at most **the ingress ÷ 10** for a transit. The ingress
+   comes from the planet's duration, impact parameter and size; when the Archive does not give those, SCHED takes it
+   as 10 % of the duration and says so.
+3. **Precision.** Inside those two, Best precision picks as described above; Longest safe takes the longest.
+
+The **Bounds** line under the Exposure line shows all three at once, for example *Bounds: 180 s, cadence-limited
+(P/50 = 4.3 min) · peak 61 % of linear ✓ (check star: TYC 3281-582-1) · 1.2 ppt / 10 min, Detectable · cap costs
+<1 % vs 300 s*. "Cap costs" is how much precision the cap gives up against the exposure SCHED would take without it;
+when that is a lot, or the verdict drops, a note says so: you can still trade timing for photons with **My
+exposure**.
+
+**An answer always comes back.** When even the best exposure is not a good one, SCHED still gives a number and says
+why:
+
+| When | Exposure given | What it says |
+|---|---|---|
+| A comp or the check saturates even at 0.75 s | 0.75 s | *⚠ even 0.75 s may saturate Comp 2 (…) (peak ~118 % of the linear limit); pick a fainter comp* (with a candidate when the comp check has one). The target itself: *⚠ even 0.75 s may saturate…; defocus*. |
+| The cadence cap is shorter than the camera can cycle | 0.75 s | *cadence-limited: frame cycle 5.2 s can't reach P/50 = 3.1 s; timing ~1.7× coarser than the rule* (a plain note: nothing to fix but the download time) |
+| Both | 0.75 s | Both, saturation first. |
+| The caps cost much precision | the capped one | *cap costs 40 % vs 300 s (Marginal? at 300 s, but timing coarser than P/50); you can trade timing for photons with My exposure* |
+| No V magnitude, or no telescope and camera | 60 s | *estimate: 60 s placeholder (no V magnitude); set your own exposure* |
+| The catalog did not answer (no series) | from the target alone | *comps not checked: catalog unreachable; check comp peaks in SHOBS-P* |
+
+Under 5 s a plain note adds that the peak varies about ±40 % night to night with the seeing (very short frames
+freeze it), so check the first frames' peaks.
+
+With a SHOBS-FLUX zero point the predicted peaks are scaled to what your own frames showed: the 1.4.1 back-test
+against SHOBS-P's on-sky logs found real peaks 1.3–1.9 times the simple model's, most at short exposures.
 
 **The default.** When you have not chosen, a target gets:
 
@@ -330,12 +369,13 @@ Under it, a gray line says which magnitude was used. SHOBS-SCHED knows only the 
 
 | Line | Example | What it says |
 |---|---|---|
-| Exposure | *Exposure 90 s (Longest safe) · predicted peak ~62 % of the linear limit (31,009 ADU)* | The exposure, how it was chosen, and the predicted peak of the star's brightest pixel. Over the linear limit the line turns yellow. |
-| Precision | *Precision 1.1 ppt per 10-minute bin (~3 frames a bin; the target star alone)* | The scatter you can expect in 10 minutes of data (see "How SHOBS-SCHED works out the S/N"). |
+| Exposure | *Exposure 40 s (Longest safe) · predicted peak ~28 % of the linear limit (13,782 ADU)* | The exposure, how it was chosen, and the predicted peak of the star's brightest pixel. Over the linear limit the line turns yellow. |
+| Bounds (1.4.1) | *Bounds: 40 s, comp-candidate-limited (APASS V 10.47 (9.9′ away)) · peak 76 % of linear ✓ (that star) · 1.1 ppt / 10 min, Detectable? · cap costs 2 % vs 90 s* | The three bounds and the one that won (above). Under it, any ⚠ in yellow and the plain notes in gray. |
+| Precision | *Precision 1.1 ppt per 10-minute bin (~14 frames a bin; the target star alone)* | The scatter you can expect in 10 minutes of data (see "How SHOBS-SCHED works out the S/N"). With a SHOBS-P series it counts the comps' noise too (*… the target and its 4 comps (SHOBS-P series)*): a bright target with faint comps is limited by them. |
 | Noise budget bar | a small bar in four colors | Where the noise comes from: **photon** (blue), **sky** (gray), **scintillation** (orange) and **read + dark** (purple). |
-| Noise budget words | *Noise budget: photon 77 % · sky 1 % · scintillation 22 % · read + dark 0 %* | The same in numbers (shares of the noise). |
+| Noise budget words | *Noise budget: photon 80 % · sky 1 % · scintillation 19 % · read + dark 1 %* | The same in numbers (shares of the noise). |
 | The event | *Transit 1.37 % deep, 3.0 h long: 18 ten-minute bins in transit*, or for a variable *Range 0.56 mag (VSX; 40 % in flux), against one 10-minute bin* | What the S/N is measured against. |
-| S/N and verdict | ***S/N 54  Detectable?*** with the reason beside it | The S/N, and the verdict word in its color (see "The Verdict column" above). |
+| S/N and verdict | ***S/N 53  Detectable?*** with the reason beside it | The S/N, and the verdict word in its color (see "The Verdict column" above). |
 | Gray line | *Worked out at airmass 1.02 (its highest from your site) under a dark sky; the Schedule uses each night's own airmass and Moon.* | Where and when the readout applies. With rough numbers it adds *Rough estimate (no measured zero point): the verdict word carries a “?”.* |
 
 Beside the verdict is the reason, for example *a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit*. A
@@ -347,8 +387,10 @@ VSX variable)* for any other star, such as a planet host kept as a campaign).
 
 **The precision vs exposure plot.** Under the readout, a small plot shows the precision per 10-minute bin (up) for each
 standard exposure (across, on a log scale: 1 s, 10 s, 100 s). Lower is better. Where the peak would be over the linear
-limit the plot is shaded yellow (*over linear*); where it would saturate the camera, pink (*saturated*). The chosen
-exposure is circled in green. **Click the plot** to pick the nearest standard exposure: it becomes **My exposure**.
+limit the plot is shaded yellow (*over linear*); where it would saturate the camera, pink (*saturated*). A gray dashed
+line marks the cap from bound 1 or 2 (*cadence cap* or *comp cap*); the words sit at the top right on their own
+backing. The chosen exposure is circled in green. **Click the plot** to pick the nearest standard exposure: it becomes
+**My exposure**.
 
 The curve is usually steep on the left (short frames lose much time to download and suffer more scintillation) and
 flat on the right. The flat part is where longer frames no longer help; that is why Best precision stops there.
@@ -358,7 +400,10 @@ brightness and color. The **Comps** line says what the last check found, for exa
 12′ around the target); 1 within 0.3 in B−V (the star's B−V 0.65).* Press **Check comps** to ask the APASS catalog
 (at VizieR, needs the internet). The dialog's green busy bar at its lower left says *Asking APASS (VizieR) for
 comparison stars…*, and the result shows under the line (*✔ Checked with APASS.*; *⚠ VizieR did not answer (…); using the copy from 3 days ago.* when it did not answer
-and an earlier answer was saved; or *✖ Comps not checked: …*). The answer is kept, so the line shows again next time, even offline. Other answers:
+and an earlier answer was saved; or *✖ Comps not checked: …*). The answer is kept, so the line shows again next time, even offline. A
+**damaged copy** of APASS is never used (1.4.1): when a VizieR mirror sends magnitudes APASS cannot hold (two stars
+brighter than V 4, or more than 10 brighter than V 6, in one field), SCHED asks the next mirror, and an answer like
+that saved earlier counts as *not checked yet* (see chapter 10, "A damaged catalog copy"). Other answers:
 
 - *Comps: none within 1 mag of V 11.6 (APASS, 12′ around the target). Fainter or brighter comps add noise; expect a
   noisier ratio.*
@@ -366,7 +411,13 @@ and an earlier answer was saved; or *✖ Comps not checked: …*). The answer is
   dim differently as the star sinks.
 - *…; the star's own B−V is not in APASS, so colours are not compared.*
 
-The search radius is half the shorter side of your camera's field (between 5′ and 30′).
+The search radius is half the shorter side of your camera's field (between 5′ and 30′). After a check, the readout
+works the saturation bound out again with the candidates it found.
+
+**SHOBS-P series (1.4.1, shown when SHOBS-P is installed).** The target's SHOBS-P series file (*.cvseries*), typed or
+chosen with **Browse…**. Its comparison and check stars, with the magnitudes the series uses, join the saturation
+check, and their noise joins the precision. SHOBS-SCHED only reads the file; it never changes it. Empty: the APASS
+candidates are checked instead. A file that cannot be read is said in a plain note, and the candidates are used.
 
 **Saving.** With **My exposure** chosen and its box empty, **Save** says *✖ Not saved: My exposure is empty: type your
 exposure in seconds, or choose Best precision or Longest safe.*
@@ -471,7 +522,9 @@ ADU, linear limit 32,000 ADU), with Setup's Photometry noise box empty and no SH
 - The zero point is the rough estimate, 19.76 for the green channel. A V 11.57 star then gives about 1,900 electrons a
   second.
 - The transit has no SHOBS-FLUX measurement, so it is on **Longest safe**: 180 s, with a predicted peak of about
-  15,500 ADU, 48 % of the linear limit.
+  15,500 ADU, 48 % of the linear limit. (This example leaves the comps out. With the comp check, bound 1 caps it:
+  in the dialog above the brightest likely comp, APASS V 10.47, would pass 76 % of the linear limit at 40 s, so
+  SCHED takes 40 s, which costs about 2 % of the precision.)
 - In 180 s the aperture collects about 340,000 electrons. One frame's noise is about 2.0 ppt (parts per thousand):
   photon noise 77 % of it, scintillation 22 %, the sky 1 %.
 - With 3 s of overhead, a 10-minute bin holds about 3.3 frames, so its precision is 2.0 ÷ √3.3 ≈ **1.1 ppt**.

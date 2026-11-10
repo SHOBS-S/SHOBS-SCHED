@@ -1,7 +1,37 @@
-# Screenshots (SHOBS-SCHED manual, 1.4.0 edition)
+# Screenshots (SHOBS-SCHED manual, 1.4.1 edition)
 
 Retaken for 1.2.0 on 31 Oct 2026 and for 1.3.0 (maximized window, resized to 2200 px wide). `02-create-shortcuts.png`
 is kept from 1.1.0: the Windows setup did not change.
+
+## 1.4.1: what must be reshot
+
+**Done 10 Nov 2026** on build 394d62c (example site, no SHOBS-P, no FLUX profile): every image in the table below and
+every main-window shot, except the REUSE list. Notes from the session: 05-edit-exposure came out **40 s,
+comp-candidate-limited** (APASS V 10.47, 9.9′ away), not the "90 s capped" guessed below, because the comp check now
+bounds Longest safe (chapter 5 updated); 02-first-start and 04-setup-page are two captures joined so the whole page
+(New versions box included) shows; 05-edit-dialog is joined the same way to show the start of Observing; the
+username in 07-obsplan-page's paths reads "you"; 03-targets-two and 03-night-tab come from a fresh settings folder
+(NEA was down, so WASP-12 b's saved Archive answer was copied in).
+
+Same house rule and the same set-up as 1.4.0 below (example site, **no SHOBS-FLUX profile**, no real observatory
+names). Every main-window shot shows **Version 1.4.1** in the sidebar, so all of them are reshot again; the 1.4.0
+table below says how to set each up. On top of that:
+
+| File | What changed in 1.4.1 | Set up before taking it |
+|---|---|---|
+| `img/05-edit-exposure.png` | The new **Bounds** line under the Exposure line (*… cadence-limited (ingress ~18 min (10 % of T14) ÷ 10 = 108 s) · peak … · cap costs …*), the gray notes under it, the plot's gray dashed **cadence cap** line and its words on their own backing (the nit: *over linear* no longer clipped). The exposure itself is now 90 s capped (was 90 s by peak for WASP-12 b; check the shot's numbers against the text in chapter 5). | As in 1.4.0 (WASP-12 b, Longest safe, after **Check comps**). No SHOBS-P on the shots computer, so no SHOBS-P series row. |
+| `img/05-edit-dialog.png` | The Exposure section grew (Bounds line, notes). | As in 1.4.0 (HD 219134 campaign). |
+| `img/04-setup-page.png`, `img/02-first-start.png`, `img/03-setup-saved.png` | The new **New versions** box (one tick box and its gray hint) in the right column. | As in 1.4.0. |
+| `img/03-night-tab.png`, `img/06-night-tab.png`, `img/06-night-tab-lower.png` | Block notes may now carry *Exposure … s: cadence-limited (…)* and the 1.4.1 plain notes. | As in 1.4.0. |
+| `img/08-busy-bar.png` | Optional: a Build's first step *Checking comp stars for … (1 of N)…* could replace the old example. | As in 1.4.0. |
+
+NEW (optional, chapter 2 "Updating to a new version"): `img/02-new-version.png`, the **New version** window (needs a
+newer release than the running one on GitHub, so it can only be shot once 1.4.2 exists, or from a test copy whose
+version is set below 1.4.1). Not referenced yet.
+
+REUSE: `img/02-create-shortcuts.png`, `img/05-find-variables.png`, `img/05-remove-dialog.png`,
+`img/05-find-transits.png` (the window did not change in 1.4.1), `img/04-photometry-noise.png` (the box did not
+change; no sidebar in the crop), `img/04-fits-summary.png` only if its crop shows no sidebar (else reshoot).
 
 ## 1.4.0: what must be reshot
 

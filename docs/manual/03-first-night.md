@@ -56,7 +56,7 @@ times; for a variable, its next timed minimum or maximum, or *any time* for a st
 transit marked *(partial)* is only partly in the dark; if a transit shows *none in the next 7 nights*, no part of any
 transit is in the dark this week. Pick another planet, or try **Find suggested transits…** (chapter 5).
 
-![The Targets page with WASP-12 b in Transits (next transit Mon 02 Nov, its Verdict, ✔ NEA (most precise)) and DY Peg in Variables (any time, its Verdict), both ticked, and "✔ Added DY Peg (VSX)." beside Add](img/03-targets-two.png)
+![The Targets page with WASP-12 b in Transits (next transit Sat 14 Nov, its Verdict, ✔ NEA (most precise)) and DY Peg in Variables (any time, its Verdict), both ticked, and "✔ Added DY Peg (VSX)." beside Add](img/03-targets-two.png)
 
 ## Step 3: Build the schedule
 
@@ -66,17 +66,17 @@ transit is in the dark this week. Pick another planet, or try **Find suggested t
 3. Press **Build schedule**.
 4. The busy bar at the lower left says what it is doing, step by step: first *Getting the forecast from
    Open-Meteo…*, then *Building 7 nights…*, then *Working out twilight and Moon times…*. When it is done, the busy
-   bar goes, and the line under the button says what was built, for example *✔ Built 7 nights: 9 blocks; 1 target
+   bar goes, and the line under the button says what was built, for example *✔ Built 7 nights: 7 blocks; 2 targets
    didn't fit (see each night).*
 
-Each night gets a tab, named by its date (for example **Mon 02 Nov**). A **⚠** in front of a tab's name means that
+Each night gets a tab, named by its date (for example **Sat 14 Nov**). A **⚠** in front of a tab's name means that
 night has something that needs your attention, for example a meridian flip during a transit, dew cutting a block,
 or no dark time. A target that didn't fit, or a cloudy forecast, is listed on the tab but puts no ⚠ on it.
 
 5. Click the tab of the night you want to observe. You see:
-   - a line with the dark hours, the Moon and the weather summary, for example *Dark 19:08–05:40 (astronomical) ·
-     Moon 35 % (down at dusk, rises 01:12) · Clear all night*. The Moon's part follows the dark hours: *down at
-     dusk, rises 01:12*, *up at dusk, sets 22:40*, or *up all night*;
+   - a line with the dark hours, the Moon and the weather summary, for example *Dark 18:58–05:51 (astronomical) ·
+     Moon 30 % (up at dusk, sets 21:40) · Overcast all night*. The Moon's part follows the dark hours: *down at
+     dusk, rises 01:12*, *up at dusk, sets 21:40*, or *up all night*;
    - the **night plot**: each target's airmass through the night, its block in bold, twilight shading, the Moon, and
      the hourly weather above;
    - the **nightly table**: one row per block, with the time, target, position (RA / Dec), altitude, meridian time,
@@ -84,12 +84,12 @@ or no dark time. A target that didn't fit, or a cloudy forecast, is listed on th
    - under it, **Flats and darks to shoot**, **Didn't fit, and why**, and **Free time**.
 
 Click a row (or a block on the plot) to pick it out. Read the notes. Each block's notes start with its verdict, for
-example *Detectable? (S/N ~54, rough estimate): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit* for
-WASP-12 b, then its times: *Ingress 23:50, mid 01:20, egress 02:50 (±1 min)*. DY Peg's block starts just before
-its meridian, so its notes say *Start before the meridian and let it flip (~21:01). Pre-flip frames carry no weight
+example *Detectable? (S/N ~53, rough estimate): a 1.37 % dip against 1.1 ppt per 10-min bin, 18 bins in transit* for
+WASP-12 b, then its times: *Ingress 23:57, mid 01:27, egress 02:57 (±1 min)*. DY Peg's block starts just before
+its meridian, so its notes say *Start before the meridian and let it flip (~20:13). Pre-flip frames carry no weight
 in the night mean.*
 
-![The Mon 02 Nov tab: the night's line (Moon 35 %, down at dusk, rises 01:12) and a dew line, the night plot with the DY Peg block (20:48–22:48) and the WASP-12 b transit block, and the nightly table under it, its notes led by each block's verdict](img/03-night-tab.png)
+![The Sat 14 Nov tab: the night's line (Moon 30 %, up at dusk, sets 21:40; overcast all night), the weather strip, the night plot with the DY Peg block (20:01–22:01, its flip marked) and the WASP-12 b transit block (22:57–03:37) selected, and the nightly table under it, its notes led by each block's verdict](img/03-night-tab.png)
 
 ## Step 4: Print the plan card
 
@@ -105,7 +105,7 @@ The card is black on white with big times, so you can read it at the telescope b
 1. On the OBSPlan page, find the night's heading on the card. Beside it are **Export to ASIAIR**, **Export to NINA**
    and **Copy ASIAIR list**.
 2. Press **Export to ASIAIR**. A line under the heading says where the file went, for example *✔ ASIAIR: saved 2
-   targets for Mon 02 Nov to C:\Users\you\Downloads\SHOBS-SCHED_ASIAIR_2026-11-02.csv. In ASIAIR's Plan: Add →
+   targets for Sat 14 Nov to C:\Users\you\Downloads\SHOBS-SCHED_ASIAIR_2026-11-14.csv. In ASIAIR's Plan: Add →
    Import, and paste the file's text.*
 3. Open the file (**Open in Notepad**), copy its text, and in ASIAIR's **Plan**, choose **Add → Import** and paste.
 

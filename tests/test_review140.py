@@ -283,9 +283,13 @@ class TestWindow(Base):
         # Longest safe = 1.3.0's rule
         dlg.how_var.set("safe")
         dlg.update_readout()
-        self.assertEqual(dlg.plan["exposure_s"], planner.estimate_exposure(
+        # (1.4.1, #6: capped by the cadence bound, ingress ÷ 10)
+        old = planner.estimate_exposure(
             Target.from_dict(dict(t.to_dict(), exposure_s=None)), app.optics, app.options,
-            planner.best_airmass(t, app.site))["exposure_s"])
+            planner.best_airmass(t, app.site))["exposure_s"]
+        e_max = dlg.plan["bounds"]["e_max"]
+        self.assertEqual(dlg.plan["exposure_s"], old if old <= e_max else max(
+            x for x in planner.STANDARD_EXPOSURES if x <= e_max))
         # a click on the plot picks a standard exposure as My exposure
         e = dlg._plot_click(type("E", (), {"x": 50, "y": 50})())
         self.assertIn(e, planner.STANDARD_EXPOSURES)

@@ -470,7 +470,7 @@ def inputs(optics, options: dict | None, elevation_m: float = 0.0, band: str | N
                       aperture_m=float(optics.aperture_mm) / 1000.0, gain=gain, linear_adu=linear, sat_adu=sat,
                       read_noise_e=rn, dark_e_s=dk, cy=cy, overhead_s=overhead,
                       elevation_m=float(elevation_m or 0.0), pix_per_cell=BAND_PIXELS.get(band, 4), rough=rough,
-                      bias_adu=bias, sources=src)
+                      bias_adu=bias, sources=src, peak_cal=src["zp"] == "from FLUX")
 
 
 def setup_value(optics, options: dict | None, key: str) -> tuple[float | None, str]:
